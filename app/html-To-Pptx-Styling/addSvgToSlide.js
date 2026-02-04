@@ -10,9 +10,11 @@ function convertSvgPathToPptxPoints(pathData, viewBoxWidth, viewBoxHeight, shape
         return [];
     }
 
+    // Syncfusion-safe:
+    // Avoid emitting PptxGenJS "curve" points, because pptxgen writes <a:cubicBezTo>/<a:quadBezTo>.
+    // Some renderers (Syncfusion) fail on those. We flatten curves into a few <a:lnTo>.
     const points = [];
     try {
-        // Clean up path data
         const cleanPathData = pathData.replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
         const commands = cleanPathData.match(/[MLHVCSQTAZ][^MLHVCSQTAZ]*/gi);
 
@@ -27,115 +29,136 @@ function convertSvgPathToPptxPoints(pathData, viewBoxWidth, viewBoxHeight, shape
         let pathStartX = 0, pathStartY = 0;
         let hasMoveTo = false;
 
-        commands.forEach((cmd, index) => {
+        const toPoint = (x, y, moveTo = false) => ({
+            x: (x / viewBoxWidth) * shapeWidth,
+            y: (y / viewBoxHeight) * shapeHeight,
+            ...(moveTo ? { moveTo: true } : {})
+        });
+
+        const pushPoint = (x, y, moveTo = false) => points.push(toPoint(x, y, moveTo));
+
+        const cubicAt = (p0, p1, p2, p3, t) => {
+            const mt = 1 - t;
+            const mt2 = mt * mt;
+            const t2 = t * t;
+            return (
+                p0 * mt2 * mt +
+                3 * p1 * mt2 * t +
+                3 * p2 * mt * t2 +
+                p3 * t2 * t
+            );
+        };
+
+        const quadAt = (p0, p1, p2, t) => {
+            const mt = 1 - t;
+            return (mt * mt) * p0 + (2 * mt * t) * p1 + (t * t) * p2;
+        };
+
+        // Keep this small; your "working XML" uses very few line segments for curves.
+        const FLATTEN_SEGMENTS_CUBIC = 3; // adds 3 intermediate lnTo + final
+        const FLATTEN_SEGMENTS_QUAD = 3;
+
+        commands.forEach((cmd) => {
             const type = cmd[0].toUpperCase();
             const isRelative = cmd[0] !== cmd[0].toUpperCase();
             const coords = cmd.slice(1).trim().split(/[\s,]+/).map(parseFloat).filter(n => !isNaN(n));
 
             switch (type) {
-                case 'M': // Move to
-                    if (coords.length >= 2) {
-                        currentX = isRelative ? currentX + coords[0] : coords[0];
-                        currentY = isRelative ? currentY + coords[1] : coords[1];
-                        pathStartX = currentX;
-                        pathStartY = currentY;
+                case 'M': { // Move to; additional pairs become implicit lineTo
+                    for (let i = 0; i + 1 < coords.length; i += 2) {
+                        const x = isRelative ? currentX + coords[i] : coords[i];
+                        const y = isRelative ? currentY + coords[i + 1] : coords[i + 1];
 
-                        const point = {
-                            x: (currentX / viewBoxWidth) * shapeWidth,
-                            y: (currentY / viewBoxHeight) * shapeHeight,
-                            moveTo: true
-                        };
-                        points.push(point);
-                        hasMoveTo = true;
+                        currentX = x; currentY = y;
+
+                        if (!hasMoveTo) {
+                            pathStartX = currentX; pathStartY = currentY;
+                            pushPoint(currentX, currentY, true);
+                            hasMoveTo = true;
+                        } else {
+                            pushPoint(currentX, currentY, false);
+                        }
                     }
                     break;
+                }
 
-                case 'L': // Line to
-                    if (coords.length >= 2) {
-                        currentX = isRelative ? currentX + coords[0] : coords[0];
-                        currentY = isRelative ? currentY + coords[1] : coords[1];
-
-                        const point = {
-                            x: (currentX / viewBoxWidth) * shapeWidth,
-                            y: (currentY / viewBoxHeight) * shapeHeight
-                        };
-                        points.push(point);
+                case 'L': { // Line to (multiple pairs)
+                    for (let i = 0; i + 1 < coords.length; i += 2) {
+                        currentX = isRelative ? currentX + coords[i] : coords[i];
+                        currentY = isRelative ? currentY + coords[i + 1] : coords[i + 1];
+                        pushPoint(currentX, currentY, false);
                     }
                     break;
+                }
 
-                case 'H': // Horizontal line
-                    if (coords.length >= 1) {
-                        currentX = isRelative ? currentX + coords[0] : coords[0];
-                        const point = {
-                            x: (currentX / viewBoxWidth) * shapeWidth,
-                            y: (currentY / viewBoxHeight) * shapeHeight
-                        };
-                        points.push(point);
+                case 'H': { // Horizontal line (multiple values)
+                    for (let i = 0; i < coords.length; i++) {
+                        currentX = isRelative ? currentX + coords[i] : coords[i];
+                        pushPoint(currentX, currentY, false);
                     }
                     break;
+                }
 
-                case 'V': // Vertical line
-                    if (coords.length >= 1) {
-                        currentY = isRelative ? currentY + coords[0] : coords[0];
-                        const point = {
-                            x: (currentX / viewBoxWidth) * shapeWidth,
-                            y: (currentY / viewBoxHeight) * shapeHeight
-                        };
-                        points.push(point);
+                case 'V': { // Vertical line (multiple values)
+                    for (let i = 0; i < coords.length; i++) {
+                        currentY = isRelative ? currentY + coords[i] : coords[i];
+                        pushPoint(currentX, currentY, false);
                     }
                     break;
+                }
 
-                case 'C': // Cubic Bezier curve
-                    if (coords.length >= 6) {
-                        const x1 = isRelative ? currentX + coords[0] : coords[0];
-                        const y1 = isRelative ? currentY + coords[1] : coords[1];
-                        const x2 = isRelative ? currentX + coords[2] : coords[2];
-                        const y2 = isRelative ? currentY + coords[3] : coords[3];
-                        currentX = isRelative ? currentX + coords[4] : coords[4];
-                        currentY = isRelative ? currentY + coords[5] : coords[5];
+                case 'C': { // Cubic Bezier (multiple segments)
+                    for (let i = 0; i + 5 < coords.length; i += 6) {
+                        const x1 = isRelative ? currentX + coords[i] : coords[i];
+                        const y1 = isRelative ? currentY + coords[i + 1] : coords[i + 1];
+                        const x2 = isRelative ? currentX + coords[i + 2] : coords[i + 2];
+                        const y2 = isRelative ? currentY + coords[i + 3] : coords[i + 3];
+                        const x3 = isRelative ? currentX + coords[i + 4] : coords[i + 4];
+                        const y3 = isRelative ? currentY + coords[i + 5] : coords[i + 5];
 
-                        const point = {
-                            x: (currentX / viewBoxWidth) * shapeWidth,
-                            y: (currentY / viewBoxHeight) * shapeHeight,
-                            curve: {
-                                type: 'cubic',
-                                x1: (x1 / viewBoxWidth) * shapeWidth,
-                                y1: (y1 / viewBoxHeight) * shapeHeight,
-                                x2: (x2 / viewBoxWidth) * shapeWidth,
-                                y2: (y2 / viewBoxHeight) * shapeHeight
-                            }
-                        };
-                        points.push(point);
+                        const startX = currentX, startY = currentY;
+
+                        for (let s = 1; s <= FLATTEN_SEGMENTS_CUBIC; s++) {
+                            const t = s / (FLATTEN_SEGMENTS_CUBIC + 1);
+                            const xi = cubicAt(startX, x1, x2, x3, t);
+                            const yi = cubicAt(startY, y1, y2, y3, t);
+                            pushPoint(xi, yi, false);
+                        }
+
+                        currentX = x3; currentY = y3;
+                        pushPoint(currentX, currentY, false);
                     }
                     break;
+                }
 
-                case 'Q': // Quadratic Bezier curve
-                    if (coords.length >= 4) {
-                        const x1 = isRelative ? currentX + coords[0] : coords[0];
-                        const y1 = isRelative ? currentY + coords[1] : coords[1];
-                        currentX = isRelative ? currentX + coords[2] : coords[2];
-                        currentY = isRelative ? currentY + coords[3] : coords[3];
+                case 'Q': { // Quadratic Bezier (multiple segments)
+                    for (let i = 0; i + 3 < coords.length; i += 4) {
+                        const x1 = isRelative ? currentX + coords[i] : coords[i];
+                        const y1 = isRelative ? currentY + coords[i + 1] : coords[i + 1];
+                        const x2 = isRelative ? currentX + coords[i + 2] : coords[i + 2];
+                        const y2 = isRelative ? currentY + coords[i + 3] : coords[i + 3];
 
-                        const point = {
-                            x: (currentX / viewBoxWidth) * shapeWidth,
-                            y: (currentY / viewBoxHeight) * shapeHeight,
-                            curve: {
-                                type: 'quadratic',
-                                x1: (x1 / viewBoxWidth) * shapeWidth,
-                                y1: (y1 / viewBoxHeight) * shapeHeight
-                            }
-                        };
-                        points.push(point);
+                        const startX = currentX, startY = currentY;
+
+                        for (let s = 1; s <= FLATTEN_SEGMENTS_QUAD; s++) {
+                            const t = s / (FLATTEN_SEGMENTS_QUAD + 1);
+                            const xi = quadAt(startX, x1, x2, t);
+                            const yi = quadAt(startY, y1, y2, t);
+                            pushPoint(xi, yi, false);
+                        }
+
+                        currentX = x2; currentY = y2;
+                        pushPoint(currentX, currentY, false);
                     }
                     break;
+                }
 
-                case 'Z': // Close path
-                    if (hasMoveTo) {
-                        points.push({ close: true });
-                    }
+                case 'Z': { // Close path
+                    if (hasMoveTo) points.push({ close: true });
                     currentX = pathStartX;
                     currentY = pathStartY;
                     break;
+                }
             }
         });
 
@@ -175,7 +198,7 @@ function createDynamicShapeOptions(element, slideContext, points, svgStyles) {
     // Extract styling from SVG with proper transparent handling
     const fillColor = extractColor(svgStyles.fill);
     const stroke = extractColor(svgStyles.stroke);
-    
+
     // FIXED: Properly handle stroke-width="0" - don't use || 1 fallback
     const strokeWidthRaw = svgStyles.strokeWidth;
     let strokeWidth = 0;

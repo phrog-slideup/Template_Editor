@@ -8,7 +8,7 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
     const objName = shapeElement.getAttribute("data-name");
 
     console.log(" >>>>>>>>>>>>>>> ---- >>>> ", shapeId);
-    
+
     // Extract theme color and luminance/alpha attributes
     const originalThemeColor = shapeElement.getAttribute("data-original-color");
     const originalLumMod = shapeElement.getAttribute("originallummod");
@@ -89,17 +89,25 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
         return;
     }
 
-    // FIXED: Handle custom SVG shapes when no shape ID is present
+
+    // ✅ Freeform / SVG-based shapes (custGeom, custom-shape, svg connectors)
+    // Route these to addSvgToSlide so we actually create a real custGeom in PPTX.
+    if (
+        shapeElement.classList.contains('custom-shape') ||
+        shapeElement.id === 'custGeom' ||
+        shapeId === 'custGeom' ||
+        shapeElement.classList.contains('sli-svg-connector')
+    ) {
+        const ok = svgAddToSlide.processSvgElement(pptSlide, shapeElement, slideContext);
+        if (ok) return;
+        // If SVG parsing failed, continue with normal shape pipeline (or bail out below).
+    }
+
+    // ✅ If no ID, still try to process SVG-based shapes (most freeforms come here)
     if (shapeId === null) {
-        // Check if this is a custom shape with SVG
-        if (shapeElement.classList.contains('custom-shape')) {
-            const svgElement = shapeElement.querySelector('svg');
-            if (svgElement) {
-                return handleCustomSvgShape(pptx, pptSlide, shapeElement, svgElement, slideContext);
-            }
-        }
-        // If no SVG and no ID, skip this element
-        return;
+        const ok = svgAddToSlide.processSvgElement(pptSlide, shapeElement, slideContext);
+        if (ok) return;
+        return; // nothing we can do without a shape id
     }
 
     // Get slide dimensions for proper scaling

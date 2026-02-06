@@ -22,7 +22,7 @@ const freeFormShape = require("./free_Form_Shape/generateFreeForm.js");
 
 // Define the directory to save images using config
 const imageSavePath = path.resolve(__dirname, "../uploads/");
-
+ 
 if (!fs.existsSync(imageSavePath)) {
     fs.mkdirSync(imageSavePath, { recursive: true });
 }
@@ -297,22 +297,23 @@ class ShapeHandler {
                 const imageCroppingStyles = croppingStyles ? croppingStyles.imageStyles : 'width: 100%; height: 100%; object-fit: cover; position: absolute; left: 0; top: 0;';
 
                 if (imageInfo) {
-                    return `<div class="image-container${placeholderClass}" data-name:"${shapeName}"
-                            srcRectL="${imageInfo.cropping && imageInfo.cropping.leftRaw ? imageInfo.cropping.leftRaw : ''}"
-                            srcRectR="${imageInfo.cropping && imageInfo.cropping.rightRaw ? imageInfo.cropping.rightRaw : ''}"
-                            srcRectT="${imageInfo.cropping && imageInfo.cropping.topRaw ? imageInfo.cropping.topRaw : ''}"
-                            srcRectB="${imageInfo.cropping && imageInfo.cropping.bottomRaw ? imageInfo.cropping.bottomRaw : ''}"
-                            
-                            style="position:absolute;
-                            left:${position.x}px;
-                            top:${position.y}px;
-                            height:${position.height}px;
-                            width:${position.width}px;
-                            ${shapeStyle}
-                            ${boxShadowCSS}
-                            ${containerCroppingStyles}
-                            transform: ${imgcss.transform} rotate(${rotation}deg);
-                            z-index:${zIndex};">
+                    return `<div class="shape image-container${placeholderClass}"
+        data-shape-type="image"
+        data-name="${shapeName}"
+        srcRectL="${imageInfo.cropping && imageInfo.cropping.leftRaw ? imageInfo.cropping.leftRaw : ''}"
+        srcRectR="${imageInfo.cropping && imageInfo.cropping.rightRaw ? imageInfo.cropping.rightRaw : ''}"
+        srcRectT="${imageInfo.cropping && imageInfo.cropping.topRaw ? imageInfo.cropping.topRaw : ''}"
+        srcRectB="${imageInfo.cropping && imageInfo.cropping.bottomRaw ? imageInfo.cropping.bottomRaw : ''}"
+        style="position:absolute;
+        left:${position.x}px;
+        top:${position.y}px;
+        height:${position.height}px;
+        width:${position.width}px;
+        ${shapeStyle}
+        ${boxShadowCSS}
+        ${containerCroppingStyles}
+        transform: ${imgcss.transform} rotate(${rotation}deg);
+        z-index:${zIndex};">
                             
                             <img src="${imageInfo.src}" alt="Img"
                                 style="${imageCroppingStyles}
@@ -439,20 +440,31 @@ class ShapeHandler {
             const transformString = this.getTransformString(position, isTextBox);
 
             if (this.hasMeaningfulText(cleanedText)) {
-                textContent = `<div class="sli-txt-box${textPlaceholderClass}" txtPhType="${txtPhType}" txtPhIdx="${txtPhIdx}" txtPhSz="${txtPhSz}" data-name="${shapeName}" id="${uniqueId}"
-                style=" 
-                  color:${shapeInfo.fontColor};
-                  font-size:${shapeInfo.fontSize}px; 
-                  display:flex;
-                  flex-direction: column;
-                  transform: ${transformString};
-                  ${opacity};
-                  justify-content: ${shapeInfo.justifyContent}; 
-                  text-align:${shapeInfo.textAlign};
-                  z-index:${zIndex};
-                  ">
-                  ${cleanedText}
-                </div>`;
+                textContent = `<div class="sli-txt-box${textPlaceholderClass}"
+    contenteditable="true"
+    spellcheck="false"
+    data-editable="text"
+    txtPhType="${txtPhType}"
+    txtPhIdx="${txtPhIdx}"
+    txtPhSz="${txtPhSz}"
+    data-name="${shapeName}"
+    id="${uniqueId}"
+    style="
+      color:${shapeInfo.fontColor};
+      font-size:${shapeInfo.fontSize}px;
+      display:flex;
+      flex-direction: column;
+      transform: ${transformString};
+      ${opacity};
+      justify-content: ${shapeInfo.justifyContent};
+      text-align:${shapeInfo.textAlign};
+      z-index:${zIndex};
+      pointer-events:auto;
+      user-select:text;
+      outline:none;
+    ">
+    ${cleanedText}
+</div>`;
             }
         }
 
@@ -3133,6 +3145,128 @@ class ShapeHandler {
             width = 0
         }
         return `border: ${width}px solid ${color};`;
+    }
+    // ✅ ADD METHOD 1
+    extractTableCellTextColor(tcNode, themeXML, clrMap) {
+        try {
+            const textBody = tcNode?.["a:txBody"]?.[0];
+            if (!textBody) return null;
+
+            const paragraphs = textBody["a:p"] || [];
+            
+            for (const p of paragraphs) {
+                const pPr = p["a:pPr"]?.[0];
+                if (pPr) {
+                    const defRPr = pPr["a:defRPr"]?.[0];
+                    if (defRPr) {
+                        const color = this.extractColorFromRunProperties(defRPr, themeXML, clrMap);
+                        if (color) return color;
+                    }
+                }
+
+                const runs = p["a:r"] || [];
+                for (const run of runs) {
+                    const rPr = run["a:rPr"]?.[0];
+                    if (rPr) {
+                        const color = this.extractColorFromRunProperties(rPr, themeXML, clrMap);
+                        if (color) return color;
+                    }
+                }
+            }
+
+            return null;
+        } catch (error) {
+            console.error("Error extracting table cell text color:", error);
+            return null;
+        }
+    }
+
+    // ✅ ADD METHOD 2
+    extractColorFromRunProperties(rPr, themeXML, clrMap) {
+        try {
+            const solidFill = rPr["a:solidFill"]?.[0];
+            if (!solidFill) return null;
+
+            const srgbClr = solidFill["a:srgbClr"]?.[0];
+            if (srgbClr) {
+                const val = srgbClr["$"]?.val;
+                if (val) return `#${val}`;
+            }
+
+            const schemeClr = solidFill["a:schemeClr"]?.[0];
+            if (schemeClr) {
+                const val = schemeClr["$"]?.val;
+                if (val) {
+                    const resolved = this.resolveSchemeColor(val, themeXML, clrMap);
+                    if (resolved) return resolved;
+                }
+            }
+
+            const sysClr = solidFill["a:sysClr"]?.[0];
+            if (sysClr) {
+                const lastClr = sysClr["$"]?.lastClr;
+                if (lastClr) return `#${lastClr}`;
+            }
+
+            return null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    // ✅ ADD METHOD 3
+    resolveSchemeColor(schemeClr, themeXML, clrMap) {
+        try {
+            if (!themeXML) return null;
+
+            let mappedColor = schemeClr;
+            if (clrMap && clrMap[schemeClr]) {
+                mappedColor = clrMap[schemeClr];
+            }
+
+            const clrScheme = themeXML?.["a:theme"]?.["a:themeElements"]?.[0]?.["a:clrScheme"]?.[0];
+            if (!clrScheme) return null;
+
+            const colorNode = clrScheme[`a:${mappedColor}`]?.[0];
+            if (!colorNode) return null;
+
+            const srgbClr = colorNode["a:srgbClr"]?.[0]?.["$"]?.val;
+            if (srgbClr) return `#${srgbClr}`;
+
+            const sysClr = colorNode["a:sysClr"]?.[0]?.["$"]?.lastClr;
+            if (sysClr) return `#${sysClr}`;
+
+            return null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    // ✅ ADD METHOD 4
+    extractTableCellText(tcNode) {
+        try {
+            const textBody = tcNode?.["a:txBody"]?.[0];
+            if (!textBody) return '';
+
+            const paragraphs = textBody["a:p"] || [];
+            const textParts = [];
+
+            for (const p of paragraphs) {
+                const runs = p["a:r"] || [];
+                const paragraphText = runs.map(run => {
+                    const text = run["a:t"]?.[0];
+                    return typeof text === 'string' ? text : '';
+                }).join('');
+
+                if (paragraphText) {
+                    textParts.push(paragraphText);
+                }
+            }
+
+            return textParts.join('<br>');
+        } catch (error) {
+            return '';
+        }
     }
 
 }

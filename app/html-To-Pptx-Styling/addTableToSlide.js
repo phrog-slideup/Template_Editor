@@ -2,8 +2,10 @@
  * Converts an HTML table to a PowerPoint table with all CSS properties dynamically extracted
  * and properly handles <ul>/<ol> lists inside cells as real PPT bullets/numbering.
  */
+
 function addTableToSlide(slide, tableElement, slideContext, containerElement = null) {
     // ----------------------------
+    const verticalOverlays = [];
     // Color utilities
     // ----------------------------
     function rgbToHex(rgb) {
@@ -70,20 +72,15 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
         return L < 0.5;
     }
 
-    // ----------------------------
-    // NEW: Function to extract background color from element
-    // ----------------------------
     function extractBackgroundColor(element) {
         if (!element) return null;
 
-        // Check inline style first
         const inlineStyle = element.getAttribute('style') || '';
         const bgMatch = inlineStyle.match(/background-color:\s*([^;]+)/i);
         if (bgMatch?.[1]) {
             return bgMatch[1].trim();
         }
 
-        // Check computed style if available (for CSS classes)
         if (typeof window !== 'undefined' && window.getComputedStyle) {
             const computedStyle = window.getComputedStyle(element);
             const bgColor = computedStyle.backgroundColor;
@@ -95,20 +92,15 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
         return null;
     }
 
-    // ----------------------------
-    // NEW: Function to extract text color from element
-    // ----------------------------
     function extractTextColor(element) {
         if (!element) return null;
 
-        // Check inline style first
         const inlineStyle = element.getAttribute('style') || '';
         const colorMatch = inlineStyle.match(/(?:^|;|\s)color:\s*([^;]+)/i);
         if (colorMatch?.[1]) {
             return colorMatch[1].trim();
         }
 
-        // Check computed style if available (for CSS classes)
         if (typeof window !== 'undefined' && window.getComputedStyle) {
             const computedStyle = window.getComputedStyle(element);
             const textColor = computedStyle.color;
@@ -123,23 +115,6 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
     // ----------------------------
     // Rich text + list helpers
     // ----------------------------
-    function listStyleToBulletOpts(listEl) {
-        const isOrdered = listEl.tagName.toLowerCase() === 'ol';
-        const styleStr = (listEl.getAttribute('style') || '');
-        const listStyle = styleStr.match(/list-style-type:\s*([^;]+)/i)?.[1]?.trim().toLowerCase();
-        const startAt = parseInt(listEl.getAttribute('start') || '1', 10);
-
-        if (isOrdered) {
-            return { bullet: { type: 'number', startAt: isNaN(startAt) ? 1 : startAt } };
-        } else {
-            if (listStyle === 'square') return { bullet: { char: '■' } };
-            if (listStyle === 'circle') return { bullet: { char: '○' } };
-            if (listStyle === 'disc') return { bullet: { char: '•' } };
-            return { bullet: true }; // default bullet
-        }
-    }
-
-    // Flatten a DOM node into pptx "runs" (array of IText) preserving inline styles (b/i/u, color, size, font)
     function extractRunsFromNode(node, inherited = {}) {
         const runs = [];
         const pushRun = (text, opt = {}) => {
@@ -156,7 +131,6 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
 
             const fs = s.match(/font-size:\s*([^;]+)/i)?.[1]?.trim();
             if (fs) {
-                // Keep numeric value exactly as authored (e.g., 18px -> 18, 10.5px -> 10.5, 16pt -> 16)
                 const num = parseFloat(fs);
                 if (!isNaN(num)) o.fontSize = num;
             }
@@ -171,7 +145,9 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
             if (fst && fst === 'italic') o.italic = true;
 
             const td = s.match(/text-decoration:\s*([^;]+)/i)?.[1]?.toLowerCase();
-            if (td?.includes('underline')) o.underline = true;
+            if (td?.includes('underline')) {
+                o.underline = { style: 'sng' };
+            }
 
             return o;
         };
@@ -189,7 +165,7 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
             let next = merge(inh, styleFromEl(n));
             if (tag === 'b' || tag === 'strong') next = merge(next, { bold: true });
             if (tag === 'i' || tag === 'em') next = merge(next, { italic: true });
-            if (tag === 'u') next = merge(next, { underline: true });
+            if (tag === 'u') next = merge(next, { underline: { style: 'sng' } });
 
             for (const c of n.childNodes) walk(c, next);
         };
@@ -198,28 +174,15 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
         return runs.length ? runs : [{ text: '' }];
     }
 
-    // Build content for a table cell:
-    //  - If it contains a list: return array of IText entries (each li is a bullet/number paragraph)
-    //  - Otherwise: return array of runs (IText[]) representing a single paragraph (no bullets)
     function buildCellContent(cell) {
         const firstList = cell.querySelector('ul,ol');
 
-        // Helper: pick a dominant style from runs (first non-empty run wins)
-        const dominantFromRuns = (runs) => {
-            for (const r of runs) {
-                if (r && r.text && r.text.trim()) {
-                    return r.options || {};
-                }
-            }
-            return {};
-        };
-
         if (!firstList) {
-            // Single paragraph: keep rich runs (pptxgen accepts IText[] in table cells)
+            // Single paragraph: return runs as-is
             return extractRunsFromNode(cell);
         }
 
-        // Lists → build bullet/numbered paragraphs with text:string for compatibility
+        // Lists → build bullet/numbered paragraphs
         const paras = [];
         const emitList = (listEl, indentLevel = 0) => {
             const isOrdered = listEl.tagName.toLowerCase() === 'ol';
@@ -227,7 +190,6 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
             const listType = styleStr.match(/list-style-type:\s*([^;]+)/i)?.[1]?.trim().toLowerCase();
             const startAt = parseInt(listEl.getAttribute('start') || '1', 10);
 
-            // base bullet options (no static chars unless HTML says so)
             const bulletBase = isOrdered
                 ? { bullet: { type: 'number', startAt: isNaN(startAt) ? 1 : startAt } }
                 : (listType === 'square' ? { bullet: { char: '■' } }
@@ -239,10 +201,7 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
                 if (li.tagName?.toLowerCase() !== 'li') continue;
 
                 const runs = extractRunsFromNode(li);
-                const paragraphText = runs.map(r => r.text).join(''); // <- ensure string, avoids [object][object]
-                const domStyle = dominantFromRuns(runs);
-
-                // paragraph-level align (from inner <p>)
+                
                 const liAlign = (li.querySelector('p[style*="text-align"]')?.getAttribute('style') || '')
                     .match(/text-align:\s*([^;]+)/i)?.[1]?.trim().toLowerCase();
 
@@ -252,14 +211,11 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
                     indentLevel ? { indentLevel: Math.min(5, indentLevel) } : {},
                     liAlign === 'center' ? { align: 'center' } :
                         liAlign === 'right' ? { align: 'right' } :
-                            liAlign === 'left' ? { align: 'left' } : {},
-                    // lift dominant inline styles to paragraph level for appearance
-                    ['fontFace', 'fontSize', 'color', 'bold', 'italic', 'underline']
-                        .reduce((acc, k) => (domStyle[k] !== undefined ? (acc[k] = domStyle[k], acc) : acc), {})
+                            liAlign === 'left' ? { align: 'left' } : {}
                 );
 
                 paras.push({
-                    text: paragraphText || ' ',
+                    text: runs.length > 0 ? runs : [{ text: ' ' }],
                     options: paraOpts
                 });
 
@@ -273,11 +229,10 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
     }
 
     // ----------------------------
-    // Position & dimensions (values are in "px" based on your 72-DPI flow)
+    // Position & dimensions
     // ----------------------------
     let xPos = 0, yPos = 0, tableWidth = 5, tableHeight = 2;
 
-    // Helper function to extract positioning from style attribute string
     function extractStyleValues(styleAttr) {
         if (!styleAttr) return {};
 
@@ -295,35 +250,29 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
         return values;
     }
 
-    // Helper function to parse dimension value and convert to inches
     function parseToInches(value) {
         if (!value) return 0;
         const numValue = parseFloat(value);
         if (value.includes('px')) {
-            return numValue / 72; // Convert px to inches (72 DPI)
+            return numValue / 72;
         } else if (value.includes('pt')) {
-            return numValue / 72; // Convert pt to inches
+            return numValue / 72;
         } else if (value.includes('in')) {
-            return numValue; // Already in inches
+            return numValue;
         } else {
-            return numValue / 72; // Default to px conversion
+            return numValue / 72;
         }
     }
 
-    // Priority 1: Use container element positioning if provided
     if (containerElement) {
         const containerStyles = extractStyleValues(containerElement.getAttribute('style'));
-
         if (containerStyles.left) xPos = parseToInches(containerStyles.left);
         if (containerStyles.top) yPos = parseToInches(containerStyles.top);
         if (containerStyles.width) tableWidth = parseToInches(containerStyles.width);
         if (containerStyles.height) tableHeight = parseToInches(containerStyles.height);
-
     }
 
-    // Priority 2: Fallback to table element positioning if container values not found
     if (xPos === 0 && yPos === 0) {
-        // Try table.style properties first
         if (tableElement.style) {
             if (tableElement.style.left) xPos = parseToInches(tableElement.style.left);
             if (tableElement.style.top) yPos = parseToInches(tableElement.style.top);
@@ -331,132 +280,229 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
             if (tableElement.style.height) tableHeight = parseToInches(tableElement.style.height);
         }
 
-        // If still no positioning, try style attribute
         if (xPos === 0 && yPos === 0) {
             const tableStyles = extractStyleValues(tableElement.getAttribute('style'));
-
             if (tableStyles.left) xPos = parseToInches(tableStyles.left);
             if (tableStyles.top) yPos = parseToInches(tableStyles.top);
             if (tableStyles.width) tableWidth = parseToInches(tableStyles.width);
             if (tableStyles.height) tableHeight = parseToInches(tableStyles.height);
         }
-
     }
 
-    // Ensure minimum dimensions
     if (tableWidth <= 0) tableWidth = 5;
     if (tableHeight <= 0) tableHeight = 2;
 
     // ----------------------------
-    // Build PPTX table rows with height extraction and dynamic background colors
+    // Build PPTX table rows
     // ----------------------------
     const rows = tableElement.rows;
     const pptxRows = [];
 
-    // Extract row heights from HTML tr elements - STEP 1
+    let maxColumns = Infinity;
+    for (let i = 0; i < rows.length; i++) {
+        const htmlRow = rows[i];
+        let rowColumnCount = 0;
+        
+        for (let j = 0; j < htmlRow.cells.length; j++) {
+            const cell = htmlRow.cells[j];
+            const colspan = parseInt(cell.getAttribute('colspan')) || 1;
+            rowColumnCount += colspan;
+        }
+        
+        if (rowColumnCount < maxColumns) {
+            maxColumns = rowColumnCount;
+        }
+    }
+
     let rowHeights = [];
     for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
         const rowStyleAttr = row.getAttribute('style') || '';
-
         let rowHeight = 0;
         const rowHeightMatch = rowStyleAttr.match(/height:\s*([^;]+)/i);
         if (rowHeightMatch?.[1]) {
             const heightValue = rowHeightMatch[1].trim();
             rowHeight = parseToInches(heightValue);
         }
-
         if (rowHeight === 0) {
-            rowHeight = 0.5; // Default
+            rowHeight = 0.5;
         }
-
         rowHeights.push(rowHeight);
     }
 
-    // Process each row
     for (let i = 0; i < rows.length; i++) {
         const htmlRow = rows[i];
         const pptxCells = [];
-
-        // NEW: Extract row-level background color
+        
         const rowBgColor = extractBackgroundColor(htmlRow);
         const rowTextColor = extractTextColor(htmlRow);
 
+        let columnsUsed = 0;
+
         for (let j = 0; j < htmlRow.cells.length; j++) {
             const cell = htmlRow.cells[j];
+            const colspan = parseInt(cell.getAttribute('colspan')) || 1;
+            const rowspan = parseInt(cell.getAttribute('rowspan')) || 1;
 
-            // Base cell options
-            const cellOpts = { color: '000000' };
+            if (columnsUsed + colspan > maxColumns) {
+                break;
+            }
 
-            // Inline style attribute
+            // ✅ Get cellStyleAttr FIRST before using it
             const cellStyleAttr = cell.getAttribute('style') || '';
 
-            // STEP 2: Extract cell height and update row height if larger
+            // Base cell options
+            const cellOpts = { 
+                color: '000000',
+                border: [
+                    { pt: 1, color: 'FFFFFF' },
+                    { pt: 1, color: 'FFFFFF' },
+                    { pt: 1, color: 'FFFFFF' },
+                    { pt: 1, color: 'FFFFFF' }
+                ]
+            };
+
+            // Text rotation/vertical text
+           // Text rotation/vertical text - check BOTH writing-mode AND transform
+const writeDir = cellStyleAttr.match(/writing-mode:\s*([^;]+)/i)?.[1]?.trim();
+const transform = cellStyleAttr.match(/transform:\s*rotate\(([^)]+)\)/i)?.[1]?.trim();
+const isVerticalText =
+  writeDir === 'vertical-rl' ||
+  writeDir === 'tb-rl' ||
+  transform === '90deg' ||
+  transform === '270deg' ||
+  transform === '-90deg';
+
+// PptxGenJS valid vert values: 'eaVert', 'horz', 'mongolianVert', 'vert', 'vert270', 'wordArtVert', 'wordArtVertRtl'
+if (writeDir && (writeDir === 'vertical-rl' || writeDir === 'tb-rl' || writeDir === 'vertical-lr')) {
+    if (transform && (transform === '180deg' || transform === '180')) {
+        // vertical-rl + rotate(180deg) = bottom-to-top
+        cellOpts.vert = 'vert270';
+    } else {
+        // Just vertical-rl = top-to-bottom  
+        cellOpts.vert = 'vert';
+    }
+} else if (transform) {
+    if (transform === '90deg' || transform === '90') {
+        cellOpts.vert = 'vert';
+    } else if (transform === '270deg' || transform === '270' || transform === '-90deg') {
+        cellOpts.vert = 'vert270';
+    }
+}
+
+// ✅ CRITICAL: Set vertical property at the TOP LEVEL, not nested
+if (cellOpts.vert) {
+    cellOpts.vertical = cellOpts.vert; // Some versions use 'vertical' instead of 'vert'
+}
+
+console.log('Cell vertical text detection:', { writeDir, transform, vert: cellOpts.vert });
+
+            if (colspan > 1) cellOpts.colspan = colspan;
+            if (rowspan > 1) cellOpts.rowspan = rowspan;
+            columnsUsed += colspan;
+
+            // Cell height
             const cellHeightMatch = cellStyleAttr.match(/height:\s*([^;]+)/i);
             if (cellHeightMatch?.[1]) {
                 const heightValue = cellHeightMatch[1].trim();
                 const cellHeight = parseToInches(heightValue);
-
-                // Update row height if cell height is larger
                 if (cellHeight > rowHeights[i]) {
                     rowHeights[i] = cellHeight;
                 }
             }
 
-            // NEW: Dynamic background color extraction (priority: cell > row)
+            // Background color
             let bgColor = extractBackgroundColor(cell) || rowBgColor;
             if (bgColor) {
                 const hex = rgbToHex(bgColor);
-                cellOpts.fill = { color: hex };            // << must be an object for tables
+                cellOpts.fill = { color: hex };
             }
 
-            // NEW: Dynamic text color extraction (priority: cell > row)
+            // Text color
             let textColor = extractTextColor(cell) || rowTextColor;
             if (textColor) {
                 cellOpts.color = rgbToHex(textColor);
             } else if (bgColor) {
-                // Auto-determine text color based on background if no explicit text color
                 cellOpts.color = isColorDark(bgColor) ? 'FFFFFF' : '000000';
             }
 
-            // Check if it's a header cell for additional styling
+            // Header cell
             const isHeaderCell = cell.tagName.toLowerCase() === 'th';
-
-            // Apply header-specific styling only if not already styled
-            if (isHeaderCell) {
-                // Only apply bold if not already set
-                if (!cellStyleAttr.includes('font-weight')) {
-                    cellOpts.bold = true;
-                }
-
-                // Only center-align if no alignment is specified
-                if (!cellStyleAttr.includes('text-align')) {
-                    const pAlign = (cell.querySelector('p[style*="text-align"]')?.getAttribute('style') || '')
-                        .match(/text-align:\s*([^;]+)/i)?.[1]?.trim().toLowerCase();
-                    if (!pAlign) {
-                        cellOpts.align = 'center';
-                    }
-                }
+            if (isHeaderCell && !cellStyleAttr.includes('font-weight')) {
+                cellOpts.bold = true;
             }
 
-            // Continue with other style extractions (alignments, fonts, etc.)
-            const ta = cellStyleAttr.match(/text-align:\s*([^;]+)/i)?.[1]?.trim().toLowerCase();
-            if (ta) {
-                if (ta === 'center') cellOpts.align = 'center';
-                else if (ta === 'right') cellOpts.align = 'right';
-                else if (ta === 'left') cellOpts.align = 'left';
-            } else if (!cellOpts.align) {
-                const pAlign = (cell.querySelector('p[style*="text-align"]')?.getAttribute('style') || '')
-                    .match(/text-align:\s*([^;]+)/i)?.[1]?.trim().toLowerCase();
-                if (pAlign === 'center') cellOpts.align = 'center';
-                else if (pAlign === 'right') cellOpts.align = 'right';
-                else if (pAlign === 'left') cellOpts.align = 'left';
-            }
+            
 
-            const va = cellStyleAttr.match(/vertical-align:\s*([^;]+)/i)?.[1]?.trim().toLowerCase();
-            if (va === 'top') cellOpts.valign = 'top';
-            else if (va === 'bottom') cellOpts.valign = 'bottom';
-            else if (va === 'middle') cellOpts.valign = 'middle';
+            // Vertical alignment
+            // Vertical alignment
+const va = cellStyleAttr.match(/vertical-align:\s*([^;]+)/i)?.[1]?.trim().toLowerCase();
+if (va === 'top') {
+    cellOpts.valign = 'top';
+} else if (va === 'bottom') {
+    cellOpts.valign = 'bottom';
+} else if (va === 'middle' || va === 'center') {
+    cellOpts.valign = 'middle';
+}
+
+// ✅ For vertical text, also ensure proper alignment
+if (cellOpts.vert) {
+    // Vertical text defaults to top if not specified
+    if (!cellOpts.valign) {
+        cellOpts.valign = 'top';
+    }
+}
+
+            // Cell padding
+            const paddingTop = cellStyleAttr.match(/padding-top:\s*([^;]+)/i)?.[1];
+            const paddingRight = cellStyleAttr.match(/padding-right:\s*([^;]+)/i)?.[1];
+            const paddingBottom = cellStyleAttr.match(/padding-bottom:\s*([^;]+)/i)?.[1];
+            const paddingLeft = cellStyleAttr.match(/padding-left:\s*([^;]+)/i)?.[1];
+            const paddingAll = cellStyleAttr.match(/(?:^|;)\s*padding:\s*([^;]+)/i)?.[1];
+
+            const parsePaddingToPoints = (value) => {
+    if (!value) return null;
+    const num = parseFloat(value);
+    if (isNaN(num)) return null;
+    
+    // PptxGenJS expects points, converts internally: points * 12700 = EMUs
+    
+    if (value.includes('px')) {
+        return num * 0.75; // px to points (96 DPI: 1pt = 1.333px)
+    } else if (value.includes('pt')) {
+        return num; // Already in points
+    } else if (value.includes('in')) {
+        return num * 72; // inches to points (72pt = 1in)
+    } else {
+        return num * 0.75; // Default: assume px
+    }
+};
+
+            if (paddingAll) {
+    const parts = paddingAll.trim().split(/\s+/);
+    if (parts.length === 1) {
+        const pt = parsePaddingToPoints(parts[0]);
+        if (pt !== null) cellOpts.margin = pt;
+    } else if (parts.length === 2) {
+        const ptV = parsePaddingToPoints(parts[0]);
+        const ptH = parsePaddingToPoints(parts[1]);
+        if (ptV !== null && ptH !== null) {
+            cellOpts.margin = [ptV, ptH, ptV, ptH];
+        }
+    } else if (parts.length === 4) {
+        const margins = parts.map(p => parsePaddingToPoints(p));
+        if (margins.every(m => m !== null)) {
+            cellOpts.margin = margins;
+        }
+    }
+} else if (paddingTop || paddingRight || paddingBottom || paddingLeft) {
+    const ptT = parsePaddingToPoints(paddingTop) || 0;
+    const ptR = parsePaddingToPoints(paddingRight) || 0;
+    const ptB = parsePaddingToPoints(paddingBottom) || 0;
+    const ptL = parsePaddingToPoints(paddingLeft) || 0;
+    
+    cellOpts.margin = [ptT, ptR, ptB, ptL];
+}
 
             // Font size
             const fs = cellStyleAttr.match(/font-size:\s*([^;]+)/i)?.[1]?.trim();
@@ -475,11 +521,31 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
             const ff = cellStyleAttr.match(/font-family:\s*([^;]+)/i)?.[1]?.trim().replace(/['"]/g, '').split(',')[0];
             if (ff) cellOpts.fontFace = ff;
 
-            // Border (shorthand)
-            const borderMatch = cellStyleAttr.match(/border:\s*([^;]+)/i);
-            if (borderMatch?.[1]) {
-                const parts = borderMatch[1].trim().split(/\s+/);
-                let bPt = 1, bColor = '000000';
+            // Font style (italic)
+            const fst = cellStyleAttr.match(/font-style:\s*([^;]+)/i)?.[1]?.trim();
+            if (fst && fst === 'italic') {
+                cellOpts.italic = true;
+            }
+
+            // Text decoration (underline)
+            const td = cellStyleAttr.match(/text-decoration:\s*([^;]+)/i)?.[1]?.trim().toLowerCase();
+            if (td && td.includes('underline')) {
+                cellOpts.underline = true;
+            }
+
+            // Borders
+            const parseBorderSide = (side) => {
+                const match = cellStyleAttr.match(new RegExp(`border-${side}:\\s*([^;]+)`, 'i'));
+                if (!match?.[1]) return null;
+                
+                const borderValue = match[1].trim();
+                if (borderValue === 'none' || borderValue === '0') {
+                    return { pt: 0, color: '000000' };
+                }
+                
+                const parts = borderValue.split(/\s+/);
+                let bPt = 1, bColor = 'FFFFFF';
+                
                 parts.forEach(p => {
                     const w = p.match(/^(\d+(?:\.\d+)?)(px|pt)?$/i);
                     if (w) {
@@ -491,29 +557,91 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
                         bColor = rgbToHex(p);
                     }
                 });
-                cellOpts.border = [
-                    { pt: bPt, color: bColor },
-                    { pt: bPt, color: bColor },
-                    { pt: bPt, color: bColor },
-                    { pt: bPt, color: bColor },
-                ];
+                
+                return { pt: bPt, color: bColor };
+            };
+
+            const topBorder = parseBorderSide('top');
+            const rightBorder = parseBorderSide('right');
+            const bottomBorder = parseBorderSide('bottom');
+            const leftBorder = parseBorderSide('left');
+
+            if (topBorder) cellOpts.border[0] = topBorder;
+            if (rightBorder) cellOpts.border[1] = rightBorder;
+            if (bottomBorder) cellOpts.border[2] = bottomBorder;
+            if (leftBorder) cellOpts.border[3] = leftBorder;
+
+            // Content
+            let rich = buildCellContent(cell);
+
+            // ✅ CRITICAL FIX: Apply cell alignment to text runs
+            // ✅ Extract text alignment from cell style
+            // ✅ Extract and apply text alignment
+const ta = cellStyleAttr.match(/text-align:\s*([^;]+)/i)?.[1]?.trim().toLowerCase();
+let paragraphAlign = null;
+
+if (ta === 'center') paragraphAlign = 'center';
+else if (ta === 'right') paragraphAlign = 'right';
+else if (ta === 'left') paragraphAlign = 'left';
+else if (ta === 'justify') paragraphAlign = 'justify';
+
+// Apply alignment to content structure
+if (Array.isArray(rich) && rich.length > 0 && typeof rich[0] === 'object') {
+    // Has paragraph structure (from lists or formatted content)
+    rich = rich.map(item => {
+        if (item && typeof item === 'object' && item.text !== undefined) {
+            const existingAlign = item.options?.align;
+            
+            // Don't override if paragraph already has explicit alignment
+            if (!existingAlign && paragraphAlign) {
+                return {
+                    text: item.text,
+                    options: {
+                        ...item.options,
+                        align: paragraphAlign
+                    }
+                };
             }
+        }
+        return item;
+    });
+} else if (paragraphAlign) {
+    // Plain runs array - wrap in paragraph with alignment
+    rich = [{
+        text: rich,
+        options: { align: paragraphAlign }
+    }];
+}
 
-            // Wrapping hints
-            if (cellStyleAttr.includes('word-wrap: break-word') || cellStyleAttr.includes('overflow-wrap: break-word')) {
-                cellOpts.breakLine = true;
-            }
+          if (isVerticalText) {
+  // Keep table cell empty
+  pptxCells.push({
+    text: '',
+    options: cellOpts
+  });
 
-            // Build cell content (using existing buildCellContent function)
-            const rich = buildCellContent(cell);
+  // Store overlay info for later
+  verticalOverlays.push({
+    text: rich,
+    rowIndex: i,
+    colIndex: columnsUsed - colspan,
+    colspan,
+    rowspan,
+    cellOpts
+  });
 
-            pptxCells.push({
-                text: rich,
-                options: cellOpts
-            });
+} else {
+  pptxCells.push({
+    text: rich,
+    options: cellOpts
+  });
+}
+
         }
 
-        if (pptxCells.length) pptxRows.push(pptxCells);
+        if (pptxCells.length) {
+            pptxRows.push(pptxCells);
+        }
     }
 
     if (!pptxRows.length) {
@@ -521,17 +649,60 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
         return;
     }
 
-    // Table options with extracted row heights
-    const colCount = pptxRows[0].length;
+    const colWArr = new Array(maxColumns).fill(tableWidth / maxColumns);
+
     const tableOpts = {
         x: xPos,
         y: yPos,
         w: tableWidth,
-        colW: new Array(colCount).fill(tableWidth / colCount),
-        rowH: rowHeights, // Use extracted row/cell heights
+        colW: colWArr,
+        rowH: rowHeights
     };
 
     slide.addTable(pptxRows, tableOpts);
+    // ---- Overlay vertical text as rotated text boxes ----
+verticalOverlays.forEach(item => {
+  const { text, rowIndex, colIndex, colspan, rowspan, cellOpts } = item;
+
+  // Calculate X position
+  let x = xPos;
+  for (let c = 0; c < colIndex; c++) {
+    x += colWArr[c];
+  }
+
+  // Calculate Y position
+  let y = yPos;
+  for (let r = 0; r < rowIndex; r++) {
+    y += rowHeights[r];
+  }
+
+  // Cell dimensions
+  let w = 0;
+  for (let c = 0; c < colspan; c++) {
+    w += colWArr[colIndex + c];
+  }
+
+  let h = 0;
+  for (let r = 0; r < rowspan; r++) {
+    h += rowHeights[rowIndex + r];
+  }
+
+  slide.addText(text, {
+    x,
+    y,
+    w,
+    h,
+    vert: cellOpts.vert === 'vert270' ? 'vert270' : 'vert',
+    align: 'center',
+    valign: 'middle',
+    fontFace: cellOpts.fontFace,
+    fontSize: cellOpts.fontSize,
+    color: cellOpts.color,
+    bold: cellOpts.bold,
+    italic: cellOpts.italic
+  });
+});
+
 }
 
 module.exports = {

@@ -3,7 +3,7 @@ const jsdom = require("jsdom");
 const { JSDOM } = jsdom;
 const path = require("path");
 const fs = require("fs");
-const fsPromises = require("fs").promises;
+const fsPromises = require("fs").promises; 
 const puppeteer = require("puppeteer");
 const axios = require("axios");
 const JSZip = require('jszip');
@@ -173,6 +173,10 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         // NEW STEP 6.9: Clean slide XML for Syncfusion compatibility
         console.log('🧹 Step 6.9: Cleaning slides for Syncfusion compatibility...');
         const slideCleanResult = await cleanSlideXmlForSyncfusion(slideXmlsDir);
+
+        // NEW STEP 6.10: Fix table cell alignment in merged cells
+console.log('🔧 Step 6.10: Fixing table cell alignment...');
+const alignmentFixResult = await fixTableCellAlignment(slideXmlsDir);
 
         const fileFolderName = originalFolderName; // e.g., 'Agenda'
         const filesDir = path.resolve(__dirname, '../files');
@@ -2754,6 +2758,109 @@ async function convertZipToPptxFile(sourceFolder, zipFileOutput, customName = nu
     } catch (error) {
         console.error(`❌ Error creating zip/pptx file: ${error.message}`);
         throw error;
+    }
+}
+async function fixTableCellAlignment(slideXmlsDir) {
+    try {
+        console.log('🔧 Fixing table cell alignment in merged cells...');
+
+        const slidesDir = path.join(slideXmlsDir, 'slides');
+        
+        if (!await checkDirectoryExists(slidesDir)) {
+            console.log('   ℹ️  No slides directory found');
+            return { success: true, slidesFixed: 0 };
+        }
+
+        const slideFiles = await fsPromises.readdir(slidesDir);
+        const slideXmlFiles = slideFiles.filter(file => file.match(/^slide\d+\.xml$/));
+        
+        let fixedCount = 0;
+
+        for (const slideFile of slideXmlFiles) {
+            try {
+                const slidePath = path.join(slidesDir, slideFile);
+                let slideContent = await fsPromises.readFile(slidePath, 'utf8');
+                const originalContent = slideContent;
+
+                // Find all table rows
+                const rowRegex = /<a:tr[^>]*>([\s\S]*?)<\/a:tr>/g;
+                let rowMatch;
+                const rowsToFix = [];
+
+                while ((rowMatch = rowRegex.exec(slideContent)) !== null) {
+                    const rowContent = rowMatch[1];
+                    const fullRow = rowMatch[0];
+                    
+                    // Check if row has merged cells (hMerge)
+                    if (rowContent.includes('hMerge="1"')) {
+                        // Find first cell with alignment
+                        const firstCellMatch = rowContent.match(/<a:tc[^>]*>([\s\S]*?)<\/a:tc>/);
+                        if (firstCellMatch) {
+                            const firstCellContent = firstCellMatch[1];
+                            
+                            // Extract alignment from first cell
+                            const alignMatch = firstCellContent.match(/<a:pPr\s+algn="([^"]+)"/);
+                            if (alignMatch) {
+                                const alignment = alignMatch[1];
+                                console.log(`   📌 Found alignment="${alignment}" in merged row`);
+                                
+                                // Fix all hMerge cells in this row to have alignment
+                                let fixedRow = fullRow.replace(
+                                    /<a:tc\s+hMerge="1">([\s\S]*?)<\/a:tc>/g,
+                                    (match, cellContent) => {
+                                        // Check if cell already has <a:pPr>
+                                        if (cellContent.includes('<a:pPr')) {
+                                            // Already has pPr, just add alignment if missing
+                                            if (!cellContent.includes('algn=')) {
+                                                return match.replace(
+                                                    /<a:pPr/,
+                                                    `<a:pPr algn="${alignment}"`
+                                                );
+                                            }
+                                            return match;
+                                        } else {
+                                            // No pPr, add it inside <a:p>
+                                            return match.replace(
+                                                /<a:p>/,
+                                                `<a:p><a:pPr algn="${alignment}"/>`
+                                            );
+                                        }
+                                    }
+                                );
+                                
+                                rowsToFix.push({ original: fullRow, fixed: fixedRow });
+                            }
+                        }
+                    }
+                }
+
+                // Apply all row fixes
+                for (const { original, fixed } of rowsToFix) {
+                    slideContent = slideContent.replace(original, fixed);
+                }
+
+                if (slideContent !== originalContent) {
+                    await fsPromises.writeFile(slidePath, slideContent, 'utf8');
+                    console.log(`   ✅ Fixed merged cell alignment in ${slideFile}`);
+                    fixedCount++;
+                }
+
+            } catch (error) {
+                console.error(`   ❌ Error fixing ${slideFile}: ${error.message}`);
+            }
+        }
+
+        console.log(`   🎉 Table alignment fix complete - ${fixedCount} slide(s) fixed`);
+
+        return {
+            success: true,
+            slidesFixed: fixedCount,
+            totalSlides: slideXmlFiles.length
+        };
+
+    } catch (error) {
+        console.error('   ❌ Error in fixTableCellAlignment:', error);
+        return { success: false, error: error.message };
     }
 }
 

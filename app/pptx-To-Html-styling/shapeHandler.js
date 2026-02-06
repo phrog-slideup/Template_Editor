@@ -48,6 +48,12 @@ class ShapeHandler {
         return 12700;
     }
 
+    isCenterTitlePlaceholder(shapeNode) {
+        const phElement = shapeNode?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0];
+        if (!phElement) return false;
+        return phElement?.["$"]?.type === "ctrTitle";
+    }
+
     isPlaceholder(shapeNode) {
         const phElement = shapeNode?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0];
         return Boolean(phElement);
@@ -82,15 +88,25 @@ class ShapeHandler {
         }
 
         // Process connectors
-        if (lineShapeTag) {
+        if (lineShapeTag && lineShapeTag.length > 0) {
+            console.log(`Processing ${lineShapeTag.length} connectors`); // DEBUG
             for (const cxnSpNode of lineShapeTag) {
-                const connectorHtml = await getLineConnectorHandler.convertConnectorToHTML(cxnSpNode, this.themeXML, this.clrMap, this.masterXML, this.layoutXML);
-
-                if (typeof connectorHtml !== 'string') {
-                    console.error('Non-string connector HTML:', typeof connectorHtml, connectorHtml);
+                try {
+                    const connectorHtml = await getLineConnectorHandler.convertConnectorToHTML(
+                        cxnSpNode, this.themeXML, this.clrMap, this.masterXML, this.layoutXML);
+                    
+                    if (typeof connectorHtml === 'string' && connectorHtml.trim()) {
+                        allHtmlElements.push(connectorHtml);
+                        console.log('Connector added:', cxnSpNode?.["p:nvCxnSpPr"]?.[0]?.["p:cNvPr"]?.[0]?.["$"]?.name); // DEBUG
+                    } else {
+                        console.warn('Empty connector:', cxnSpNode?.["p:nvCxnSpPr"]?.[0]?.["p:cNvPr"]?.[0]?.["$"]?.name);
+                    }
+                } catch (error) {
+                    console.error('Connector error:', error);
                 }
-                allHtmlElements.push(connectorHtml);
             }
+        } else {
+            console.warn('No connectors found in lineShapeTag');
         }
 
         // Process tables And Charts.
@@ -361,7 +377,7 @@ class ShapeHandler {
         // Extracting border (stroke) properties
         const outline = shapeNode['p:spPr']?.[0]?.['a:ln']?.[0];
         // const shapeBorder = shapeNode['p:spPr']?.[0]?.['a:ln']?.[0]?.['a:solidFill'];
-        // const shapeBorder = await this.getShapeBorderStyle(outline);
+        const shapeBorder = await this.getShapeBorderStyle(outline);
 
         const shapeBorderStyle = getShapeBorderCSS.getShapeBorderCSS(shapeNode, this.clrMap, this.themeXML, this.masterXML);
 
@@ -437,19 +453,27 @@ class ShapeHandler {
 
             const isTextBox = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvSpPr"]?.[0]?.["$"]?.txBox === "1";
             const transformString = this.getTransformString(position, isTextBox);
+            // Rakesh Notes::: here from the below style i have remove the transformString variable as it is adding double rotation to bot the inner and outer (transform: ${transformString};)
+
+            // NEW: Calculate if we need dynamic height
+            const useHeightauto = shapeInfo.estimatedContentHeight && shapeInfo.estimatedContentHeight > position.height;
+            const effectiveHeight = useHeightauto ? shapeInfo.estimatedContentHeight : position.height;
 
             if (this.hasMeaningfulText(cleanedText)) {
                 textContent = `<div class="sli-txt-box${textPlaceholderClass}" txtPhType="${txtPhType}" txtPhIdx="${txtPhIdx}" txtPhSz="${txtPhSz}" data-name="${shapeName}" id="${uniqueId}"
                 style=" 
-                  color:${shapeInfo.fontColor};
-                  font-size:${shapeInfo.fontSize}px; 
-                  display:flex;
-                  flex-direction: column;
-                  transform: ${transformString};
-                  ${opacity};
-                  justify-content: ${shapeInfo.justifyContent}; 
-                  text-align:${shapeInfo.textAlign};
-                  z-index:${zIndex};
+                    color:${shapeInfo.fontColor};
+                    font-size:${shapeInfo.fontSize}px; 
+                    display:flex;
+                    flex-direction: column;
+                    transform: ${transformString};
+                    ${opacity};
+                    justify-content: ${shapeInfo.justifyContent}; 
+                    text-align:${shapeInfo.textAlign};
+                    height:${effectiveHeight}px;
+                    min-height:${position.height}px;
+                    overflow-y: ${useHeightauto ? 'visible' : 'hidden'};
+                    z-index:${zIndex};
                   ">
                   ${cleanedText}
                 </div>`;
@@ -2615,22 +2639,38 @@ class ShapeHandler {
     }
 
     // When generating CSS transform, use this logic:
-    getTransformString(position, isTextBox = false) {
-        let transforms = [];
+    // getTransformString(position, isTextBox = false) {
+    //     let transforms = [];
 
-        if (position.rotation !== 0) {
+    //     if (position.rotation !== 0) {
+    //         transforms.push(`rotate(${position.rotation}deg)`);
+    //     }
+
+    //     if (position.flipH) {
+    //         transforms.push('scaleX(-1)');
+    //     }
+
+    //     if (position.flipV) {
+    //         transforms.push('scaleY(-1)');
+    //     }
+
+    //     return transforms.length > 0 ? transforms.join(' ') : 'none';
+    // }
+
+    // Rakesh Notes::: here above is the original function i have change it 
+    getTransformString(position, isTextBox = false) {
+        const transforms = [];
+
+        if (!isTextBox) {
+            if (position.flipH) transforms.push('scaleX(-1)');
+            if (position.flipV) transforms.push('scaleY(-1)');
+        }
+
+        if (position.rotation && position.rotation !== 0) {
             transforms.push(`rotate(${position.rotation}deg)`);
         }
 
-        if (position.flipH) {
-            transforms.push('scaleX(-1)');
-        }
-
-        if (position.flipV) {
-            transforms.push('scaleY(-1)');
-        }
-
-        return transforms.length > 0 ? transforms.join(' ') : 'none';
+        return transforms.length ? transforms.join(' ') : 'none';
     }
 
     getShapeFillColor(shapeNode, themeXML, masterXML = null) {

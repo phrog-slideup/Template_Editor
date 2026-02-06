@@ -742,65 +742,125 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
         }
 
         // Handle placeholder text
-        if (element.classList.contains('placeholder-text') ||
-            element.querySelector('.sli-txt-box.placeholder-text')) {
-
+        if (element.classList.contains('placeholder-text') || element.querySelector('.sli-txt-box.placeholder-text')) {            
             const placeholderType = determinePlaceholderType(element, 'text');
             const position = extractElementPosition(element, slideContext);
-
-            const textElement = element.classList.contains('sli-txt-box')
-                ? element
-                : element.querySelector('.sli-txt-box');
-
+       
+            const textElement = element.classList.contains('sli-txt-box') ? element : element.querySelector('.sli-txt-box');
+       
             // ✅ FIXED: Get txtph attributes from the textElement, not the outer element
             const txtPhType = textElement?.getAttribute('txtphtype') || textElement?.getAttribute('txtPhType') || '';
             const txtPhIdx = textElement?.getAttribute('txtphidx') || textElement?.getAttribute('txtPhIdx') || '';
             const txtPhSz = textElement?.getAttribute('txtphsz') || textElement?.getAttribute('txtPhSz') || '';
-
-            let placeholderText = getPlaceholderText(placeholderType);
+       
             let textOptions = extractTextStyle(textElement);
-
-            if (textElement && textElement.textContent.trim()) {
-                placeholderText = textElement.textContent.trim();
+       
+            // ✅ FIX: Process text with BR tags properly
+            let textRuns = [];
+           
+            if (textElement) {
+                const paragraphs = textElement.querySelectorAll('p');
+               
+                if (paragraphs.length > 0) {
+                    // Process each paragraph
+                    paragraphs.forEach((p, pIndex) => {
+                        const children = Array.from(p.childNodes);
+                       
+                        children.forEach((node) => {
+                            // Handle BR tags
+                            if (node.nodeType === 1 && node.tagName === 'BR') {
+                                if (textRuns.length > 0) {
+                                    textRuns[textRuns.length - 1].text += '\n';
+                                }
+                                return;
+                            }
+                           
+                            // Handle SPAN tags
+                            if (node.nodeType === 1 && node.tagName === 'SPAN') {
+                                let spanText = node.textContent || '';
+                                if (spanText.length > 0) {
+                                    textRuns.push({
+                                        text: spanText,
+                                        options: { bold: false }
+                                    });
+                                }
+                            }
+                           
+                            // Handle text nodes
+                            if (node.nodeType === 3) {
+                                let text = node.textContent || '';
+                                if (text.trim().length > 0) {
+                                    textRuns.push({
+                                        text: text,
+                                        options: { bold: false }
+                                    });
+                                }
+                            }
+                        });
+                       
+                        // Add paragraph break between paragraphs
+                        if (pIndex < paragraphs.length - 1 && textRuns.length > 0) {
+                            textRuns[textRuns.length - 1].text += '\n';
+                        }
+                    });
+                } else {
+                    // No paragraphs, just use the text content
+                    const textContent = textElement.textContent.trim();
+                    if (textContent) {
+                        textRuns.push({
+                            text: textContent,
+                            options: { bold: false }
+                        });
+                    }
+                }
             }
-
+       
+            // Fallback if no text runs were created
+            if (textRuns.length === 0) {
+                const placeholderText = getPlaceholderText(placeholderType);
+                textRuns.push({
+                    text: placeholderText,
+                    options: { bold: false }
+                });
+            }
+       
             // Extract color and luminosity adjustments from the span
-            const spanElement = textElement.querySelector('span');
-            let textColor = spanElement?.getAttribute('originaltxtcolor') || ''; // Get color
+            const spanElement = textElement?.querySelector('span');
+            let textColor = spanElement?.getAttribute('originaltxtcolor') || '';
             const lumMod = spanElement?.getAttribute('originallummod');
             const lumOff = spanElement?.getAttribute('originallumoff');
-
+       
             textOptions.color = textColor;
-
+       
             // Convert txtPhType for placeholder usage (if needed)
             const normalizedPhType = txtPhType || 'body';
             const normalizedPhIdx = txtPhIdx.trim() !== '' ? parseInt(txtPhIdx.trim(), 10) : undefined;
-
+       
             // Handle text positioning and alignment
-            const justifyContent = element.style.justifyContent || 'flex-start'; // Default to flex-start
-            const alignItems = element.style.alignItems || 'flex-start'; // Default to flex-start
-            const textAlign = textElement.style.textAlign || 'left'; // Default to left
-
+            const justifyContent = element.style.justifyContent || 'flex-start';
+            const alignItems = element.style.alignItems || 'flex-start';
+            const textAlign = textElement?.style.textAlign || 'left';
+       
             // Setting horizontal alignment based on text-align and justify-content
             let align = 'left';
             if (justifyContent === 'flex-start') {
-                align = 'left'; // Left align the text
+                align = 'left';
             } else if (justifyContent === 'center') {
-                align = 'center'; // Center align the text
+                align = 'center';
             } else if (justifyContent === 'flex-end') {
-                align = 'right'; // Right align the text
+                align = 'right';
             }
-
+       
             // Vertical alignment
-            let valign = 'top'; // Default alignment
+            let valign = 'top';
             if (alignItems === 'flex-start') {
-                valign = 'top'; // Top align
+                valign = 'top';
             } else if (alignItems === 'center') {
-                valign = 'middle'; // Center align
+                valign = 'middle';
             } else if (alignItems === 'flex-end') {
-                valign = 'bottom'; // Bottom align
+                valign = 'bottom';
             }
-
+       
             // For textAlign (CSS), map it to PowerPoint alignment
             if (textAlign === 'left') {
                 align = 'left';
@@ -809,18 +869,17 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
             } else if (textAlign === 'right') {
                 align = 'right';
             }
-
+       
             pptSlide.addText(
-                [{ text: placeholderText, options: { bold: false } }],
+                textRuns,
                 {
-
                     x: position.x,
                     y: position.y,
                     w: position.w,
                     h: position.h,
                     fontSize: textOptions.fontSize,
                     color: textOptions.color,
-                    fontFace: textOptions.fontFace || (isTitle ? '+mj-lt' : undefined),
+                    fontFace: textOptions.fontFace || (typeof isTitle !== 'undefined' && isTitle ? '+mj-lt' : undefined),
                     align: align,
                     valign: valign,
                     objectName: element.getAttribute('data-name') || `Text Placeholder (${placeholderType})`,
@@ -836,8 +895,7 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
         }
 
         // Handle shapes with placeholder text
-        if (element.classList.contains('shape') &&
-            element.querySelector('.placeholder-text')) {
+        if (element.classList.contains('shape') && element.querySelector('.placeholder-text')) {
 
             // First add the shape
             await addShapeToSlide.addShapeToSlide(pptx, pptSlide, element, slideContext);

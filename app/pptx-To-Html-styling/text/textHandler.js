@@ -11,7 +11,6 @@ const { getFontFallbackStack, loadWebFont } = require('./fontFallbacks');
 // OR if using ES6 modules
 // import { getFontFallbackStack, loadWebFont } from './fontFallbacks.js';
 function getEMUDivisor() {
-    // return parseInt(this.flag) === 1 ? 9525 : 12700;
     return 12700;
 }
 

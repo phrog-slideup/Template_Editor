@@ -452,7 +452,7 @@ function processSpansInParagraphWithLineSpacing(paragraph) {
     return textRuns;
 }
 
-// Rakesh notes::: for pragraphspaceing logic
+
 // Extract paragraph spacing from HTML
 function extractParagraphSpacing(pElement) {
     const style = pElement.style;

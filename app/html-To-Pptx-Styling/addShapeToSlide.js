@@ -1,6 +1,602 @@
 const addTextBox = require("./addTextBoxToSlide.js");
 const svgAddToSlide = require("./addSvgToSlide.js");
 
+
+
+// ========== CORRECTED Connector ==========
+
+function convertConnectorToPPTX(pptx, pptSlide, connectorData) {
+    console.log('Converting connector to PPTX:', connectorData.shapeName);
+    console.log('Shape type:', connectorData.shapeType);
+    
+    // Convert stroke color (remove # if present)
+    const lineColor = connectorData.strokeColor.replace('#', '');
+    
+    // Convert stroke width from pixels to points (1px = 0.75pt)
+    const lineWidth = connectorData.strokeWidth * 0.75;
+    
+    // Build line options
+    const lineOptions = {
+        color: lineColor,
+        width: lineWidth
+    };
+    
+    // Add dash type if not solid
+    if (connectorData.dashType && connectorData.dashType !== 'solid') {
+        lineOptions.dashType = connectorData.dashType;
+    }
+    
+    // ✅ CHECK IF THIS IS A STRAIGHT CONNECTOR OR LINE
+    const isStraightConnector = connectorData.shapeType === 'straightConnector1' || 
+                                 connectorData.shapeType === 'line';
+    
+    // ========== SPECIAL HANDLING FOR STRAIGHT CONNECTORS ==========
+    if (isStraightConnector && (!connectorData.segments || connectorData.segments.length === 0)) {
+        console.log('⚠️ Straight connector with no segments - using position data');
+        
+        // Use position data as fallback
+        const x = connectorData.position.x / 72;
+        const y = connectorData.position.y / 72;
+        const w = Math.max(connectorData.position.width / 72, 0.01);
+        const h = Math.max(connectorData.position.height / 72, 0.01);
+        
+        const simpleLineOptions = {
+            x: x,
+            y: y,
+            w: w,
+            h: h,
+            line: lineOptions,
+            objectName: connectorData.shapeName
+        };
+        
+        // Apply arrows
+        let startArrow = null;
+        let endArrow = null;
+        
+        if (connectorData.lineEnds) {
+            if (connectorData.lineEnds.headType && connectorData.lineEnds.headType !== 'none') {
+                startArrow = mapArrowType(connectorData.lineEnds.headType);
+            }
+            if (connectorData.lineEnds.tailType && connectorData.lineEnds.tailType !== 'none') {
+                endArrow = mapArrowType(connectorData.lineEnds.tailType);
+            }
+        }
+        
+        if (startArrow) simpleLineOptions.line.beginArrowType = startArrow;
+        if (endArrow) simpleLineOptions.line.endArrowType = endArrow;
+        
+        if (connectorData.flipH) simpleLineOptions.flipH = true;
+        if (connectorData.flipV) simpleLineOptions.flipV = true;
+        
+        pptSlide.addShape(pptx.shapes.LINE, simpleLineOptions);
+        console.log(`✅ Added straight connector (no segments):`, simpleLineOptions);
+        return;
+    }
+    
+    // ✅ STRAIGHT CONNECTOR WITH SEGMENT DATA - THIS IS THE KEY FIX
+    if (isStraightConnector && connectorData.segments && connectorData.segments.length > 0) {
+        console.log('✅ Processing straight connector with segment data');
+        
+        const segment = connectorData.segments[0];
+        console.log('Segment data:', segment);
+        
+        // ✅ CRITICAL: Extract actual line endpoints from segment
+        // These are in ABSOLUTE pixel coordinates
+        const x1Px = segment.x1;
+        const y1Px = segment.y1;
+        const x2Px = segment.x2;
+        const y2Px = segment.y2;
+        
+        console.log(`Line from (${x1Px}, ${y1Px}) to (${x2Px}, ${y2Px})`);
+        
+        // Calculate the actual direction vector
+        const deltaX = x2Px - x1Px;
+        const deltaY = y2Px - y1Px;
+        
+        console.log(`Delta: dx=${deltaX}, dy=${deltaY}`);
+        
+        // Determine which direction the line is going
+        const goingRight = deltaX >= 0;
+        const goingDown = deltaY >= 0;
+        const goingLeft = deltaX < 0;
+        const goingUp = deltaY < 0;
+        
+        console.log(`Direction: Right=${goingRight}, Down=${goingDown}, Left=${goingLeft}, Up=${goingUp}`);
+        
+        // ✅ PPTX LINE POSITIONING RULES:
+        // - x, y = top-left corner of the line's bounding box
+        // - w, h = width and height (always positive)
+        // - flipH = true if line goes from right to left
+        // - flipV = true if line goes from bottom to top
+        
+        // Calculate bounding box top-left corner
+        const topLeftX = Math.min(x1Px, x2Px);
+        const topLeftY = Math.min(y1Px, y2Px);
+        
+        // Calculate bounding box dimensions (always positive)
+        const width = Math.abs(deltaX);
+        const height = Math.abs(deltaY);
+        
+        console.log(`Bounding box: topLeft=(${topLeftX}, ${topLeftY}), size=(${width}x${height})`);
+        
+        // Convert to inches (72 DPI)
+        const x = topLeftX / 72;
+        const y = topLeftY / 72;
+        const w = Math.max(width / 72, 0.01);
+        const h = Math.max(height / 72, 0.01);
+        
+        // ✅ DETERMINE FLIP STATES BASED ON ACTUAL LINE DIRECTION
+        let needsFlipH = false;
+        let needsFlipV = false;
+        
+        // If line goes left (x2 < x1), we need horizontal flip
+        if (goingLeft) {
+            needsFlipH = true;
+            console.log('  → Line goes LEFT, setting flipH=true');
+        }
+        
+        // If line goes up (y2 < y1), we need vertical flip
+        if (goingUp) {
+            needsFlipV = true;
+            console.log('  → Line goes UP, setting flipV=true');
+        }
+        
+        // Build line options
+        const lineShapeOptions = {
+            x: x,
+            y: y,
+            w: w,
+            h: h,
+            line: lineOptions,
+            objectName: connectorData.shapeName
+        };
+        
+        // Apply flip states
+        if (needsFlipH) {
+            lineShapeOptions.flipH = true;
+        }
+        if (needsFlipV) {
+            lineShapeOptions.flipV = true;
+        }
+        
+        // ✅ APPLY ARROWS (Direct mapping for straight connectors)
+        let startArrow = null;
+        let endArrow = null;
+        
+        if (connectorData.lineEnds) {
+            if (connectorData.lineEnds.headType && connectorData.lineEnds.headType !== 'none') {
+                startArrow = mapArrowType(connectorData.lineEnds.headType);
+            }
+            if (connectorData.lineEnds.tailType && connectorData.lineEnds.tailType !== 'none') {
+                endArrow = mapArrowType(connectorData.lineEnds.tailType);
+            }
+        }
+        
+        if (startArrow) {
+            lineShapeOptions.line.beginArrowType = startArrow;
+            console.log(`  → Adding BEGIN arrow: ${startArrow}`);
+        }
+        if (endArrow) {
+            lineShapeOptions.line.endArrowType = endArrow;
+            console.log(`  → Adding END arrow: ${endArrow}`);
+        }
+        
+        console.log('Final line options:', lineShapeOptions);
+        
+        pptSlide.addShape(pptx.shapes.LINE, lineShapeOptions);
+        console.log(`✅ Added straight connector with correct tilt angle`);
+        return;
+    }
+    
+    // ========== ORIGINAL CODE FOR OTHER CONNECTOR TYPES ==========
+    // All the existing code for bent and curved connectors remains unchanged
+    
+    let startArrow = null;
+    let endArrow = null;
+    
+    if (connectorData.lineEnds) {
+        if (connectorData.lineEnds.tailType && connectorData.lineEnds.tailType !== 'none') {
+            startArrow = mapArrowType(connectorData.lineEnds.tailType);
+        }
+        if (connectorData.lineEnds.headType && connectorData.lineEnds.headType !== 'none') {
+            endArrow = mapArrowType(connectorData.lineEnds.headType);
+        }
+    }
+    
+    console.log('Arrows: start=', startArrow, ', end=', endArrow);
+    
+    const isCurvedConnector = connectorData.shapeType && connectorData.shapeType.includes('curved');
+    
+    if (isCurvedConnector) {
+        console.log('⚠️ Detected CURVED connector - will approximate with multiple segments');
+        
+        const originalRotation = connectorData.rotation || 0;
+        const flipH = connectorData.flipH || false;
+        const flipV = connectorData.flipV || false;
+        
+        let effectiveRotation = originalRotation;
+        
+        if (flipH && !flipV) {
+            effectiveRotation = -originalRotation;
+        } else if (!flipH && flipV) {
+            effectiveRotation = -originalRotation;
+        }
+        
+        const curveSegments = generateCurveSegmentsForPPTX(connectorData);
+        console.log(`Generated ${curveSegments.length} curve segments`);
+        
+        const arrowSegmentLength = 5;
+        
+        let startSegment = null;
+        if (startArrow && curveSegments.length >= arrowSegmentLength) {
+            const firstPoint = curveSegments[0];
+            const fifthPoint = curveSegments[Math.min(arrowSegmentLength, curveSegments.length - 1)];
+            startSegment = {
+                x1: firstPoint.x1,
+                y1: firstPoint.y1,
+                x2: fifthPoint.x2,
+                y2: fifthPoint.y2
+            };
+        }
+        
+        let endSegment = null;
+        if (endArrow && curveSegments.length >= arrowSegmentLength) {
+            const lastIndex = curveSegments.length - 1;
+            const fifthFromLast = curveSegments[Math.max(0, lastIndex - arrowSegmentLength)];
+            const lastPoint = curveSegments[lastIndex];
+            endSegment = {
+                x1: fifthFromLast.x1,
+                y1: fifthFromLast.y1,
+                x2: lastPoint.x2,
+                y2: lastPoint.y2
+            };
+        }
+        
+        const transformedSegments = curveSegments.map(segment => {
+            return transformSegmentForPPTX(
+                segment,
+                connectorData.position,
+                effectiveRotation,
+                flipH,
+                flipV
+            );
+        });
+        
+        transformedSegments.forEach((segment, index) => {
+            const segX1 = segment.x1 / 72;
+            const segY1 = segment.y1 / 72;
+            const segX2 = segment.x2 / 72;
+            const segY2 = segment.y2 / 72;
+            
+            const segW = Math.abs(segX2 - segX1);
+            const segH = Math.abs(segY2 - segY1);
+            
+            let finalW = Math.max(segW, 0.01);
+            let finalH = Math.max(segH, 0.01);
+            
+            const goingLeft = segX2 < segX1;
+            const goingUp = segY2 < segY1;
+            
+            const segmentLineOptions = {
+                color: lineColor,
+                width: lineWidth
+            };
+            
+            if (connectorData.dashType && connectorData.dashType !== 'solid') {
+                segmentLineOptions.dashType = connectorData.dashType;
+            }
+            
+            const shapeOptions = {
+                x: Math.min(segX1, segX2),
+                y: Math.min(segY1, segY2),
+                w: finalW,
+                h: finalH,
+                line: segmentLineOptions,
+                objectName: `${connectorData.shapeName}_curve_seg${index + 1}`
+            };
+            
+            if (goingLeft) shapeOptions.flipH = true;
+            if (goingUp) shapeOptions.flipV = true;
+            
+            pptSlide.addShape(pptx.shapes.LINE, shapeOptions);
+        });
+        
+        if (startArrow && startSegment) {
+            const transformedStartSegment = transformSegmentForPPTX(
+                startSegment,
+                connectorData.position,
+                effectiveRotation,
+                flipH,
+                flipV
+            );
+            addArrowSegment(pptx, pptSlide, transformedStartSegment, lineColor, lineWidth, startArrow, true, connectorData.shapeName);
+        }
+        
+        if (endArrow && endSegment) {
+            const transformedEndSegment = transformSegmentForPPTX(
+                endSegment,
+                connectorData.position,
+                effectiveRotation,
+                flipH,
+                flipV
+            );
+            addArrowSegment(pptx, pptSlide, transformedEndSegment, lineColor, lineWidth, endArrow, false, connectorData.shapeName);
+        }
+        
+        console.log(`✅ Added ${curveSegments.length} curve segments + arrows for ${connectorData.shapeName}`);
+        return;
+    }
+    
+    // Handle bent connectors (unchanged)
+    if (connectorData.segments && connectorData.segments.length > 0) {
+        console.log(`Drawing ${connectorData.segments.length} segments for ${connectorData.shapeType}`);
+        
+        const originalRotation = connectorData.originalRotation !== undefined ? connectorData.originalRotation : connectorData.rotation;
+        const flipH = connectorData.flipH || false;
+        const flipV = connectorData.flipV || false;
+        
+        let effectiveRotation = originalRotation;
+        
+        if (flipH && !flipV) {
+            effectiveRotation = -originalRotation;
+        } else if (!flipH && flipV) {
+            effectiveRotation = -originalRotation;
+        }
+        
+        const transformedSegments = connectorData.segments.map(segment => {
+            return transformSegmentForPPTX(
+                segment,
+                connectorData.position,
+                effectiveRotation,
+                flipH,
+                flipV
+            );
+        });
+        
+        transformedSegments.forEach((segment, index) => {
+            const isFirst = index === 0;
+            const isLast = index === transformedSegments.length - 1;
+            
+            const segX1 = segment.x1 / 72;
+            const segY1 = segment.y1 / 72;
+            const segX2 = segment.x2 / 72;
+            const segY2 = segment.y2 / 72;
+            
+            const segW = Math.abs(segX2 - segX1);
+            const segH = Math.abs(segY2 - segY1);
+            
+            let finalW = Math.max(segW, 0.01);
+            let finalH = Math.max(segH, 0.01);
+            
+            const goingLeft = segX2 < segX1;
+            const goingUp = segY2 < segY1;
+            
+            const segmentLineOptions = {
+                color: lineColor,
+                width: lineWidth
+            };
+            
+            if (connectorData.dashType && connectorData.dashType !== 'solid') {
+                segmentLineOptions.dashType = connectorData.dashType;
+            }
+            
+            if (isFirst && startArrow) {
+                segmentLineOptions.beginArrowType = startArrow;
+            }
+            
+            if (isLast && endArrow) {
+                segmentLineOptions.endArrowType = endArrow;
+            }
+            
+            const shapeOptions = {
+                x: Math.min(segX1, segX2),
+                y: Math.min(segY1, segY2),
+                w: finalW,
+                h: finalH,
+                line: segmentLineOptions,
+                objectName: `${connectorData.shapeName}_seg${index + 1}`
+            };
+            
+            if (goingLeft) shapeOptions.flipH = true;
+            if (goingUp) shapeOptions.flipV = true;
+            
+            pptSlide.addShape(pptx.shapes.LINE, shapeOptions);
+        });
+        
+        console.log(`✅ Added ${connectorData.segments.length} segments for ${connectorData.shapeName}`);
+    } else {
+        // Simple line without segments
+        const x = connectorData.position.x / 72;
+        const y = connectorData.position.y / 72;
+        const w = Math.max(connectorData.position.width / 72, 0.01);
+        const h = Math.max(connectorData.position.height / 72, 0.01);
+        
+        const simpleLineOptions = {
+            x: x,
+            y: y,
+            w: w,
+            h: h,
+            line: lineOptions,
+            objectName: connectorData.shapeName
+        };
+        
+        if (startArrow) simpleLineOptions.line.beginArrowType = startArrow;
+        if (endArrow) simpleLineOptions.line.endArrowType = endArrow;
+        
+        if (connectorData.flipH) simpleLineOptions.flipH = true;
+        if (connectorData.flipV) simpleLineOptions.flipV = true;
+        
+        pptSlide.addShape(pptx.shapes.LINE, simpleLineOptions);
+    }
+}
+
+// Helper functions (unchanged)
+function transformSegmentForPPTX(segment, containerPosition, rotation, flipH, flipV) {
+    const relX1 = segment.x1 - containerPosition.x;
+    const relY1 = segment.y1 - containerPosition.y;
+    const relX2 = segment.x2 - containerPosition.x;
+    const relY2 = segment.y2 - containerPosition.y;
+    
+    let newX1 = relX1;
+    let newY1 = relY1;
+    let newX2 = relX2;
+    let newY2 = relY2;
+    
+    if (rotation !== 0) {
+        const radians = (rotation * Math.PI) / 180;
+        const cos = Math.cos(radians);
+        const sin = Math.sin(radians);
+        
+        const centerX = containerPosition.width / 2;
+        const centerY = containerPosition.height / 2;
+        
+        const dx1 = relX1 - centerX;
+        const dy1 = relY1 - centerY;
+        newX1 = centerX + (dx1 * cos - dy1 * sin);
+        newY1 = centerY + (dx1 * sin + dy1 * cos);
+        
+        const dx2 = relX2 - centerX;
+        const dy2 = relY2 - centerY;
+        newX2 = centerX + (dx2 * cos - dy2 * sin);
+        newY2 = centerY + (dx2 * sin + dy2 * cos);
+    }
+    
+    if (flipH) {
+        newX1 = containerPosition.width - newX1;
+        newX2 = containerPosition.width - newX2;
+    }
+    
+    if (flipV) {
+        newY1 = containerPosition.height - newY1;
+        newY2 = containerPosition.height - newY2;
+    }
+    
+    return {
+        x1: containerPosition.x + newX1,
+        y1: containerPosition.y + newY1,
+        x2: containerPosition.x + newX2,
+        y2: containerPosition.y + newY2,
+        type: segment.type
+    };
+}
+
+function addArrowSegment(pptx, pptSlide, segment, lineColor, lineWidth, arrowType, isStart, shapeName) {
+    const segX1 = segment.x1 / 72;
+    const segY1 = segment.y1 / 72;
+    const segX2 = segment.x2 / 72;
+    const segY2 = segment.y2 / 72;
+    
+    const segW = Math.abs(segX2 - segX1);
+    const segH = Math.abs(segY2 - segY1);
+    const finalW = Math.max(segW, 0.01);
+    const finalH = Math.max(segH, 0.01);
+    
+    const goingLeft = segX2 < segX1;
+    const goingUp = segY2 < segY1;
+    
+    const arrowOptions = {
+        x: Math.min(segX1, segX2),
+        y: Math.min(segY1, segY2),
+        w: finalW,
+        h: finalH,
+        line: {
+            color: lineColor,
+            width: lineWidth,
+            [isStart ? 'beginArrowType' : 'endArrowType']: arrowType
+        },
+        objectName: `${shapeName}_${isStart ? 'start' : 'end'}_arrow`
+    };
+    
+    if (goingLeft) arrowOptions.flipH = true;
+    if (goingUp) arrowOptions.flipV = true;
+    
+    pptSlide.addShape(pptx.shapes.LINE, arrowOptions);
+}
+
+function mapArrowType(htmlArrowType) {
+    const arrowMap = {
+        'triangle': 'triangle',
+        'arrow': 'arrow',
+        'stealth': 'stealth',
+        'diamond': 'diamond',
+        'oval': 'oval',
+        'circle': 'oval',
+        'dot': 'oval',
+        'none': null
+    };
+    
+    return arrowMap[htmlArrowType] || null;
+}
+
+function generateCurveSegmentsForPPTX(connectorData) {
+    const width = connectorData.position.width;
+    const height = connectorData.position.height;
+    const startX = connectorData.position.x;
+    const startY = connectorData.position.y;
+    const shapeType = connectorData.shapeType;
+    
+    const numSegments = 50;
+    const points = [];
+    
+    switch (shapeType) {
+        case "curvedConnector2":
+            for (let i = 0; i <= numSegments; i++) {
+                const t = i / numSegments;
+                const controlX = width * 0.5;
+                const controlY = height * 0.5;
+                const x = startX + (1 - t) * (1 - t) * 0 + 2 * (1 - t) * t * controlX + t * t * width;
+                const y = startY + (1 - t) * (1 - t) * 0 + 2 * (1 - t) * t * controlY + t * t * height;
+                points.push({ x, y });
+            }
+            break;
+        case "curvedConnector3":
+            for (let i = 0; i <= numSegments; i++) {
+                const t = i / numSegments;
+                const easing = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+                const x = startX + width * t;
+                const y = startY + height * easing;
+                points.push({ x, y });
+            }
+            break;
+        case "curvedConnector4":
+            for (let i = 0; i <= numSegments; i++) {
+                const t = i / numSegments;
+                const x = startX + width * t;
+                const wave = Math.sin(t * Math.PI);
+                const y = startY + height * t + height * 0.15 * wave;
+                points.push({ x, y });
+            }
+            break;
+        case "curvedConnector5":
+            for (let i = 0; i <= numSegments; i++) {
+                const t = i / numSegments;
+                const x = startX + width * t;
+                const wave = Math.sin(t * Math.PI * 1.5);
+                const y = startY + height * t + height * 0.12 * wave;
+                points.push({ x, y });
+            }
+            break;
+        default:
+            points.push({ x: startX, y: startY });
+            points.push({ x: startX + width, y: startY + height });
+            break;
+    }
+    
+    const segments = [];
+    for (let i = 0; i < points.length - 1; i++) {
+        segments.push({
+            type: 'curve',
+            x1: points[i].x,
+            y1: points[i].y,
+            x2: points[i + 1].x,
+            y2: points[i + 1].y
+        });
+    }
+    
+    return segments;
+}
+// ========== END OF connector Functionality ==========
+
 function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
     const style = shapeElement.style;
     const shapeId = shapeElement.getAttribute("id");
@@ -222,18 +818,68 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
         shapeOptions.flipV = true;
     }
 
-    if (style.opacity) {
+
+
+    // if (style.opacity) {
+    //     const opacityValue = parseFloat(style.opacity);
+    //     const transparencyValue = Math.round((1 - opacityValue) * 100);
+
+    //     // NEW: pass originalAlpha into the color object builder
+    //     const themeColorObj = createThemeColorObject(originalThemeColor, originalLumMod, originalLumOff, originalAlpha);
+
+    //     if (themeColorObj) {
+    //         shapeOptions.fill = {
+    //             color: themeColorObj
+    //         };
+    //     } else {
+    //         shapeOptions.fill = {
+    //             color: rgbToHex(dominantColor),
+    //             transparency: transparencyValue
+    //         };
+    //     }
+    // }
+
+    // if (style.borderWidth && parseFloat(style.borderWidth) > 0) {
+
+    //     const cssStyle = (style.borderStyle || 'solid').toLowerCase();
+
+    //     const dashMap = {
+    //         solid: 'solid',
+    //         dotted: 'sysDot',
+    //         dashed: 'dash'
+    //     };
+
+    //     const dashType = dashMap[cssStyle] || '';
+
+    //     shapeOptions.line = {
+    //         color: rgbToHex(style.borderColor || "#CD0C2C"),
+    //         width: parseFloat(style.borderWidth) * (72 / 72),
+    //         dashType: dashType
+    //     };
+    // }
+
+
+    // note rakesh::::::: aboove is the previous code below is mine new
+    if (style.opacity && hasVisibleBackground) {
         const opacityValue = parseFloat(style.opacity);
         const transparencyValue = Math.round((1 - opacityValue) * 100);
 
-        // NEW: pass originalAlpha into the color object builder
-        const themeColorObj = createThemeColorObject(originalThemeColor, originalLumMod, originalLumOff, originalAlpha);
+        // Only use theme color if background is not an explicit hex/rgb value
+        const isExplicitColor = dominantColor && (dominantColor.startsWith('#') || dominantColor.startsWith('rgb'));
 
-        if (themeColorObj) {
-            shapeOptions.fill = {
-                color: themeColorObj
-            };
-        } else {
+        if (!isExplicitColor && originalThemeColor && originalThemeColor !== 'null' && originalThemeColor !== 'undefined') {
+            const themeColorObj = createThemeColorObject(originalThemeColor, originalLumMod, originalLumOff, originalAlpha);
+            if (themeColorObj) {
+                shapeOptions.fill = {
+                    color: themeColorObj
+                };
+            } else if (dominantColor) {
+                shapeOptions.fill = {
+                    color: rgbToHex(dominantColor),
+                    transparency: transparencyValue
+                };
+            }
+        } else if (dominantColor) {
             shapeOptions.fill = {
                 color: rgbToHex(dominantColor),
                 transparency: transparencyValue
@@ -258,6 +904,33 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
             width: parseFloat(style.borderWidth) * (72 / 72),
             dashType: dashType
         };
+
+
+        // rakesh note : before it is taking the border color as fallback here i add more first check for the original border color then fallbacktoblack
+
+        const originalBorderColor = shapeElement.getAttribute("data-original-border-color");
+
+        let borderColor = style.borderColor;
+
+        // If no style.borderColor, try original color
+        if (!borderColor || borderColor === 'transparent') {
+            borderColor = originalBorderColor;
+        }
+
+        // Only use fallback if absolutely no color is found
+        if (!borderColor || borderColor === 'transparent') {
+            borderColor = "#000000"; // Use black as fallback instead of red
+        }
+        const borderDashStyle = getBorderDashFromStyle(style, shapeElement);
+        shapeOptions.line = {
+            color: rgbToHex(borderColor),
+            width: parseFloat(style.borderWidth) * (72 / 72)
+        };
+
+        if (borderDashStyle && borderDashStyle !== 'solid') {
+            shapeOptions.line.dashType = borderDashStyle;
+        }
+
     }
 
     if (borderRadiusValue > 0) {
@@ -448,8 +1121,145 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
 
     try {
         // All the existing switch cases remain the same...
-        switch (shapeId) {
-            // Action Buttons
+            switch (shapeId) {
+                // ========== CONNECTORS (These are elbow/bent/curved connectors) ==========
+                case 'straightConnector1':
+                case 'bentConnector2':
+                case 'bentConnector3':
+                case 'bentConnector4':
+                case 'bentConnector5':
+                case 'curvedConnector2':
+                case 'curvedConnector3':
+                case 'curvedConnector4':
+                case 'curvedConnector5': {
+                            
+                    console.log(`\n========== Processing Connector: ${shapeId} ==========`);
+                    // Get connector name from element
+                    const connectorName = shapeElement.getAttribute('data-name') || objName;
+                    console.log(`Connector name: ${connectorName}`);
+                    // ✅ PRIMARY METHOD: Read from data-connector-info HTML attribute
+                    const connectorInfoAttr = shapeElement.getAttribute('data-connector-info');
+                    let connectorData = null;
+                    
+                    if (connectorInfoAttr) {
+                        try {
+                            // Parse JSON from HTML attribute
+                            const parsedData = JSON.parse(connectorInfoAttr);
+                            const originalX = parseFloat(style.left || "0");
+                            const originalY = parseFloat(style.top || "0");
+                            const originalW = parseFloat(style.width || "0");
+                            const originalH = parseFloat(style.height || "0");
+                            // Reconstruct full connector data object
+                            connectorData = {
+                                shapeType: parsedData.shapeType || shapeId,
+                                shapeName: connectorName,
+                                position: {
+                                    x: originalX,  // ✅ Use original pixel values from HTML
+                                    y: originalY,
+                                    width: originalW,
+                                    height: originalH
+                                },
+                                strokeColor: parsedData.strokeColor,
+                                strokeWidth: parsedData.strokeWidth,
+                                dashType: parsedData.dashType || 'solid',
+                                rotation: shapeOptions.rotate || 0,
+                                flipH: shapeOptions.flipH || false,
+                                flipV: shapeOptions.flipV || false,
+                                lineEnds: parsedData.lineEnds || { headType: 'none', tailType: 'none' },
+                                segments: parsedData.segments || []
+                            };                        
+                        } catch (error) {
+                            console.error(`❌ Failed to parse data-connector-info:`, error);
+                            connectorData = null;
+                        }
+                    }
+                    
+                    // ⚠️ FALLBACK: If no data attribute, try global store
+                    if (!connectorData && global.connectorDataStore) {
+                        connectorData = global.connectorDataStore.get(connectorName);
+                        if (connectorData) {
+                            console.log(`✅ Found connector data in global store (fallback)`);
+                        }
+                    }
+                    
+                    // ⚠️ LAST RESORT: Build from HTML element properties
+                    if (!connectorData) {
+                        console.log(`⚠️ No stored data, building from HTML element`);
+                        
+                        // Extract line properties from HTML/SVG
+                        let lineProperties = getLineColorFromSvg(shapeElement);
+                        let lineColor = lineProperties.color;
+                        let lineWidth = lineProperties.width;
+                        
+                        // Fallback to style properties if SVG properties not found
+                        if (!lineColor) {
+                            lineColor = style.borderColor || style.color || style.stroke || style.backgroundColor || '#000000';
+                        }
+                        
+                        if (!lineWidth) {
+                            const cssStrokeWidth = style.strokeWidth || style.borderWidth;
+                            if (cssStrokeWidth) {
+                                lineWidth = parseFloat(cssStrokeWidth.replace('px', ''));
+                            } else {
+                                lineWidth = 2;
+                            }
+                        }
+                        
+                        // Check for arrows in HTML
+                        const arrowDivs = shapeElement.querySelectorAll('div[style*="border-left"][style*="border-top"]');
+                        const hasArrow = arrowDivs.length > 0;
+                        
+                        // Determine arrow position
+                        let headType = 'none';
+                        let tailType = 'none';
+                        
+                        if (hasArrow) {
+                            const arrowDiv = arrowDivs[0];
+                            const arrowStyle = arrowDiv.style;
+                            const arrowLeft = parseFloat(arrowStyle.left || '0');
+                            const containerWidth = parseFloat(style.width || '100');
+                            
+                            if (arrowLeft > containerWidth * 0.8) {
+                                tailType = 'triangle';
+                            } else {
+                                headType = 'triangle';
+                            }
+                        }
+                        
+                        // Create fallback connector data object
+                        connectorData = {
+                            shapeType: shapeId,
+                            shapeName: connectorName,
+                            position: {
+                                x: shapeOptions.x * 72,
+                                y: shapeOptions.y * 72,
+                                width: shapeOptions.w * 72,
+                                height: shapeOptions.h * 72
+                            },
+                            strokeColor: lineColor,
+                            strokeWidth: lineWidth,
+                            dashType: style.borderStyle === 'dashed' ? 'dash' : 
+                                    style.borderStyle === 'dotted' ? 'dot' : 'solid',
+                            rotation: shapeOptions.rotate || 0,
+                            flipH: shapeOptions.flipH || false,
+                            flipV: shapeOptions.flipV || false,
+                            lineEnds: {
+                                headType: headType,
+                                tailType: tailType
+                            },
+                            segments: []
+                        };
+                        
+                        console.log('  Fallback data created');
+                    }
+                    
+                    // Convert to PPTX using the connector data
+                    convertConnectorToPPTX(pptx, pptSlide, connectorData);
+                    
+                    console.log(`========== Finished Processing ${shapeId} ==========\n`);
+                    break;
+                            }
+
             case 'actionButtonBackPrevious':
                 pptSlide.addShape(pptx.shapes.ACTION_BUTTON_BACK_OR_PREVIOUS, shapeOptions);
                 break;
@@ -803,41 +1613,69 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
 
             // Line Shapes
             case 'line':
-
-                let lineProperties = getLineColorFromSvg(shapeElement);
-                let lineColor = lineProperties.color;
-                let lineWidth = lineProperties.width;
-
-                // Fallback to style.color if SVG color not found
-                if (!lineColor) {
-                    lineColor = style.color || style.stroke || style.backgroundColor || '#000000';
-                }
-
-                // Fallback to CSS stroke-width or border-width if SVG width not found
-                if (!lineWidth) {
-                    const cssStrokeWidth = style.strokeWidth || style.borderWidth;
-                    if (cssStrokeWidth) {
-                        lineWidth = parseFloat(cssStrokeWidth.replace('px', ''));
-                    } else {
-                        lineWidth = 1; // Default width
+                // Check if this is actually a connector with stored data
+                const lineConnectorInfo = shapeElement.getAttribute('data-connector-info');
+                
+                if (lineConnectorInfo) {
+                    // ✅ This is a connector (straight arrow connector)
+                    try {
+                        const parsedData = JSON.parse(lineConnectorInfo);
+                        
+                        const connectorData = {
+                            shapeType: parsedData.shapeType || 'straightConnector1',
+                            shapeName: shapeElement.getAttribute('data-name') || objName,
+                            position: {
+                                x: shapeOptions.x * 72,
+                                y: shapeOptions.y * 72,
+                                width: shapeOptions.w * 72,
+                                height: shapeOptions.h * 72
+                            },
+                            strokeColor: parsedData.strokeColor,
+                            strokeWidth: parsedData.strokeWidth,
+                            dashType: parsedData.dashType || 'solid',
+                            rotation: shapeOptions.rotate || 0,
+                            flipH: parsedData.flipH || false,
+                            flipV: parsedData.flipV || false,
+                            lineEnds: parsedData.lineEnds || { headType: 'none', tailType: 'none' },
+                            segments: parsedData.segments || []
+                        };
+                        
+                        console.log(`✅ Processing line as connector with arrows`);
+                        convertConnectorToPPTX(pptx, pptSlide, connectorData);
+                        
+                    } catch (error) {
+                        console.error('Failed to parse connector data for line:', error);
+                        // Fall through to regular line handling
                     }
-                }
+                } else {
+                    // ❌ Regular line (no connector data)
+                    let lineProperties = getLineColorFromSvg(shapeElement);
+                    let lineColor = lineProperties.color;
+                    let lineWidth = lineProperties.width;
 
-                // console.log("shapeOptions ====-----------!!!!!!!!!!!!!!!!------------- >>>>>>>>>>>>> ", {
-                //     ...shapeOptions,
-                //     line: {
-                //         color: rgbToHex(lineColor),
-                //         width: lineWidth
-                //     }
-                // });
-
-                pptSlide.addShape(pptx.shapes.LINE, {
-                    ...shapeOptions,
-                    line: {
-                        color: rgbToHex(lineColor),
-                        width: lineWidth
+                    // Fallback to style.color if SVG color not found
+                    if (!lineColor) {
+                        lineColor = style.color || style.stroke || style.backgroundColor || '#000000';
                     }
-                });
+
+                    // Fallback to CSS stroke-width or border-width if SVG width not found
+                    if (!lineWidth) {
+                        const cssStrokeWidth = style.strokeWidth || style.borderWidth;
+                        if (cssStrokeWidth) {
+                            lineWidth = parseFloat(cssStrokeWidth.replace('px', ''));
+                        } else {
+                            lineWidth = 1; // Default width
+                        }
+                    }
+
+                    pptSlide.addShape(pptx.shapes.LINE, {
+                        ...shapeOptions,
+                        line: {
+                            color: rgbToHex(lineColor),
+                            width: lineWidth
+                        }
+                    });
+                }
                 break;
             // CORRECTED VERSION - Replace the existing 'line-lineheight' case (lines 730-846) with this:
 
@@ -1583,6 +2421,28 @@ function getDominantColorFromGradient(gradient) {
     }
 
     return null;
+}
+
+
+
+function getBorderDashFromStyle(style, shapeElement) {
+    // First try data attribute (most reliable)
+    const dataDash = shapeElement.getAttribute("data-border-dash");
+    if (dataDash) {
+        return mapDashStyleToPptx(dataDash);
+    }
+
+    // Try CSS border-style
+    const borderStyle = style.borderStyle;
+    if (borderStyle && borderStyle !== 'solid') {
+        const cssToXmlMap = {
+            'dashed': 'dash',
+            'dotted': 'dot'
+        };
+        return cssToXmlMap[borderStyle] || 'solid';
+    }
+
+    return 'solid';
 }
 
 module.exports = {

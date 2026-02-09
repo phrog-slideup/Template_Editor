@@ -2,7 +2,7 @@ const { DOMParser, XMLSerializer } = require("@xmldom/xmldom");
 const xml2js = require("xml2js");
 const path = require("path");
 const { posix } = require("path");
-const fs = require("fs").promises;
+const fs = require("fs").promises; 
 
 const pptBackgroundColors = require("../pptx-To-Html-styling/pptBackgroundColors.js");
 const pptTextAllInfo = require("../pptx-To-Html-styling/pptTextAllInfo.js");
@@ -545,6 +545,15 @@ class pptxToHtml {
         const lineShapeTag = slideXML?.["p:sld"]?.["p:cSld"]?.[0]?.["p:spTree"]?.[0]?.["p:cxnSp"] || [];
         // Extract tables from the slide XML
         const tableNodes = slideXML?.["p:sld"]?.["p:cSld"]?.[0]?.["p:spTree"]?.[0]?.["p:graphicFrame"] || [];
+
+        // ADD THIS:
+        tableNodes.forEach(table => {
+          const tcArray = table?.["a:graphic"]?.[0]?.["a:graphicData"]?.[0]?.["a:tbl"]?.[0]?.["a:tr"]?.[0]?.["a:tc"] || [];
+          tcArray.forEach((cell, idx) => {
+            const algn = cell?.["a:txBody"]?.[0]?.["a:p"]?.[0]?.["a:pPr"]?.[0]?.["$"]?.algn;
+            console.log(`Cell ${idx} alignment:`, algn);
+          });
+        });
         // Process pictures and SVGs
         const picNodesImg = slideXML?.["p:sld"]?.["p:cSld"]?.[0]?.["p:spTree"]?.[0]?.["p:pic"] || [];
 

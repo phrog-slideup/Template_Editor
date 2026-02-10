@@ -192,16 +192,36 @@ function getFontSize(shapeNode, masterXML) {
     const pointSize = sizeInHundredths / 100;
     return pointSize;
   }
-  else if (lstStyle?.["a:lvl1pPr"]?.[0]?.["a:defRPr"]?.[0]?.["$"]?.sz) {
+  
+  if (lstStyle?.["a:lvl1pPr"]?.[0]?.["a:defRPr"]?.[0]?.["$"]?.sz) {
     // fallback fontSize for slideLayout.xml
     const layoutSz = parseInt(lstStyle?.["a:lvl1pPr"]?.[0]?.["a:defRPr"]?.[0]?.["$"]?.sz);
     const pointSize = layoutSz / 100;
     return pointSize;
   }
 
-
-  // NEW: Try to get from master XML
+  // ✅ NEW: Check if it's a text box (not a placeholder)
   if (masterXML) {
+    // console.log("popsaodsapdsadsad============");
+    const isTextBox = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvSpPr"]?.[0]?.["$"]?.txBox === "1";
+    const hasPlaceholder = shapeNode?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"];
+
+    if (isTextBox || !hasPlaceholder) {
+      // Text boxes use otherStyle, not bodyStyle
+      const txStyles = masterXML?.["p:sldMaster"]?.["p:txStyles"]?.[0];
+      const otherStyle = txStyles?.["p:otherStyle"]?.[0];
+      const level = getTextLevel(shapeNode);
+      const levelPropName = level === 0 ? "a:lvl1pPr" : `a:lvl${level + 1}pPr`;
+      
+      const levelProp = otherStyle?.[levelPropName]?.[0];
+      if (levelProp?.["a:defRPr"]?.[0]?.["$"]?.sz) {
+        const sizeInHundredths = parseInt(levelProp["a:defRPr"][0]["$"].sz);
+        console.log(`✅ Text box font size from otherStyle: ${sizeInHundredths / 100}pt`);
+        return sizeInHundredths / 100;
+      }
+    }
+    
+    // For placeholders, use existing logic
     const placeholderType = getPlaceholderType(shapeNode);
     const level = getTextLevel(shapeNode);
     const masterFontSize = getFontSizeFromMaster(masterXML, placeholderType, level);
@@ -210,7 +230,7 @@ function getFontSize(shapeNode, masterXML) {
       return masterFontSize;
     }
   }
-
+  
   // Fallback to default
   return 16;
 }

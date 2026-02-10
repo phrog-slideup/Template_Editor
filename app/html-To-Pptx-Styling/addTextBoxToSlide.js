@@ -272,9 +272,8 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
 
         const hasMinHeight = p.style.minHeight && parseFloat(p.style.minHeight) > 0;
         const textContent = p.textContent || p.innerText || '';
-        const isEmptyParagraph = isBreakOnlyParagraph ||
-            (textContent.replace(/\u00A0/g, '').replace(/\s/g, '') === '' && hasMinHeight);
-
+        const isEmptyParagraph = isBreakOnlyParagraph || (textContent.replace(/\u00A0/g, '').replace(/\s/g, '') === '' && hasMinHeight);
+       
         if (isEmptyParagraph) {
             if (processedParagraphs.length > 0) {
                 const lastParagraph = processedParagraphs[processedParagraphs.length - 1];
@@ -457,15 +456,15 @@ function processSpansInParagraphWithLineSpacing(paragraph) {
 function extractParagraphSpacing(pElement) {
     const style = pElement.style;
     
-    // Extract margin-top and margin-bottom (these are in pixels)
     const marginTop = parseFloat(style.marginTop) || 0;
     const marginBottom = parseFloat(style.marginBottom) || 0;
-    const spaceBeforePts = Math.round(marginTop); // Keep as points
-    const spaceAfterPts = Math.round(marginBottom); // Keep as points
+    
+    // Convert pixels to points (PowerPoint uses points)
+    const pxToPoints = (px, dpi = 72) => Math.round(px * (72 / dpi));
     
     return {
-        spaceBefore: spaceBeforePts,
-        spaceAfter: spaceAfterPts
+        spaceBefore: pxToPoints(marginTop),
+        spaceAfter: pxToPoints(marginBottom)
     };
 }
 /** ------------- */

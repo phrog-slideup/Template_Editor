@@ -758,7 +758,50 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
             const txtPhSz = textElement?.getAttribute('txtphsz') || textElement?.getAttribute('txtPhSz') || '';
        
             let textOptions = extractTextStyle(textElement);
-       
+            // ✅ CRITICAL FIX: Extract margins from the FIRST PARAGRAPH element
+            const extractMarginValue = (styleValue) => {
+                if (!styleValue) return 0;
+                const parsed = parseFloat(styleValue);
+                return isNaN(parsed) ? 0 : parsed;
+            };
+        
+            let textBoxMarginLeft = 0;
+            let textBoxMarginRight = 0;
+            let textBoxMarginTop = 0;
+            let textBoxMarginBottom = 0;
+        
+            // Get the first paragraph to extract text box margins
+            if (textElement) {
+                const firstParagraph = textElement.querySelector('p');
+                if (firstParagraph && firstParagraph.style) {
+                    console.log("First paragraph style:", firstParagraph.getAttribute('style'));
+                    
+                    // Extract margins from inline styles
+                    const pStyle = firstParagraph.style;
+                    textBoxMarginLeft = extractMarginValue(pStyle.marginLeft);
+                    textBoxMarginRight = extractMarginValue(pStyle.marginRight);
+                    textBoxMarginTop = extractMarginValue(pStyle.marginTop);
+                    textBoxMarginBottom = extractMarginValue(pStyle.marginBottom);
+                }
+            }
+        
+            // ✅ Helper to extract paragraph spacing (separate from text box margins)
+            const extractParagraphSpacing = (pElement) => {
+                const style = pElement.style;
+                
+                // Get the raw margin values
+                const marginTop = extractMarginValue(style.marginTop);
+                const marginBottom = extractMarginValue(style.marginBottom);
+                
+                // Subtract the text box margins to get ONLY paragraph spacing
+                const spaceBefore = Math.max(0, marginTop - textBoxMarginTop);
+                const spaceAfter = Math.max(0, marginBottom - textBoxMarginBottom);
+                
+                return {
+                    spaceBefore: Math.round(spaceBefore),
+                    spaceAfter: Math.round(spaceAfter)
+                };
+            };            
             // ✅ FIX: Process text with BR tags properly
             let textRuns = [];
            
@@ -768,13 +811,16 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                 if (paragraphs.length > 0) {
                     // Process each paragraph
                     paragraphs.forEach((p, pIndex) => {
+                        const paragraphSpacing = extractParagraphSpacing(p);
                         const children = Array.from(p.childNodes);
-                       
+                        let paragraphTextRuns = [];
+                        let isFirstRunInParagraph = true;
+
                         children.forEach((node) => {
                             // Handle BR tags
                             if (node.nodeType === 1 && node.tagName === 'BR') {
-                                if (textRuns.length > 0) {
-                                    textRuns[textRuns.length - 1].text += '\n';
+                                if (paragraphTextRuns.length > 0) {
+                                    paragraphTextRuns[paragraphTextRuns.length - 1].text += '\n';
                                 }
                                 return;
                             }
@@ -783,28 +829,75 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                             if (node.nodeType === 1 && node.tagName === 'SPAN') {
                                 let spanText = node.textContent || '';
                                 if (spanText.length > 0) {
-                                    textRuns.push({
+                                    // ✅ Extract span-level formatting
+                                    const spanStyle = node.style || {};
+                                    const spanOptions = {
+                                        bold: spanStyle.fontWeight === 'bold' || parseInt(spanStyle.fontWeight) >= 700,
+                                        italic: spanStyle.fontStyle === 'italic',
+                                        underline: spanStyle.textDecoration?.includes('underline'),
+                                        fontSize: parseFloat(spanStyle.fontSize) || textOptions.fontSize,
+                                        color: node.getAttribute('originaltxtcolor') || textOptions.color,
+                                        fontFace: spanStyle.fontFamily?.replace(/['"]/g, '') || textOptions.fontFace
+                                    };
+        
+                                    // ✅ CRITICAL: Apply paragraph spacing to FIRST span only
+                                    if (isFirstRunInParagraph && pIndex > 0) {
+                                        // Only apply spacing for paragraphs after the first
+                                        if (paragraphSpacing.spaceBefore > 0) {
+                                            spanOptions.paraSpaceBefore = paragraphSpacing.spaceBefore;
+                                        }
+                                        if (paragraphSpacing.spaceAfter > 0) {
+                                            spanOptions.paraSpaceAfter = paragraphSpacing.spaceAfter;
+                                        }
+                                        isFirstRunInParagraph = false;
+                                    }
+        
+                                    paragraphTextRuns.push({
                                         text: spanText,
-                                        options: { bold: false }
+                                        options: spanOptions
                                     });
                                 }
                             }
-                           
+        
                             // Handle text nodes
                             if (node.nodeType === 3) {
                                 let text = node.textContent || '';
                                 if (text.trim().length > 0) {
-                                    textRuns.push({
+                                    const textNodeOptions = {
+                                        bold: false,
+                                        fontSize: textOptions.fontSize,
+                                        color: textOptions.color,
+                                        fontFace: textOptions.fontFace
+                                    };
+        
+                                    // ✅ CRITICAL: Apply paragraph spacing to FIRST run only
+                                    if (isFirstRunInParagraph && pIndex > 0) {
+                                        if (paragraphSpacing.spaceBefore > 0) {
+                                            textNodeOptions.paraSpaceBefore = paragraphSpacing.spaceBefore;
+                                        }
+                                        if (paragraphSpacing.spaceAfter > 0) {
+                                            textNodeOptions.paraSpaceAfter = paragraphSpacing.spaceAfter;
+                                        }
+                                        isFirstRunInParagraph = false;
+                                    }
+        
+                                    paragraphTextRuns.push({
                                         text: text,
-                                        options: { bold: false }
+                                        options: textNodeOptions
                                     });
                                 }
                             }
                         });
-                       
-                        // Add paragraph break between paragraphs
-                        if (pIndex < paragraphs.length - 1 && textRuns.length > 0) {
-                            textRuns[textRuns.length - 1].text += '\n';
+        
+                        // Add paragraph runs to main textRuns array
+                        textRuns.push(...paragraphTextRuns);
+        
+                        // ✅ Add paragraph break with proper spacing handling
+                        if (pIndex < paragraphs.length - 1 && paragraphTextRuns.length > 0) {
+                            const lastRun = paragraphTextRuns[paragraphTextRuns.length - 1];
+                            if (lastRun && lastRun.options) {
+                                lastRun.options.breakLine = true;
+                            }
                         }
                     });
                 } else {
@@ -813,7 +906,12 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                     if (textContent) {
                         textRuns.push({
                             text: textContent,
-                            options: { bold: false }
+                            options: { 
+                                bold: false,
+                                fontSize: textOptions.fontSize,
+                                color: textOptions.color,
+                                fontFace: textOptions.fontFace
+                            }
                         });
                     }
                 }
@@ -824,7 +922,12 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                 const placeholderText = getPlaceholderText(placeholderType);
                 textRuns.push({
                     text: placeholderText,
-                    options: { bold: false }
+                    options: { 
+                        bold: false,
+                        fontSize: textOptions.fontSize,
+                        color: textOptions.color,
+                        fontFace: textOptions.fontFace
+                    }
                 });
             }
        
@@ -833,59 +936,58 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
             let textColor = spanElement?.getAttribute('originaltxtcolor') || '';
             const lumMod = spanElement?.getAttribute('originallummod');
             const lumOff = spanElement?.getAttribute('originallumoff');
-       
-            textOptions.color = textColor;
-       
-            // Convert txtPhType for placeholder usage (if needed)
-            const normalizedPhType = txtPhType || 'body';
-            const normalizedPhIdx = txtPhIdx.trim() !== '' ? parseInt(txtPhIdx.trim(), 10) : undefined;
-       
+        
             // Handle text positioning and alignment
             const justifyContent = element.style.justifyContent || 'flex-start';
             const alignItems = element.style.alignItems || 'flex-start';
             const textAlign = textElement?.style.textAlign || 'left';
-       
-            // Setting horizontal alignment based on text-align and justify-content
+        
+            // Setting horizontal alignment
             let align = 'left';
-            if (justifyContent === 'flex-start') {
-                align = 'left';
-            } else if (justifyContent === 'center') {
+            if (textAlign === 'center' || justifyContent === 'center') {
                 align = 'center';
-            } else if (justifyContent === 'flex-end') {
+            } else if (textAlign === 'right' || justifyContent === 'flex-end') {
                 align = 'right';
+            } else if (textAlign === 'justify') {
+                align = 'justify';
             }
-       
+        
             // Vertical alignment
             let valign = 'top';
-            if (alignItems === 'flex-start') {
-                valign = 'top';
-            } else if (alignItems === 'center') {
+            if (alignItems === 'center') {
                 valign = 'middle';
             } else if (alignItems === 'flex-end') {
                 valign = 'bottom';
             }
-       
-            // For textAlign (CSS), map it to PowerPoint alignment
-            if (textAlign === 'left') {
-                align = 'left';
-            } else if (textAlign === 'center') {
-                align = 'center';
-            } else if (textAlign === 'right') {
-                align = 'right';
-            }
-       
+        
+            // ✅ CRITICAL FIX: Create margin effect by adjusting position and size
+            // Convert pixels to inches (96 DPI for screen, PowerPoint uses inches)
+            const marginLeftInches = textBoxMarginLeft / 96;
+            const marginRightInches = textBoxMarginRight / 96;
+            const marginTopInches = textBoxMarginTop / 96;
+            const marginBottomInches = textBoxMarginBottom / 96;
+        
+            // Adjust position to account for left/top margins
+            const adjustedX = position.x + marginLeftInches;
+            const adjustedY = position.y + marginTopInches;
+        
+            // Reduce width/height to account for left/right and top/bottom margins
+            const adjustedW = position.w - marginLeftInches - marginRightInches;
+            const adjustedH = position.h - marginTopInches - marginBottomInches;
+        
             pptSlide.addText(
                 textRuns,
                 {
-                    x: position.x,
-                    y: position.y,
-                    w: position.w,
-                    h: position.h,
+                    x: adjustedX,           // ✅ Shifted right by left margin
+                    y: adjustedY,           // ✅ Shifted down by top margin
+                    w: adjustedW,           // ✅ Reduced by left + right margins
+                    h: adjustedH,           // ✅ Reduced by top + bottom margins
                     fontSize: textOptions.fontSize,
-                    color: textOptions.color,
+                    color: textColor || textOptions.color,
                     fontFace: textOptions.fontFace || (typeof isTitle !== 'undefined' && isTitle ? '+mj-lt' : undefined),
                     align: align,
                     valign: valign,
+                    // ✅ Don't use margin property - use position/size adjustment instead
                     objectName: element.getAttribute('data-name') || `Text Placeholder (${placeholderType})`,
                     _placeholderType: txtPhType,
                     _placeholderIdx: txtPhIdx,

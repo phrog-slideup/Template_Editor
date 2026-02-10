@@ -436,6 +436,12 @@ class ShapeHandler {
             let txtPhIdx = shapeInfo.txtPhValues[0]?.idx || '';
             let txtPhSz = shapeInfo.txtPhValues[0]?.sz || '';
 
+            // ✅ CRITICAL FIX: Get margins from shapeInfo EARLY (they're calculated in textHandler.js)
+            const marginLeft = shapeInfo.marginLeft || 0;
+            const marginRight = shapeInfo.marginRight || 0;
+            const marginTop = shapeInfo.marginTop || 0;
+            const marginBottom = shapeInfo.marginBottom || 0;
+
             // Enhanced placeholder text cleaning
             const cleanedText = this.stripPlaceholderPrompts(shapeInfo.text || "");
 
@@ -462,30 +468,36 @@ class ShapeHandler {
 
             if (this.hasMeaningfulText(cleanedText)) {
                 textContent = `<div class="sli-txt-box${textPlaceholderClass}"
-    contenteditable="true"
-    spellcheck="false"
-    data-editable="text"
-    txtPhType="${txtPhType}"
-    txtPhIdx="${txtPhIdx}"
-    txtPhSz="${txtPhSz}"
-    data-name="${shapeName}"
-    id="${uniqueId}"
-    style="
-      color:${shapeInfo.fontColor};
-      font-size:${shapeInfo.fontSize}px;
-      display:flex;
-      flex-direction: column;
-      transform: ${transformString};
-      ${opacity};
-      justify-content: ${shapeInfo.justifyContent};
-      text-align:${shapeInfo.textAlign};
-      z-index:${zIndex};
-      pointer-events:auto;
-      user-select:text;
-      outline:none;
-    ">
-    ${cleanedText}
-</div>`;
+                    contenteditable="true"
+                    spellcheck="false"
+                    data-editable="text"
+                    txtPhType="${txtPhType}"
+                    txtPhIdx="${txtPhIdx}"
+                    txtPhSz="${txtPhSz}"
+                    data-name="${shapeName}"
+                    id="${uniqueId}"
+                    style="
+                        color:${shapeInfo.fontColor};
+                        font-size:${shapeInfo.fontSize}px;
+                        display:flex;
+                        flex-direction: column;
+                        ${opacity};
+                        justify-content: ${shapeInfo.justifyContent};
+                        text-align:${shapeInfo.textAlign};
+                        width: 100%;
+                        height: 100%;
+                        padding-left: ${marginLeft}px;
+                        padding-right: ${marginRight}px;
+                        padding-top: ${marginTop}px;
+                        padding-bottom: ${marginBottom}px;
+                        box-sizing: border-box;
+                        z-index:${zIndex};
+                        pointer-events:auto;
+                        user-select:text;
+                        outline:none;
+                    ">
+                    ${cleanedText}
+                </div>`;
             }
         }
 
@@ -1642,36 +1654,64 @@ class ShapeHandler {
 
         const borderShape = shapeBorderStyle.border;
 
-        return `<div class="shape" id="${caseName}" 
-                data-name="${shapeName}" 
-                data-original-color="${originalThemeColor}" 
-                originalLumMod="${originalLumMod}" 
-                originalLumOff="${originalLumOff}" 
-                originalAlpha="${originalAlpha}"
+        // Rakesh Notes::: Extract border from shapeInfo if available the below 3 line is added for border also in the retuen shapeBorderCSS is added
+        let shapeBorderCSS = '';
 
-                    style="
-                    position: absolute;
-                    left: ${position.x}px;
-                    top: ${position.y}px;
-                    width: ${position.width}px;
-                    height: ${position.height}px;
-                    background: ${fillColor};
-                    ${opacity};
-                    border-radius: ${borderRadius};
-                    border: ${borderShape};
-                    display: ${hidden ? "none" : "flex"};
-                    transform:  ${transformString};                    
-                    box-sizing: border-box;
-                    overflow: hidden;
-                    justify-content: ${shapeInfo.justifyContent};
-                    align-items: ${shapeInfo.getAlignItem};
-                    z-index: ${zIndex};
-                    ${clipPath ? `clip-path: ${clipPath};` : ""}    
-                    ${maskPath ? `mask: ${maskPath};` : ""}
-                    
-                ">
-                ${textContent}
-            </div>`;
+        // Rakesh Notes::: height issue=height set properly for the text box as outer shape hide the inner text with a specific height
+        const useHeight = shapeInfo && shapeInfo.estimatedContentHeight && shapeInfo.estimatedContentHeight > position.height;
+        let effectiveHeight = useHeight ? shapeInfo.estimatedContentHeight : position.height;
+        const overflowStyle = useHeight ? 'visible' : 'hidden';
+        const isCtrTitlePlaceholder = this.isCenterTitlePlaceholder(shapeNode);
+        const isTextBoxCheck = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvSpPr"]?.[0]?.["$"]?.txBox === "1";
+
+        // Calculate centered position
+        let adjustedLeft = position.x;
+        let adjustedTop = position.y;
+        if (shapeInfo && shapeInfo.outlineStyle && shapeInfo.outlineStyle.css) {
+            shapeBorderCSS = shapeInfo.outlineStyle.css;
+            effectiveHeight = position.height;
+        }
+        // ✅ CRITICAL FIX: Center the text box on slide for ctrTitle placeholders
+        if (isCtrTitlePlaceholder && !isTextBoxCheck) {
+            const slideWidth = 960; // Standard slide width
+            const slideHeight = 540; // Standard slide height
+            
+            // Horizontally center
+            adjustedLeft = (slideWidth - position.width) / 2;
+            
+            // Vertically center
+            adjustedTop = (slideHeight - effectiveHeight) / 2;
+        }
+
+        return `<div class="shape" id="${caseName}" 
+            data-name="${shapeName}" 
+            data-original-color="${originalThemeColor}" 
+            originalLumMod="${originalLumMod}" 
+            originalLumOff="${originalLumOff}" 
+            originalAlpha="${originalAlpha}"
+            style="
+                position: absolute;
+                left: ${adjustedLeft}px;
+                top: ${adjustedTop}px;
+                width: ${position.width}px;
+                height: ${effectiveHeight}px;
+                background: ${fillColor};
+                ${opacity};
+                border-radius: ${borderRadius};
+                ${shapeBorder}
+                ${shapeBorderCSS}
+                display: ${hidden ? "none" : "flex"};
+                transform: ${transformString};                    
+                box-sizing: border-box;
+                overflow: ${overflowStyle};
+                justify-content: ${shapeInfo.justifyContent};
+                align-items: ${shapeInfo.getAlignItem};
+                z-index: ${zIndex};
+                ${clipPath ? `clip-path: ${clipPath};` : ""}    
+                ${maskPath ? `mask: ${maskPath};` : ""}
+            ">
+            ${textContent}
+        </div>`;
 
     }
 
@@ -2646,25 +2686,6 @@ class ShapeHandler {
             return null;
         }
     }
-
-    // When generating CSS transform, use this logic:
-    // getTransformString(position, isTextBox = false) {
-    //     let transforms = [];
-
-    //     if (position.rotation !== 0) {
-    //         transforms.push(`rotate(${position.rotation}deg)`);
-    //     }
-
-    //     if (position.flipH) {
-    //         transforms.push('scaleX(-1)');
-    //     }
-
-    //     if (position.flipV) {
-    //         transforms.push('scaleY(-1)');
-    //     }
-
-    //     return transforms.length > 0 ? transforms.join(' ') : 'none';
-    // }
 
     // Rakesh Notes::: here above is the original function i have change it 
     getTransformString(position, isTextBox = false) {

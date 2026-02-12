@@ -8,6 +8,7 @@ const imageSavePath = path.resolve(__dirname, "../../uploads");
 if (!fs.existsSync(imageSavePath)) {
   fs.mkdirSync(imageSavePath, { recursive: true });
 }
+const EMU_PER_PX = 9525;
 
 /**
  * Normalize path to prevent double ppt/ prefix
@@ -196,7 +197,7 @@ async function getImageFromPicture(node, filePath, files, relationshipsXML, them
       let glowData = null;
 
       if (glow) {
-        const glowRadius = glow?.["$"]?.rad ? parseInt(glow["$"].rad, 10) / 12700 : 0;
+        const glowRadius = glow?.["$"]?.rad ? parseInt(glow["$"].rad, 10) / EMU_PER_PX : 0;
         let glowColor = "rgba(128, 0, 128, 0.6)"; // default purple
 
         if (glow["a:srgbClr"]) {
@@ -242,55 +243,92 @@ async function getImageFromPicture(node, filePath, files, relationshipsXML, them
       // Extract OUTER SHADOW effect
       let outerShadowData = null;
 
-      if (outerShdw) {
-        const blurRad = outerShdw?.["$"]?.blurRad ? parseInt(outerShdw["$"].blurRad, 10) / 12700 : 0;
-        const sx = outerShdw?.["$"]?.sx ? parseInt(outerShdw["$"].sx, 10) / 12700 : 0;
-        const sy = outerShdw?.["$"]?.sy ? parseInt(outerShdw["$"].sy, 10) / 12700 : 0;
+if (outerShdw) {
+    const blurRad = outerShdw?.["$"]?.blurRad ? parseInt(outerShdw["$"].blurRad, 10) : 0;
+    const dist = outerShdw?.["$"]?.dist ? parseInt(outerShdw["$"].dist, 10) : 0;
+    const dir = outerShdw?.["$"]?.dir ? parseInt(outerShdw["$"].dir, 10) : 0;
 
-        let shadowColor = "rgba(0, 0, 0, 0.5)"; // default
+    const angleRad = (dir / 60000 * Math.PI) / 180;
+    const offsetX = Math.cos(angleRad) * (dist / EMU_PER_PX) * 1.8;
+const offsetY = Math.sin(angleRad) * (dist / EMU_PER_PX) * 1.8;
 
-        if (outerShdw["a:srgbClr"]) {
-          const colorVal = outerShdw["a:srgbClr"][0]["$"].val;
-          const alpha = outerShdw["a:srgbClr"][0]["a:alpha"]?.[0]?.["$"]?.val;
-          const shadowAlpha = alpha ? parseInt(alpha, 10) / 100000 : 1;
-          const r = parseInt(colorVal.substring(0, 2), 16);
-          const g = parseInt(colorVal.substring(2, 4), 16);
-          const b = parseInt(colorVal.substring(4, 6), 16);
-          shadowColor = `rgba(${r}, ${g}, ${b}, ${shadowAlpha})`;
-        } else if (outerShdw["a:schemeClr"]) {
-          const schemeClr = outerShdw["a:schemeClr"][0]["$"].val;
-          let hexColor = null;
+    const scaleX = outerShdw?.["$"]?.sx
+        ? parseInt(outerShdw["$"].sx, 10) / 1000 : 100;
+    const scaleY = outerShdw?.["$"]?.sy
+        ? parseInt(outerShdw["$"].sy, 10) / 1000 : 100;
 
-          // Try theme first, then fallback
-          if (themeXML) {
+    let shadowColor = "rgba(0, 0, 0, 0.5)";
+
+    if (outerShdw["a:prstClr"]) {
+        const prstVal = outerShdw["a:prstClr"][0]["$"].val;
+        const alpha = outerShdw["a:prstClr"][0]["a:alpha"]?.[0]?.["$"]?.val;
+        const shadowAlpha = alpha ? parseInt(alpha, 10) / 100000 : 0.5;
+        const enhancedAlpha = Math.min(1, shadowAlpha*1.5);
+
+        const presetColors = {
+            'black': [0, 0, 0],
+            'white': [255, 255, 255],
+            'red': [255, 0, 0],
+            'green': [0, 128, 0],
+            'blue': [0, 0, 255],
+            'gray': [128, 128, 128],
+            'darkGray': [64, 64, 64],
+            'lightGray': [192, 192, 192],
+        };
+        const [r, g, b] = prstVal === 'black' ? [180, 180, 180] : (presetColors[prstVal] || [0, 0, 0]);
+        shadowColor = `rgba(${r}, ${g}, ${b}, ${enhancedAlpha})`;
+    } else if (outerShdw["a:srgbClr"]) {
+        const colorVal = outerShdw["a:srgbClr"][0]["$"].val;
+        const alpha = outerShdw["a:srgbClr"][0]["a:alpha"]?.[0]?.["$"]?.val;
+        const shadowAlpha = alpha ? parseInt(alpha, 10) / 100000 : 1;
+        const enhancedAlpha = Math.min(1, shadowAlpha * 1.8);
+        const r = parseInt(colorVal.substring(0, 2), 16);
+        const g = parseInt(colorVal.substring(2, 4), 16);
+        const b = parseInt(colorVal.substring(4, 6), 16);
+        shadowColor = `rgba(${r}, ${g}, ${b}, ${enhancedAlpha})`;
+    } else if (outerShdw["a:schemeClr"]) {
+        const schemeClr = outerShdw["a:schemeClr"][0]["$"].val;
+        let hexColor = null;
+
+        if (themeXML) {
             try {
-              hexColor = resolveBorderColor(schemeClr, themeXML);
+                hexColor = resolveBorderColor(schemeClr, themeXML);
             } catch (e) {
-              console.warn("Could not resolve shadow color from theme:", e);
+                console.warn("Could not resolve shadow color from theme:", e);
             }
-          }
+        }
 
-          // Use fallback if theme failed
-          if (!hexColor || hexColor === 'black' || hexColor === '#000000') {
-            hexColor = getAccentColorFallback(schemeClr);
-          }
+        if (!hexColor || hexColor === 'black' || hexColor === '#000000') {
+            hexColor = '#000000';
+        }
 
-          if (hexColor && hexColor.startsWith('#') && hexColor.length >= 7) {
+        if (hexColor && hexColor.startsWith('#') && hexColor.length >= 7) {
+            const alpha = outerShdw["a:schemeClr"][0]["a:alpha"]?.[0]?.["$"]?.val;
+            const shadowAlpha = alpha ? parseInt(alpha, 10) / 100000 : 0.5;
+            const enhancedAlpha = Math.min(1, shadowAlpha * 3);
             const r = parseInt(hexColor.substring(1, 3), 16);
             const g = parseInt(hexColor.substring(3, 5), 16);
             const b = parseInt(hexColor.substring(5, 7), 16);
-            shadowColor = `rgba(${r}, ${g}, ${b}, 1)`;
-          }
+            shadowColor = `rgba(${r}, ${g}, ${b}, ${enhancedAlpha})`;
         }
+    }
 
-        outerShadowData = {
-          blur: blurRad,
-          offsetX: sx,
-          offsetY: sy,
-          color: shadowColor
-        };
-        console.log("outerShadowData===============================>", outerShadowData);
-      }
+   // Calculate spread from scale (sx/sy are percentages like 103 = 103%)
+// Average the scale and convert to px spread based on a reference size
+const avgScale = ((scaleX - 100) + (scaleY - 100)) / 2; // e.g., 3 for 103%
+const spreadPx = avgScale * 4.5; // approximate spread in pixels
+
+outerShadowData = {
+    blur: blurRad / EMU_PER_PX,
+    offsetX: offsetX,
+    offsetY: offsetY,
+    scaleX: scaleX,
+    scaleY: scaleY,
+    spread: spreadPx,
+    color: shadowColor
+};
+    console.log("outerShadowData (FIXED):", outerShadowData);
+}
 
       // Combine glow and shadow
       if (glowData || outerShadowData) {

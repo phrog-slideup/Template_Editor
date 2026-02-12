@@ -321,6 +321,15 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
             imageOptions.shadow = pptxShadow;
             console.log('✅ Shadow added to pptxgenjs:', pptxShadow);
         }
+        if (pptxShadow && pptxShadow.spread) {
+    // Store sx/sy for XML post-processing
+    // spread in px → approximate scale percentage (e.g., 9px spread ≈ 103%)
+    const scalePct = 100 + Math.round(pptxShadow.spread / 3);
+    imageOptions._shadowScale = {
+        sx: scalePct * 1000,  // e.g., 103000
+        sy: scalePct * 1000
+    };
+}
 
         // Add hyperlink if exists
         if (hyperlink) {
@@ -686,18 +695,26 @@ function generateImageXml(image, imageId, slideDimensions) {
             // Add outer shadow effect
             if (image.shadowEffects.hasShadow && image.shadowEffects.shadow) {
                 const shadow = image.shadowEffects.shadow;
-                const blurRad = Math.round(shadow.blur * 12700);
-                const sx = Math.round(shadow.offsetX * 12700);
-                const sy = Math.round(shadow.offsetY * 12700);
-                const shadowAlpha = Math.round(shadow.alpha * 100000);
-                const colorHex = ((shadow.r << 16) | (shadow.g << 8) | shadow.b).toString(16).padStart(6, '0').toUpperCase();
+               const blurRad = Math.round(shadow.blur * 12700);
+const shadowAlpha = Math.round(shadow.alpha * 100000);
+const colorHex = ((shadow.r << 16) | (shadow.g << 8) | shadow.b).toString(16).padStart(6, '0').toUpperCase();
 
-                effectsXml += `
-            <a:outerShdw blurRad="${blurRad}" sx="${sx}" sy="${sy}" algn="ctr" rotWithShape="0">
-                <a:srgbClr val="${colorHex}">
-                    <a:alpha val="${shadowAlpha}"/>
-                </a:srgbClr>
-            </a:outerShdw>`;
+// Convert cartesian offsets to polar (dist + dir)
+const dist = Math.round(Math.sqrt(shadow.offsetX * shadow.offsetX + shadow.offsetY * shadow.offsetY) * 914400 / 72);
+let angle = Math.atan2(shadow.offsetY, shadow.offsetX) * (180 / Math.PI);
+if (angle < 0) angle += 360;
+const dir = Math.round(angle * 60000);
+
+// Scale factors (default 100% = 100000)
+const sx = shadow.scaleX ? Math.round(shadow.scaleX * 1000) : 100000;
+const sy = shadow.scaleY ? Math.round(shadow.scaleY * 1000) : 100000;
+
+effectsXml += `
+    <a:outerShdw blurRad="${blurRad}" dist="${dist}" dir="${dir}" sx="${sx}" sy="${sy}" algn="br" rotWithShape="0">
+        <a:prstClr val="black">
+            <a:alpha val="${shadowAlpha}"/>
+        </a:prstClr>
+    </a:outerShdw>`;
             }
 
             effectsXml += '</a:effectLst>';
@@ -1128,14 +1145,19 @@ function convertBoxShadowToPptxFormat(boxShadowString) {
     visibleShadows.sort((a, b) => score(b) - score(a));
     const best = visibleShadows[0];
 
-    return {
-        type: best.type,
-        opacity: String(best.opacity),
-        blur: String(Math.round(best.blur + (best.spread || 0) * 0.3)),
-        color: best.colorHex,
-        offset: String(Math.round(best.offset)),
-        angle: String(Math.round(best.angle))
-    };
+   // Spread in CSS creates thickness — in PPT this maps to higher blur + offset
+const spreadBoost = best.spread || 0;
+const effectiveBlur = best.blur + spreadBoost * 0.8;
+const effectiveOffset = best.offset + spreadBoost * 0.5;
+
+return {
+    type: best.type,
+    opacity: String(Math.min(1, best.opacity * 1.5)),
+    blur: String(Math.round(effectiveBlur)),
+    color: best.colorHex,
+    offset: String(Math.round(effectiveOffset)),
+    angle: String(Math.round(best.angle))
+};
 }
 
 module.exports = {

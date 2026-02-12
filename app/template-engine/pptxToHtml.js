@@ -730,8 +730,8 @@ class pptxToHtml {
 
               // Add outer shadow effect
               if (imageInfo.shadow.shadow) {
-                const { blur, offsetX, offsetY, color } = imageInfo.shadow.shadow;
-                shadows.push(`${offsetX.toFixed(2)}px ${offsetY.toFixed(2)}px ${blur.toFixed(2)}px ${color}`);
+                const { blur, offsetX, offsetY, spread, color } = imageInfo.shadow.shadow;
+    shadows.push(`${offsetX.toFixed(2)}px ${offsetY.toFixed(2)}px ${blur.toFixed(2)}px ${(spread || 0).toFixed(2)}px ${color}`);
               }
 
               if (shadows.length > 0) {

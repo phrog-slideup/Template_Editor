@@ -113,7 +113,7 @@ function extractLineEnds(lineNode) {
 /**
  * Calculate path endpoints and segments for different connector types
  */
-function calculateConnectorPath(shapeType, width, height, adj1Pct) {
+function calculateConnectorPath(shapeType, width, height, adj1Pct, adj2Pct = 0.5) {
     const segments = [];
     let startPoint = { x: 0, y: 0 };
     let endPoint = { x: width, y: height };
@@ -156,32 +156,28 @@ function calculateConnectorPath(shapeType, width, height, adj1Pct) {
             break;
             
         case "bentConnector4":
-            const bend1X = width * 0.33;
-            const bend2X = width * 0.67;
-            const midY = height * 0.5;
+            const b4_bend1X = width * adj1Pct;
+            const b4_midY = height * adj2Pct;
+            
+            // 5 segments creating 4 bends: H → V → H → V → H
             segments.push({ 
                 type: 'horizontal', 
                 x1: 0, y1: 0, 
-                x2: bend1X, y2: 0 
+                x2: b4_bend1X, y2: 0 
             });
             segments.push({ 
                 type: 'vertical', 
-                x1: bend1X, y1: 0, 
-                x2: bend1X, y2: midY 
+                x1: b4_bend1X, y1: 0, 
+                x2: b4_bend1X, y2: b4_midY 
             });
             segments.push({ 
                 type: 'horizontal', 
-                x1: bend1X, y1: midY, 
-                x2: bend2X, y2: midY 
+                x1: b4_bend1X, y1: b4_midY, 
+                x2: width, y2: b4_midY 
             });
             segments.push({ 
                 type: 'vertical', 
-                x1: bend2X, y1: midY, 
-                x2: bend2X, y2: height 
-            });
-            segments.push({ 
-                type: 'horizontal', 
-                x1: bend2X, y1: height, 
+                x1: width, y1: b4_midY, 
                 x2: width, y2: height 
             });
             startPoint = { x: 0, y: 0 };
@@ -489,8 +485,8 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
         const flipV = xfrm?.["$"]?.flipV === "1";
         
         // Generate smooth curved HTML
-        const curveData = generateCurvedHTML(shapeType, width, height, strokeColor, strokeWidth, adj1Pct);
-
+        // const curveData = generateCurvedHTML(shapeType, width, height, strokeColor, strokeWidth, adj1Pct);
+        const curveData = generateCurvedHTML(shapeType, width, height, strokeColor, strokeWidth, adj1Pct, flipH, flipV);
         // ✅ FIX: Adjust rotation based on flip combinations to match PowerPoint behavior
         // PowerPoint applies rotation in shape space, then flips in parent space
         // CSS applies transforms left-to-right, so we need to compensate
@@ -572,7 +568,7 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
     // Get adjustment values if present
     const avLst = shapeNode?.["p:spPr"]?.[0]?.["a:prstGeom"]?.[0]?.["a:avLst"]?.[0];
     let adj1 = 50000;
-    
+    let adj2 = 50000;
     if (avLst?.["a:gd"]) {
         const gdList = Array.isArray(avLst["a:gd"]) ? avLst["a:gd"] : [avLst["a:gd"]];
         for (const gd of gdList) {
@@ -581,13 +577,17 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
             if (name === "adj1" && fmla.includes("val")) {
                 adj1 = parseInt(fmla.replace("val ", ""), 10) || 50000;
             }
+            else if (name === "adj2" && fmla.includes("val")) {
+                adj2 = parseInt(fmla.replace("val ", ""), 10) || 50000;    
+            }
         }
     }
 
     const adj1Pct = adj1 / 100000;
-
+    const adj2Pct = adj2 / 100000;
     // Calculate path and get endpoints
-    const pathInfo = calculateConnectorPath(shapeType, width, height, adj1Pct);
+    // const pathInfo = calculateConnectorPath(shapeType, width, height, adj1Pct);
+    const pathInfo = calculateConnectorPath(shapeType, width, height, adj1Pct, adj2Pct);
     const { segments, startPoint, endPoint } = pathInfo;
 
     // Generate HTML segments
@@ -638,25 +638,17 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
     let rotation = xfrm?.["$"]?.rot ? parseInt(xfrm["$"].rot, 10) / 60000 : 0;
     const flipH = xfrm?.["$"]?.flipH === "1";
     const flipV = xfrm?.["$"]?.flipV === "1";
-    // ✅ Store ORIGINAL rotation before compensation (needed for PPTX conversion)
     const originalRotation = rotation;
-    // ✅ FIX: Apply rotation compensation for bent connectors (same as curved connectors)
-    // PowerPoint applies rotation in shape space, then flips in parent space
-    // CSS applies transforms left-to-right, so we need to compensate
-    if (flipH && !flipV) {
-        rotation = -rotation; // Horizontal flip only: negate rotation
-    } else if (!flipH && flipV) {
-        rotation = -rotation; // Vertical flip only: negate rotation
-    }
 
+    // ✅ Build transform: rotation first, then swapped flips (no rotation compensation needed)
     let transform = '';
     if (rotation !== 0) {
         transform += `rotate(${rotation}deg) `;
     }
-    if (flipH) {
+    if (flipV) {
         transform += 'scaleX(-1) ';
     }
-    if (flipV) {
+    if (flipH) {
         transform += 'scaleY(-1) ';
     }
 
@@ -807,72 +799,148 @@ function getPositionFromMaster(masterXML, shapeNode, placeholderType) {
     }
 }
 
-function generateCurvedHTML(shapeType, width, height, strokeColor, strokeWidth, adj1Pct = 0.5) {
+function generateCurvedHTML(shapeType, width, height, strokeColor, strokeWidth, adj1Pct = 0.5, flipH = false, flipV = false) {
     let curveHTML = '';
-    const numPoints = 100; // Many more points for smoother curves
+    let startPoint = { x: 0, y: 0 };
+    let endPoint = { x: width, y: height };
+    let startAngle = 0;
+    let endAngle = 0;
     
-    // Calculate curve points based on connector type
+    // High-resolution curve rendering
+    const numPoints = 150; // More points for smoother curves
     const points = [];
     
+    // PowerPoint's curved connectors use specific Bezier curve formulas
     switch (shapeType) {
-        case "curvedConnector2":
-            // Simple quadratic curve from top-left to bottom-right
+        case "curvedConnector2": {
+            // Quadratic Bezier: control point at (width, 0)
+            const controlX = width;
+            const controlY = 0;
+            
             for (let i = 0; i <= numPoints; i++) {
                 const t = i / numPoints;
-                // Control point slightly offset to create curve
-                const controlX = width * 0.5;
-                const controlY = height * 0.5;
-                
-                // Quadratic Bezier: B(t) = (1-t)²P0 + 2(1-t)tP1 + t²P2
+                // Quadratic Bezier formula: B(t) = (1-t)²P0 + 2(1-t)tP1 + t²P2
                 const x = (1 - t) * (1 - t) * 0 + 2 * (1 - t) * t * controlX + t * t * width;
                 const y = (1 - t) * (1 - t) * 0 + 2 * (1 - t) * t * controlY + t * t * height;
                 points.push({ x, y });
             }
-            break;
             
-        case "curvedConnector3":
-            // S-curve with smooth transition
+            startPoint = { x: 0, y: 0 };
+            endPoint = { x: width, y: height };
+            break;
+        }
+            
+        case "curvedConnector3": {
+            // Cubic Bezier S-curve
+            const cp1x = width * adj1Pct;
+            const cp1y = 0;
+            const cp2x = width * adj1Pct;
+            const cp2y = height;
+            
             for (let i = 0; i <= numPoints; i++) {
                 const t = i / numPoints;
-                // Cubic easing for smooth S-curve
-                const easing = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-                const x = width * t;
-                const y = height * easing;
+                // Cubic Bezier formula: B(t) = (1-t)³P0 + 3(1-t)²tP1 + 3(1-t)t²P2 + t³P3
+                const x = Math.pow(1 - t, 3) * 0 + 
+                         3 * Math.pow(1 - t, 2) * t * cp1x + 
+                         3 * (1 - t) * Math.pow(t, 2) * cp2x + 
+                         Math.pow(t, 3) * width;
+                const y = Math.pow(1 - t, 3) * 0 + 
+                         3 * Math.pow(1 - t, 2) * t * cp1y + 
+                         3 * (1 - t) * Math.pow(t, 2) * cp2y + 
+                         Math.pow(t, 3) * height;
                 points.push({ x, y });
             }
-            break;
             
-        case "curvedConnector4":
-            // Double curve
+            startPoint = { x: 0, y: 0 };
+            endPoint = { x: width, y: height };
+            break;
+        }
+            
+        case "curvedConnector4": {
+            // Cubic Bezier with adjusted control points
+            const cp1x = width * adj1Pct;
+            const cp1y = 0;
+            const cp2x = width * (1 - adj1Pct);
+            const cp2y = height;
+            
             for (let i = 0; i <= numPoints; i++) {
                 const t = i / numPoints;
-                const x = width * t;
-                // Smooth wave with two peaks
-                const wave = Math.sin(t * Math.PI);
-                const y = height * t + height * 0.15 * wave;
+                const x = Math.pow(1 - t, 3) * 0 + 
+                         3 * Math.pow(1 - t, 2) * t * cp1x + 
+                         3 * (1 - t) * Math.pow(t, 2) * cp2x + 
+                         Math.pow(t, 3) * width;
+                const y = Math.pow(1 - t, 3) * 0 + 
+                         3 * Math.pow(1 - t, 2) * t * cp1y + 
+                         3 * (1 - t) * Math.pow(t, 2) * cp2y + 
+                         Math.pow(t, 3) * height;
                 points.push({ x, y });
             }
-            break;
             
-        case "curvedConnector5":
-            // Complex multi-curve
-            for (let i = 0; i <= numPoints; i++) {
-                const t = i / numPoints;
-                const x = width * t;
-                // Multiple smooth waves
-                const wave = Math.sin(t * Math.PI * 1.5);
-                const y = height * t + height * 0.12 * wave;
+            startPoint = { x: 0, y: 0 };
+            endPoint = { x: width, y: height };
+            break;
+        }
+            
+        case "curvedConnector5": {
+            // Complex multi-segment Bezier curve
+            const halfPoints = Math.floor(numPoints / 2);
+            
+            // First segment: (0,0) to (width/2, height/2)
+            const cp1x = width * 0.25;
+            const cp1y = 0;
+            const cp2x = width * 0.5;
+            const cp2y = height * 0.25;
+            const midX = width * 0.5;
+            const midY = height * 0.5;
+            
+            for (let i = 0; i <= halfPoints; i++) {
+                const t = i / halfPoints;
+                const x = Math.pow(1 - t, 3) * 0 + 
+                         3 * Math.pow(1 - t, 2) * t * cp1x + 
+                         3 * (1 - t) * Math.pow(t, 2) * cp2x + 
+                         Math.pow(t, 3) * midX;
+                const y = Math.pow(1 - t, 3) * 0 + 
+                         3 * Math.pow(1 - t, 2) * t * cp1y + 
+                         3 * (1 - t) * Math.pow(t, 2) * cp2y + 
+                         Math.pow(t, 3) * midY;
                 points.push({ x, y });
             }
-            break;
             
-        default:
+            // Second segment: (width/2, height/2) to (width, height)
+            const cp3x = width * 0.5;
+            const cp3y = height * 0.75;
+            const cp4x = width * 0.75;
+            const cp4y = height;
+            
+            for (let i = 1; i <= halfPoints; i++) {
+                const t = i / halfPoints;
+                const x = Math.pow(1 - t, 3) * midX + 
+                         3 * Math.pow(1 - t, 2) * t * cp3x + 
+                         3 * (1 - t) * Math.pow(t, 2) * cp4x + 
+                         Math.pow(t, 3) * width;
+                const y = Math.pow(1 - t, 3) * midY + 
+                         3 * Math.pow(1 - t, 2) * t * cp3y + 
+                         3 * (1 - t) * Math.pow(t, 2) * cp4y + 
+                         Math.pow(t, 3) * height;
+                points.push({ x, y });
+            }
+            
+            startPoint = { x: 0, y: 0 };
+            endPoint = { x: width, y: height };
+            break;
+        }
+            
+        default: {
+            // Fallback to straight line
             points.push({ x: 0, y: 0 });
             points.push({ x: width, y: height });
+            startPoint = { x: 0, y: 0 };
+            endPoint = { x: width, y: height };
             break;
+        }
     }
     
-    // Create overlapping line segments between points for seamless appearance
+    // Render curve using overlapping line segments
     for (let i = 0; i < points.length - 1; i++) {
         const p1 = points[i];
         const p2 = points[i + 1];
@@ -882,7 +950,7 @@ function generateCurvedHTML(shapeType, width, height, strokeColor, strokeWidth, 
         const length = Math.sqrt(dx * dx + dy * dy);
         const angle = Math.atan2(dy, dx) * 180 / Math.PI;
         
-        // Add slight overlap and rounding for smoother appearance
+        // Create smooth segments with slight overlap
         curveHTML += `<div style="
             position: absolute;
             left: ${p1.x}px;
@@ -892,28 +960,29 @@ function generateCurvedHTML(shapeType, width, height, strokeColor, strokeWidth, 
             background: ${strokeColor};
             transform: rotate(${angle}deg);
             transform-origin: 0 center;
-            border-radius: ${strokeWidth / 2}px;
+            border-radius: ${strokeWidth / 4}px;
         "></div>`;
+    }
+    
+    // Calculate start and end tangent angles from first/last few points
+    if (points.length > 5) {
+        const startDx = points[5].x - points[0].x;
+        const startDy = points[5].y - points[0].y;
+        startAngle = Math.atan2(startDy, startDx) * 180 / Math.PI + 180;
+        
+        const endDx = points[points.length - 1].x - points[points.length - 6].x;
+        const endDy = points[points.length - 1].y - points[points.length - 6].y;
+        endAngle = Math.atan2(endDy, endDx) * 180 / Math.PI;
     }
     
     return {
         html: curveHTML,
-        startPoint: points[0],
-        endPoint: points[points.length - 1],
-        // Start angle - use first few points for better accuracy
-        startAngle: Math.atan2(points[3].y - points[0].y, points[3].x - points[0].x) * 180 / Math.PI + 180,
-        // End angle - use last few points for better accuracy
-        endAngle: Math.atan2(points[points.length - 1].y - points[points.length - 4].y, 
-                             points[points.length - 1].x - points[points.length - 4].x) * 180 / Math.PI
+        startPoint: startPoint,
+        endPoint: endPoint,
+        startAngle: startAngle,
+        endAngle: endAngle
     };
 }
-
-
-
-
-
-
-
 
 
 

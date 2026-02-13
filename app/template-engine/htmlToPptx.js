@@ -8,6 +8,10 @@ const puppeteer = require("puppeteer");
 const axios = require("axios");
 const JSZip = require('jszip');
 
+// Add at the very top, BEFORE requiring PptxGenJS
+const { clearGradientMetadata } = require('./pptxgen-text-gradient-patch');
+const { injectTextGradientsIntoSlideXML } = require('./text-gradient-processor');
+
 const addShapeToSlide = require("../html-To-Pptx-Styling/addShapeToSlide");
 const addTextBox = require("../html-To-Pptx-Styling/addTextBoxToSlide");
 const addTable = require("../html-To-Pptx-Styling/addTableToSlide");
@@ -21,7 +25,7 @@ const sharedCache = require('../api/shared/cache.js');
 async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName) {
     try {
         console.log('🚀 Starting HTML to PPTX conversion with FIXED master support...', originalFolderName);
-
+        clearGradientMetadata();
         const dom = new JSDOM(htmlString);
         const document = dom.window.document;
         const slides = document.querySelectorAll(".sli-slide:not(.sli-slide .sli-slide)");
@@ -161,6 +165,21 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         // // NEW STEP 6.6: Comprehensive chart XML fix for Syncfusion
         // console.log('🔧 Step 6.6: Comprehensive chart XML fix...');
         // const comprehensiveChartResult = await comprehensiveChartXmlFix(slideXmlsDir);
+
+
+        // ========================================
+        // 🎨 STEP 6.5: INJECT TEXT GRADIENTS HERE
+        // ========================================
+        console.log('🎨 Step 6.5: Injecting text gradients into slide XML...');
+        const gradientResult = await injectTextGradientsIntoSlideXML(slideXmlsDir);
+        
+        if (gradientResult.success && gradientResult.slidesProcessed > 0) {
+            console.log(`   ✅ Successfully processed ${gradientResult.slidesProcessed} slide(s) with gradients`);
+        } else if (gradientResult.success) {
+            console.log('   ℹ️  No text gradients found to inject');
+        } else {
+            console.log('   ⚠️  Gradient injection encountered issues:', gradientResult.error);
+        }
 
         // NEW STEP 6.7: Fix chart relationships
         console.log('🔗 Step 6.7: Fixing chart relationships...');

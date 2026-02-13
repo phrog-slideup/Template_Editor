@@ -257,9 +257,9 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
 
     paragraphs.forEach((p, index) => {
 
-        console.log(`\n=== Processing paragraph ${index} ===`);
-        console.log("HTML:", p.innerHTML);
-        console.log("Text:", p.textContent);
+        // console.log(`\n=== Processing paragraph ${index} ===`);
+        // console.log("HTML:", p.innerHTML);
+        // console.log("Text:", p.textContent);
         const paragraphHTML = p.innerHTML.trim();
 
         const isBreakOnlyParagraph = paragraphHTML === '<br>' ||
@@ -341,8 +341,8 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
 
             textBoxOptions.name = "Sample Title";
             const flattenedText = processedParagraphs.flat();
-            console.log("textBoxOptions===",textBoxOptions);
-            console.log("flattenedText=======",flattenedText);
+            // console.log("textBoxOptions===",textBoxOptions);
+            // console.log("flattenedText=======",flattenedText);
             pptSlide.addText(flattenedText, textBoxOptions);
         } catch (error) {
             console.error("Error adding text to slide:", error);
@@ -548,110 +548,121 @@ function extractSpanFormattingWithLineSpacing(span, defaultAlign = "left", origi
     let fontSizePx = superSubInfo.baseFontSize; // Use base font size, not reduced
     const fontSizePt = fontSizePx;
     let finalColor;
+    let gradientOptions = null; // Declare outside to avoid scope issues
 
-    // Helper function to check if a value is a valid scheme color
-    function isValidSchemeColor(colorVal) {
-        if (!colorVal || colorVal === 'undefined') return false;
-
-        const validSchemeColors = [
-            'tx1', 'tx2', 'bg1', 'bg2',
-            'accent1', 'accent2', 'accent3', 'accent4', 'accent5', 'accent6',
-            'hlink', 'folHlink', 'dk1', 'dk2', 'lt1', 'lt2', 'phclr',
-            'text1', 'text2', 'background1', 'background2'
-        ];
-
-        return validSchemeColors.includes(colorVal.toLowerCase());
-    }
-
-    // Helper function to convert common color names to hex
-    function colorNameToHex(colorName) {
-        const colorMap = {
-            'black': '#000000',
-            'white': '#FFFFFF',
-            'red': '#FF0000',
-            'green': '#008000',
-            'blue': '#0000FF',
-            'yellow': '#FFFF00',
-            'cyan': '#00FFFF',
-            'magenta': '#FF00FF',
-            'gray': '#808080',
-            'grey': '#808080'
-        };
-        return colorMap[colorName.toLowerCase()] || null;
-    }
-
-    // Helper function to check if string is a valid hex color
-    function isValidHex(colorStr) {
-        if (!colorStr) return false;
-        const hex = colorStr.replace('#', '');
-        return /^[0-9A-Fa-f]{6}$/.test(hex);
-    }
-
-    if (originalTxtColor && originalTxtColor !== 'undefined') {
-
-        // Check if it's a valid scheme color
-        if (isValidSchemeColor(originalTxtColor)) {
-            // Create theme color object for valid scheme colors
-            finalColor = {
-                type: 'schemeClr',
-                val: originalTxtColor.toLowerCase()
-            };
-
-            // Add luminance modifications if they exist and are valid
-            if (originalLumMod && !isNaN(parseInt(originalLumMod))) {
-                finalColor.lumMod = parseInt(originalLumMod);
-            }
-            if (originalLumOff && !isNaN(parseInt(originalLumOff))) {
-                finalColor.lumOff = parseInt(originalLumOff);
+    // 🆕 NEW: Check for gradient data in span attributes
+    const hasGradient = span.getAttribute('data-has-gradient') === 'true';
+    
+    if (hasGradient) {
+        const gradientType = span.getAttribute('data-gradient-type');
+        const gradientStops = span.getAttribute('data-gradient-stops');
+        
+        console.log(`🎨 Found gradient text: type=${gradientType}`);
+        
+        if (gradientType && gradientStops) {
+            try {
+                const stops = JSON.parse(gradientStops);
+                
+                // Use first stop color as fallback
+                finalColor = stops[0]?.color || '#000000';
+                
+                // Build options with gradient metadata
+                gradientOptions = {
+                    _hasGradient: true,
+                    _gradientType: gradientType,
+                    _gradientStops: stops
+                };
+                
+                if (gradientType === 'linear') {
+                    const angle = parseInt(span.getAttribute('data-gradient-angle')) || 90;
+                    gradientOptions._gradientAngle = angle;
+                    console.log(`   📐 Linear gradient angle: ${angle}°`);
+                    
+                } else if (gradientType === 'radial') {
+                    gradientOptions._gradientPath = span.getAttribute('data-gradient-path') || 'circle';
+                    gradientOptions._gradientCenterX = parseFloat(span.getAttribute('data-gradient-center-x')) || 50;
+                    gradientOptions._gradientCenterY = parseFloat(span.getAttribute('data-gradient-center-y')) || 50;
+                    console.log(`   🎯 Radial gradient center: (${gradientOptions._gradientCenterX}, ${gradientOptions._gradientCenterY})`);
+                }
+                
+                console.log(`   ✅ Gradient has ${stops.length} color stops`);
+                
+            } catch (parseError) {
+                console.warn('⚠️ Failed to parse gradient data:', parseError);
+                finalColor = '#000000';
             }
         }
-        // Check if it's a hex color (like "000000")
-        else if (isValidHex(originalTxtColor)) {
-            // For hex colors, we need to handle luminance modifications differently
-            // If there are luminance modifications, we should treat this as a scheme color
-            if ((originalLumMod && !isNaN(parseInt(originalLumMod))) ||
-                (originalLumOff && !isNaN(parseInt(originalLumOff)))) {
+    } else {
+        // Helper function to check if a value is a valid scheme color
+        function isValidSchemeColor(colorVal) {
+            if (!colorVal || colorVal === 'undefined') return false;
 
-                // Convert hex to scheme color (this is a workaround - you might need to map hex to appropriate scheme colors)
-                // For black (000000), we can use 'tx1' or 'dk1' as a reasonable scheme color
-                let schemeColorVal = 'tx1'; // Default to text1
-                if (originalTxtColor.toLowerCase() === '000000') {
-                    schemeColorVal = 'tx1'; // Black text
-                } else if (originalTxtColor.toLowerCase() === 'ffffff') {
-                    schemeColorVal = 'bg1'; // White background
-                }
+            const validSchemeColors = [
+                'tx1', 'tx2', 'bg1', 'bg2',
+                'accent1', 'accent2', 'accent3', 'accent4', 'accent5', 'accent6',
+                'hlink', 'folHlink', 'dk1', 'dk2', 'lt1', 'lt2', 'phclr',
+                'text1', 'text2', 'background1', 'background2'
+            ];
 
+            return validSchemeColors.includes(colorVal.toLowerCase());
+        }
+
+        // Helper function to convert common color names to hex
+        function colorNameToHex(colorName) {
+            const colorMap = {
+                'black': '#000000',
+                'white': '#FFFFFF',
+                'red': '#FF0000',
+                'green': '#008000',
+                'blue': '#0000FF',
+                'yellow': '#FFFF00',
+                'cyan': '#00FFFF',
+                'magenta': '#FF00FF',
+                'gray': '#808080',
+                'grey': '#808080'
+            };
+            return colorMap[colorName.toLowerCase()] || null;
+        }
+
+        // Helper function to check if string is a valid hex color
+        function isValidHex(colorStr) {
+            if (!colorStr) return false;
+            const hex = colorStr.replace('#', '');
+            return /^[0-9A-Fa-f]{6}$/.test(hex);
+        }
+
+        if (originalTxtColor && originalTxtColor !== 'undefined') {
+
+            // Check if it's a valid scheme color
+            if (isValidSchemeColor(originalTxtColor)) {
+                // Create theme color object for valid scheme colors
                 finalColor = {
                     type: 'schemeClr',
-                    val: schemeColorVal
+                    val: originalTxtColor.toLowerCase()
                 };
 
+                // Add luminance modifications if they exist and are valid
                 if (originalLumMod && !isNaN(parseInt(originalLumMod))) {
                     finalColor.lumMod = parseInt(originalLumMod);
                 }
                 if (originalLumOff && !isNaN(parseInt(originalLumOff))) {
                     finalColor.lumOff = parseInt(originalLumOff);
                 }
-            } else {
-                // Pure hex color without luminance modifications
-                finalColor = '#' + originalTxtColor;
             }
-        }
-        // Check if it's a color name (like "black")
-        else {
-            const hexFromName = colorNameToHex(originalTxtColor);
-            if (hexFromName) {
-                // Handle luminance modifications for color names too
+            // Check if it's a hex color (like "000000")
+            else if (isValidHex(originalTxtColor)) {
+                // For hex colors, we need to handle luminance modifications differently
+                // If there are luminance modifications, we should treat this as a scheme color
                 if ((originalLumMod && !isNaN(parseInt(originalLumMod))) ||
                     (originalLumOff && !isNaN(parseInt(originalLumOff)))) {
 
-                    console.log("Color name with luminance modifications, treating as scheme color");
-
-                    let schemeColorVal = 'tx1'; // Default
-                    if (originalTxtColor.toLowerCase() === 'black') {
-                        schemeColorVal = 'tx1';
-                    } else if (originalTxtColor.toLowerCase() === 'white') {
-                        schemeColorVal = 'bg1';
+                    // Convert hex to scheme color (this is a workaround - you might need to map hex to appropriate scheme colors)
+                    // For black (000000), we can use 'tx1' or 'dk1' as a reasonable scheme color
+                    let schemeColorVal = 'tx1'; // Default to text1
+                    if (originalTxtColor.toLowerCase() === '000000') {
+                        schemeColorVal = 'tx1'; // Black text
+                    } else if (originalTxtColor.toLowerCase() === 'ffffff') {
+                        schemeColorVal = 'bg1'; // White background
                     }
 
                     finalColor = {
@@ -666,18 +677,52 @@ function extractSpanFormattingWithLineSpacing(span, defaultAlign = "left", origi
                         finalColor.lumOff = parseInt(originalLumOff);
                     }
                 } else {
-                    finalColor = hexFromName;
+                    // Pure hex color without luminance modifications
+                    finalColor = '#' + originalTxtColor;
                 }
-            } else {
-                console.warn(`Unrecognized color value "${originalTxtColor}", falling back to default`);
-                finalColor = rgbToHex(style.color || "#000000");
             }
-        }
-    } else {
-        console.log("No originalTxtColor found, using default color");
-        finalColor = rgbToHex(style.color || "#000000");
-    }
+            // Check if it's a color name (like "black")
+            else {
+                const hexFromName = colorNameToHex(originalTxtColor);
+                if (hexFromName) {
+                    // Handle luminance modifications for color names too
+                    if ((originalLumMod && !isNaN(parseInt(originalLumMod))) ||
+                        (originalLumOff && !isNaN(parseInt(originalLumOff)))) {
 
+                        console.log("Color name with luminance modifications, treating as scheme color");
+
+                        let schemeColorVal = 'tx1'; // Default
+                        if (originalTxtColor.toLowerCase() === 'black') {
+                            schemeColorVal = 'tx1';
+                        } else if (originalTxtColor.toLowerCase() === 'white') {
+                            schemeColorVal = 'bg1';
+                        }
+
+                        finalColor = {
+                            type: 'schemeClr',
+                            val: schemeColorVal
+                        };
+
+                        if (originalLumMod && !isNaN(parseInt(originalLumMod))) {
+                            finalColor.lumMod = parseInt(originalLumMod);
+                        }
+                        if (originalLumOff && !isNaN(parseInt(originalLumOff))) {
+                            finalColor.lumOff = parseInt(originalLumOff);
+                        }
+                    } else {
+                        finalColor = hexFromName;
+                    }
+                } else {
+                    console.warn(`Unrecognized color value "${originalTxtColor}", falling back to default`);
+                    finalColor = rgbToHex(style.color || "#000000");
+                }
+            }
+        } else {
+            console.log("No originalTxtColor found, using default color");
+            finalColor = rgbToHex(style.color || "#000000");
+        }
+    }
+    // ✅ MOVED OUTSIDE: Declare options AFTER all color/gradient logic
     let fontFamily = decodeAndCleanFontFamily(style.fontFamily || "");
     if (!fontFamily) fontFamily = "";
 
@@ -701,6 +746,32 @@ function extractSpanFormattingWithLineSpacing(span, defaultAlign = "left", origi
         underline: isUnderlined
     };
 
+    // ✅ Add gradient options if present
+    if (hasGradient && gradientOptions) {
+        Object.assign(options, gradientOptions);
+        
+        // 🆕 REGISTER GRADIENT BY TEXT CONTENT
+        // ✅ FIXED PATH: Go up one directory, then into template-engine
+        const { registerTextGradient } = require('../template-engine/pptxgen-text-gradient-patch');
+        
+        // Get the actual text from the span
+        const spanText = span.textContent || span.innerText || '';
+        
+        if (spanText.trim()) {
+            const gradientData = {
+                type: gradientOptions._gradientType,
+                angle: gradientOptions._gradientAngle,
+                stops: gradientOptions._gradientStops,
+                path: gradientOptions._gradientPath,
+                centerX: gradientOptions._gradientCenterX,
+                centerY: gradientOptions._gradientCenterY
+            };
+            
+            registerTextGradient(spanText.trim(), gradientData);
+            console.log(`   🎨 Registered gradient for: "${spanText.trim().substring(0, 30)}..."`);
+        }
+    }
+    
     // 🔹 NEW: pick up original EA / CS / SYM from HTML attributes
     const originalEa = span.getAttribute('originalea');
     const originalCs = span.getAttribute('origincs');

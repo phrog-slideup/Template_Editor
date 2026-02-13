@@ -148,6 +148,17 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
             if (td?.includes('underline')) {
                 o.underline = { style: 'sng' };
             }
+            // ✅ ADD LINE HEIGHT EXTRACTION
+const lh = s.match(/line-height:\s*([^;]+)/i)?.[1]?.trim();
+if (lh) {
+    const lineHeightNum = parseFloat(lh);
+    if (!isNaN(lineHeightNum)) {
+        // PptxGenJS lineSpacing uses points, not percentage
+        // line-height 1.0 = 12pt, 1.2 = 14.4pt (for 12pt font)
+        // Store as-is for now, will calculate based on font size later
+        o.lineSpacingMultiplier = lineHeightNum;
+    }
+}
 
             return o;
         };
@@ -205,14 +216,26 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
                 const liAlign = (li.querySelector('p[style*="text-align"]')?.getAttribute('style') || '')
                     .match(/text-align:\s*([^;]+)/i)?.[1]?.trim().toLowerCase();
 
-                const paraOpts = Object.assign(
-                    {},
-                    bulletBase,
-                    indentLevel ? { indentLevel: Math.min(5, indentLevel) } : {},
-                    liAlign === 'center' ? { align: 'center' } :
-                        liAlign === 'right' ? { align: 'right' } :
-                            liAlign === 'left' ? { align: 'left' } : {}
-                );
+                // ✅ Extract line spacing from <p> inside <li>
+// ✅ Extract line spacing from <p> inside <li>
+const liPara = li.querySelector('p');
+let lineSpacingMultiplier = null;
+if (liPara && liPara.style.lineHeight) {
+    const lh = parseFloat(liPara.style.lineHeight);
+    if (!isNaN(lh)) {
+        lineSpacingMultiplier = lh;
+    }
+}
+
+const paraOpts = Object.assign(
+    {},
+    bulletBase,
+    indentLevel ? { indentLevel: Math.min(5, indentLevel) } : {},
+    lineSpacingMultiplier ? { lineSpacing: Math.round(lineSpacingMultiplier * 12) } : {}, // Convert to points
+    liAlign === 'center' ? { align: 'center' } :
+        liAlign === 'right' ? { align: 'right' } :
+            liAlign === 'left' ? { align: 'left' } : {}
+);
 
                 paras.push({
                     text: runs.length > 0 ? runs : [{ text: ' ' }],
@@ -298,21 +321,30 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
     const rows = tableElement.rows;
     const pptxRows = [];
 
-    let maxColumns = Infinity;
-    for (let i = 0; i < rows.length; i++) {
-        const htmlRow = rows[i];
-        let rowColumnCount = 0;
+    let maxColumns = 0;
+const _occGrid = Array.from({ length: rows.length }, () => ({}));
+
+for (let i = 0; i < rows.length; i++) {
+    const htmlRow = rows[i];
+    let colCursor = 0;
+
+    for (let j = 0; j < htmlRow.cells.length; j++) {
+        while (_occGrid[i][colCursor]) colCursor++;
         
-        for (let j = 0; j < htmlRow.cells.length; j++) {
-            const cell = htmlRow.cells[j];
-            const colspan = parseInt(cell.getAttribute('colspan')) || 1;
-            rowColumnCount += colspan;
+        const cell = htmlRow.cells[j];
+        const colspan = parseInt(cell.getAttribute('colspan')) || 1;
+        const rowspan = parseInt(cell.getAttribute('rowspan')) || 1;
+
+        for (let r = 0; r < rowspan; r++) {
+            for (let c = 0; c < colspan; c++) {
+                if (i + r < rows.length) _occGrid[i + r][colCursor + c] = true;
+            }
         }
-        
-        if (rowColumnCount < maxColumns) {
-            maxColumns = rowColumnCount;
-        }
+        colCursor += colspan;
     }
+    if (colCursor > maxColumns) maxColumns = colCursor;
+}
+
 
     let rowHeights = [];
     for (let i = 0; i < rows.length; i++) {
@@ -585,26 +617,28 @@ else if (ta === 'right') paragraphAlign = 'right';
 else if (ta === 'left') paragraphAlign = 'left';
 else if (ta === 'justify') paragraphAlign = 'justify';
 
+
+
 // Apply alignment to content structure
 if (Array.isArray(rich) && rich.length > 0 && typeof rich[0] === 'object') {
     // Has paragraph structure (from lists or formatted content)
     rich = rich.map(item => {
-        if (item && typeof item === 'object' && item.text !== undefined) {
-            const existingAlign = item.options?.align;
-            
-            // Don't override if paragraph already has explicit alignment
-            if (!existingAlign && paragraphAlign) {
-                return {
-                    text: item.text,
-                    options: {
-                        ...item.options,
-                        align: paragraphAlign
-                    }
-                };
-            }
+    if (item && typeof item === 'object' && item.text !== undefined) {
+        const existingAlign = item.options?.align;
+        
+        // Don't override if paragraph already has explicit alignment
+        if (!existingAlign && paragraphAlign) {
+            return {
+                text: item.text,
+                options: {
+                    ...item.options,
+                    align: paragraphAlign
+                }
+            };
         }
-        return item;
-    });
+    }
+    return item;
+});
 } else if (paragraphAlign) {
     // Plain runs array - wrap in paragraph with alignment
     rich = [{

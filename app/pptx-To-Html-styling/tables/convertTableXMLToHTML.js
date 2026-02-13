@@ -69,129 +69,140 @@ async function convertTableXMLToHTML(tableNode, themeXML, extractor, nodes, flag
     }
 
     tableHTML += "<tbody>";
-    const rows = tableData["a:tr"] || [];
-    const totalRows = rows.length;
 
-    for (let rowIndex = 0; rowIndex < totalRows; rowIndex++) {
-        const row = rows[rowIndex];
-        tableHTML += `<tr style="height: ${parseInt(row["$"]?.h || 0, 10) / getEMUDivisor()}px;">`;
-        const cells = row["a:tc"] || [];
-        const totalCols = cells.length;
 
   
-let colIndex = 0;
+const rows = tableData["a:tr"] || [];
+const totalRows = rows.length;
 
-for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
-    const cell = cells[cellIndex];
+// ✅ ADD THIS: Track cells occupied by rowSpan from previous rows
+const occupiedCells = new Map(); // Key: "rowIndex-colIndex", Value: true
 
-    const gridSpan = parseInt(cell["$"]?.gridSpan || 1, 10);
-    const rowSpan  = parseInt(cell["$"]?.rowSpan || 1, 10);
+for (let rowIndex = 0; rowIndex < totalRows; rowIndex++) {
+    const row = rows[rowIndex];
+    tableHTML += `<tr style="height: ${parseInt(row["$"]?.h || 0, 10) / getEMUDivisor()}px;">`;
+    const cells = row["a:tc"] || [];
+    
+    let colIndex = 0; // Actual column position in the grid
 
-    const cellTcPr = cell["a:tcPr"]?.[0];
+    for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
+        // ✅ CRITICAL FIX: Skip columns occupied by previous rows' rowSpan
+        while (occupiedCells.has(`${rowIndex}-${colIndex}`)) {
+            colIndex++;
+        }
+        
+        const cell = cells[cellIndex];
 
-    const finalStyles = await getTableElementStyle(
-        styleConfig,
-        'cell',
-        cellTcPr,
-        rowIndex,
-        colIndex,
-        totalRows,
-        gridCols.length,
-        themeXML
-    );
+        const gridSpan = parseInt(cell["$"]?.gridSpan || 1, 10);
+        const rowSpan  = parseInt(cell["$"]?.rowSpan || 1, 10);
 
-    const isHeaderCell = styleConfig.hasHeaderRow && rowIndex === 0;
+        const isHMerge = cell["$"]?.hMerge === "1";
+        const isVMerge = cell["$"]?.vMerge === "1";
 
-    const cellContent = await extractCellContent(
-        cell,
-        isHeaderCell,
-        tableNode,
-        themeXML,
-        tableFontSize,
-        clrMap,
-        masterXML
-    );
-
-    // Use middle alignment for header cells, top alignment for data cells
-// ✅ Extract vertical alignment and text rotation from tcPr
-const anchor = cellTcPr?.["$"]?.anchor || "t";  // t=top, ctr=center, b=bottom
-const anchorCtr = cellTcPr?.["$"]?.anchorCtr === "1";
-const vert = cellTcPr?.["$"]?.vert;  // vert270, vert90, etc.
-
-// Map PowerPoint anchor to CSS vertical-align
-let verticalAlign = 'top';
-if (anchor === "ctr") verticalAlign = 'middle';
-else if (anchor === "b") verticalAlign = 'bottom';
-
-// ✅ Extract custom margins from tcPr
-const marL = parseInt(cellTcPr?.["$"]?.marL || "91440") / getEMUDivisor();  // Default: 91440 EMU = ~7.2px
-const marR = parseInt(cellTcPr?.["$"]?.marR || "91440") / getEMUDivisor();
-const marT = parseInt(cellTcPr?.["$"]?.marT || "45720") / getEMUDivisor();  // Default: 45720 EMU = ~3.6px
-const marB = parseInt(cellTcPr?.["$"]?.marB || "45720") / getEMUDivisor();
+        if (isHMerge || isVMerge) {
+            colIndex++;
+            continue;   // Skip rendering this merged cell
+        }
 
 
-let cellStyles = `padding: ${marT}px ${marR}px ${marB}px ${marL}px; vertical-align: ${verticalAlign}; word-wrap: break-word; overflow: hidden;`;
-// ✅ Handle vertical text rotation
+        // ✅ Mark all cells covered by this cell's spans as occupied
+        for (let r = 0; r < rowSpan; r++) {
+            for (let c = 0; c < gridSpan; c++) {
+                if (r > 0 || c > 0) { // Don't mark current cell
+                    occupiedCells.set(`${rowIndex + r}-${colIndex + c}`, true);
+                }
+            }
+        }
 
+        const cellTcPr = cell["a:tcPr"]?.[0];
 
-// ✅ ADD THIS: Force cell content to respect vertical alignment
-if (verticalAlign === 'bottom') {
-    cellStyles += ` height: 100%; display: table-cell;`;
-} else if (verticalAlign === 'middle') {
-    cellStyles += ` height: 100%; display: table-cell;`;
-}
-// ✅ Handle vertical text rotation with proper constraints
-// ✅ Handle vertical text rotation - allow text to use full cell width
-// ✅ Handle vertical text rotation - use row height from XML
-if (vert === "vert270") {
-    const rowHeight = parseInt(row["$"]?.h || 0, 10) / getEMUDivisor();
-    cellStyles += ` writing-mode: vertical-rl; transform: rotate(180deg); white-space: normal; width: 100%; height: ${rowHeight}px; box-sizing: border-box;`;
-} else if (vert === "vert" || vert === "vert90") {
-    const rowHeight = parseInt(row["$"]?.h || 0, 10) / getEMUDivisor();
-    cellStyles += ` writing-mode: vertical-rl; white-space: normal; width: 100%; height: ${rowHeight}px; box-sizing: border-box;`;
-}
+        console.log('gridCols.length:===============================================>', gridCols.length);
 
-// ✅ FIX ISSUE 2: Handle horizontal centering (anchorCtr) and text justification for header row
-if (isHeaderCell) {
-    // Row 1, Column 1: Bottom-right alignment is handled by anchor="b" (already set to bottom)
-    // The right alignment comes from text-align in finalStyles
-    // Column 2: Should use justify
-    if (colIndex === 1) {
-        // Override text-align for second column to use justify
-        finalStyles.textAlign = 'justify';
+        const finalStyles = await getTableElementStyle(
+            styleConfig,
+            'cell',
+            cellTcPr,
+            rowIndex,
+            colIndex,
+            totalRows,
+            gridCols.length,
+            themeXML
+        );
+
+        const isHeaderCell = styleConfig.hasHeaderRow && rowIndex === 0;
+
+        const cellContent = await extractCellContent(
+            cell,
+            isHeaderCell,
+            tableNode,
+            themeXML,
+            tableFontSize,
+            clrMap,
+            masterXML
+        );
+
+        // ... rest of your cell styling code (anchor, vert, margins, etc.) ...
+        
+        const anchor = cellTcPr?.["$"]?.anchor || "t";
+        const anchorCtr = cellTcPr?.["$"]?.anchorCtr === "1";
+        const vert = cellTcPr?.["$"]?.vert;
+
+        let verticalAlign = 'top';
+        if (anchor === "ctr") verticalAlign = 'middle';
+        else if (anchor === "b") verticalAlign = 'bottom';
+
+        const marL = parseInt(cellTcPr?.["$"]?.marL || "91440") / getEMUDivisor();
+        const marR = parseInt(cellTcPr?.["$"]?.marR || "91440") / getEMUDivisor();
+        const marT = parseInt(cellTcPr?.["$"]?.marT || "45720") / getEMUDivisor();
+        const marB = parseInt(cellTcPr?.["$"]?.marB || "45720") / getEMUDivisor();
+
+        let cellStyles = `padding: ${marT}px ${marR}px ${marB}px ${marL}px; vertical-align: ${verticalAlign}; word-wrap: break-word; overflow: hidden;`;
+
+        if (verticalAlign === 'bottom' || verticalAlign === 'middle') {
+            cellStyles += ` height: 100%; display: table-cell;`;
+        }
+
+        if (vert === "vert270") {
+            const rowHeight = parseInt(row["$"]?.h || 0, 10) / getEMUDivisor();
+            cellStyles += ` writing-mode: vertical-rl; transform: rotate(180deg); white-space: normal; width: 100%; height: ${rowHeight}px; box-sizing: border-box;`;
+        } else if (vert === "vert" || vert === "vert90") {
+            const rowHeight = parseInt(row["$"]?.h || 0, 10) / getEMUDivisor();
+            cellStyles += ` writing-mode: vertical-rl; white-space: normal; width: 100%; height: ${rowHeight}px; box-sizing: border-box;`;
+        }
+
+        if (isHeaderCell) {
+            if (colIndex === 1) {
+                // finalStyles.textAlign = 'justify';
+            }
+        } else if (anchorCtr && !vert) {
+            cellStyles += ` text-align: center;`;
+        }
+
+        if (finalStyles.backgroundColor) cellStyles += ` background-color: ${finalStyles.backgroundColor};`;
+        if (finalStyles.color) cellStyles += ` color: ${finalStyles.color};`;
+        if (finalStyles.fontWeight !== 'normal') cellStyles += ` font-weight: ${finalStyles.fontWeight};`;
+        if (finalStyles.fontSize) cellStyles += ` font-size: ${finalStyles.fontSize};`;
+        if (finalStyles.textAlign) cellStyles += ` text-align: ${finalStyles.textAlign};`;
+        if (finalStyles.borderTop && finalStyles.borderTop !== 'none') cellStyles += ` border-top: ${finalStyles.borderTop};`;
+        if (finalStyles.borderBottom && finalStyles.borderBottom !== 'none') cellStyles += ` border-bottom: ${finalStyles.borderBottom};`;
+        if (finalStyles.borderLeft && finalStyles.borderLeft !== 'none') cellStyles += ` border-left: ${finalStyles.borderLeft};`;
+        if (finalStyles.borderRight && finalStyles.borderRight !== 'none') cellStyles += ` border-right: ${finalStyles.borderRight};`;
+
+        const spanAttrs = `
+            ${gridSpan > 1 ? `colspan="${gridSpan}"` : ""}
+            ${rowSpan > 1 ? `rowspan="${rowSpan}"` : ""}
+        `.trim();
+
+        const cellTag = isHeaderCell ? "th" : "td";
+
+        tableHTML += `<${cellTag} style="${cellStyles}" ${spanAttrs}>${cellContent}</${cellTag}>`;
+
+        // ✅ Move to next column position
+        colIndex += gridSpan;
     }
-} else if (anchorCtr && !vert) {
-    cellStyles += ` text-align: center;`;
+    
+    tableHTML += `</tr>`;
 }
-
-    if (finalStyles.backgroundColor) cellStyles += ` background-color: ${finalStyles.backgroundColor};`;
-    if (finalStyles.color) cellStyles += ` color: ${finalStyles.color};`;
-    if (finalStyles.fontWeight !== 'normal') cellStyles += ` font-weight: ${finalStyles.fontWeight};`;
-    if (finalStyles.fontSize) cellStyles += ` font-size: ${finalStyles.fontSize};`;
-
-    if (finalStyles.textAlign) {
-        cellStyles += ` text-align: ${finalStyles.textAlign};`;
-    }
-
-    if (finalStyles.borderTop && finalStyles.borderTop !== 'none') cellStyles += ` border-top: ${finalStyles.borderTop};`;
-    if (finalStyles.borderBottom && finalStyles.borderBottom !== 'none') cellStyles += ` border-bottom: ${finalStyles.borderBottom};`;
-    if (finalStyles.borderLeft && finalStyles.borderLeft !== 'none') cellStyles += ` border-left: ${finalStyles.borderLeft};`;
-    if (finalStyles.borderRight && finalStyles.borderRight !== 'none') cellStyles += ` border-right: ${finalStyles.borderRight};`;
-
-    const spanAttrs = `
-        ${gridSpan > 1 ? `colspan="${gridSpan}"` : ""}
-        ${rowSpan > 1 ? `rowspan="${rowSpan}"` : ""}
-    `.trim();
-
-    const cellTag = isHeaderCell ? "th" : "td";
-
-    tableHTML += `<${cellTag} style="${cellStyles}" ${spanAttrs}>${cellContent}</${cellTag}>`;
-
-    // Update column index for next iteration
-    colIndex += gridSpan;
-}
-        tableHTML += `</tr>`;
-    }
 
     tableHTML += "</tbody></table></div>";
     return tableHTML;
@@ -226,6 +237,7 @@ async function extractDynamicTableStyle(tableNode, themeXML, extractor) {
     }
 
     // Fallback: Extract styling directly from slide XML
+    console.log("before extractSlideTableStyle:===================================");
     const slideBasedStyle = extractSlideTableStyle(tableData, tblPr, themeXML);
 
     return {
@@ -262,12 +274,10 @@ async function getTableStyleById(styleId, extractor) {
 
     const foundStyle = styles.find(style => style["$"]?.styleId === styleId);
     if (!foundStyle) {
-        console.warn(`Table style not found for ID: ${styleId}`);
-        console.warn(`Available styles:`, styles.map(s => ({
-            id: s["$"]?.styleId,
-            name: s["$"]?.styleName
-        })));
-    }
+    console.warn(`Table style not found for ID================================: ${styleId}`);
+} else {
+    console.log("FOUND TABLE STYLE===============================:", JSON.stringify(foundStyle, null, 2));
+}
 
     return foundStyle;
 }
@@ -275,7 +285,8 @@ async function getTableStyleById(styleId, extractor) {
 function extractSlideTableStyle(tableData, tblPr, themeXML) {
     const rows = tableData["a:tr"] || [];
     const hasHeaderRow = tblPr?.["$"]?.firstRow === "1";
-    const hasBandedRows = tblPr?.["$"]?.bandRow === "1";
+    const hasBandedRows = tblPr?.["$"]?.bandRow !== "0";
+console.log("hasBandedRows:===================================", hasBandedRows);
 
     // Analyze actual cell styling patterns
     const styleAnalysis = analyzeSlideTableCells(rows, hasHeaderRow, themeXML);
@@ -472,6 +483,8 @@ function extractCellStyleFromSlide(cell, themeXML) {
 const solidFill = tcPr["a:solidFill"]?.[0];
 if (solidFill?.["a:schemeClr"]) {
     const colorVal = solidFill["a:schemeClr"][0]["$"]?.val;
+    const alpha = solidFill["a:schemeClr"][0]["a:alpha"]?.[0]?.["$"]?.val;
+
     if (colorVal) {
         style.backgroundColor = getThemeColorValue(colorVal, themeXML);
 
@@ -493,6 +506,10 @@ if (solidFill?.["a:schemeClr"]) {
                 colorHelper.applyLumMod(style.backgroundColor, lumMod) : 
                 style.backgroundColor;
         }
+        if (alpha && style.backgroundColor) {
+    style.backgroundColor = applyAlphaToColor(style.backgroundColor, alpha);
+}
+
     }
     } else if (solidFill?.["a:srgbClr"]) {
         style.backgroundColor = `#${solidFill["a:srgbClr"][0]["$"].val}`;
@@ -633,64 +650,123 @@ async function loadTableStyles(extractor) {
     return null;
 }
 
+function getTblStylePr(styleDefinition, type) {
+    if (!styleDefinition) return null;
+    const prs = styleDefinition["a:tblStylePr"] || [];
+    return prs.find(pr => pr?.["$"]?.type === type) || null;
+}
+
+
 async function getTableElementStyle(styleConfig, elementType, cellTcPr, rowIndex = 0, colIndex = 0, totalRows = 0, totalCols = 0, themeXML = null) {
     const { styleDefinition, hasHeaderRow, hasBandedRows, hasBandedCols, hasFirstCol, hasLastCol, hasLastRow } = styleConfig;
     const isHeaderRow = hasHeaderRow && rowIndex === 0;
 
+    console.log(`Row ${rowIndex}: isHeaderRow=${isHeaderRow}, hasBandedRows=${hasBandedRows}`);
+
     // ✅ FIX: If cell has direct tcPr styling, prioritize it completely
-    if (cellTcPr) {
-        const directStyles = parseTableElementStyle(null, cellTcPr, isHeaderRow, themeXML);
-        
-        // If direct styling has background color, use ONLY direct styling
-        if (directStyles.backgroundColor) {
-            // Add header alignment
-            if (isHeaderRow && !directStyles.textAlign) {
-                directStyles.textAlign = 'center';
-            }
-            return directStyles;
-        }
-    }
+    
 
     // 1. Get the base style from wholeTbl
-    const baseStyleElement = styleDefinition["a:wholeTbl"]?.[0];
-    const finalStyles = parseTableElementStyle(baseStyleElement, null, isHeaderRow, themeXML);
+    const baseStyleElement =
+    getTblStylePr(styleDefinition, "wholeTbl") ||
+    styleDefinition["a:wholeTbl"]?.[0]; // fallback for slideXML dynamic styles
+
+   const finalStyles = parseTableElementStyle(
+    baseStyleElement,
+    null,
+    isHeaderRow,
+    themeXML,
+    "wholeTbl",
+    rowIndex,
+    colIndex
+);
+
+
 
     if (isHeaderRow && !finalStyles.textAlign) {
-        finalStyles.textAlign = 'center';
+        //finalStyles.textAlign = 'center';
     }
 
     // 2. Find the specific override style element
     let overrideStyleElement = null;
+    let overrideStyleType = null;
     const isLastRow = rowIndex === totalRows - 1;
     const isFirstCol = colIndex === 0;
     const isLastCol = colIndex === totalCols - 1;
 
     if (isHeaderRow) {
-        overrideStyleElement = styleDefinition["a:firstRow"]?.[0];
-    } else if (isLastRow && hasLastRow) {
-        overrideStyleElement = styleDefinition["a:lastRow"]?.[0];
-    } else if (isFirstCol && hasFirstCol) {
-        overrideStyleElement = styleDefinition["a:firstCol"]?.[0];
-    } else if (isLastCol && hasLastCol) {
-        overrideStyleElement = styleDefinition["a:lastCol"]?.[0];
-    } else if (hasBandedRows) {
+    overrideStyleElement =
+        getTblStylePr(styleDefinition, "firstRow") ||
+        styleDefinition["a:firstRow"]?.[0];
+    overrideStyleType = "firstRow";
+}
+else if (isLastRow && hasLastRow) {
+    overrideStyleElement =
+        getTblStylePr(styleDefinition, "lastRow") ||
+        styleDefinition["a:lastRow"]?.[0];
+    overrideStyleType = "lastRow";
+}
+else if (isFirstCol && hasFirstCol) {
+    overrideStyleElement =
+        getTblStylePr(styleDefinition, "firstCol") ||
+        styleDefinition["a:firstCol"]?.[0];
+    overrideStyleType = "firstCol";
+}
+else if (isLastCol && hasLastCol) {
+    overrideStyleElement =
+        getTblStylePr(styleDefinition, "lastCol") ||
+        styleDefinition["a:lastCol"]?.[0];
+    overrideStyleType = "lastCol";
+}
+else if (hasBandedRows && !isHeaderRow) {
     const dataRowIndex = hasHeaderRow ? rowIndex - 1 : rowIndex;
-    // Per tableStyles.xml:
-    // - band1H: tint="40000" (40% = LIGHTER)
-    // - band2H: NO fill (inherits wholeTbl tint="20000" = DARKER)
-    // Even data rows (0,2,4) should be LIGHTER → use band1H
-    // Odd data rows (1,3,5) should be DARKER → don't override, use wholeTbl
-    if (dataRowIndex % 2 === 0) {
-        overrideStyleElement = styleDefinition["a:band1H"]?.[0];
+
+    if (dataRowIndex % 2 === 1) {
+        overrideStyleElement =
+            getTblStylePr(styleDefinition, "band1H") ||
+            styleDefinition["a:band1H"]?.[0];
+        overrideStyleType = "band1H";
+    } else {
+        overrideStyleElement =
+            getTblStylePr(styleDefinition, "band2H") ||
+            styleDefinition["a:band2H"]?.[0];
+        overrideStyleType = "band2H";
+        
+        // ✅ CRITICAL FIX: If band2H has no fill, use theme lt2 (light gray) instead of inheriting
+        const hasBand2Fill = overrideStyleElement?.["a:tcStyle"]?.[0]?.["a:fill"]?.[0]?.["a:solidFill"];
+        if (!hasBand2Fill) {
+            // Force lt2 background for band2H when no fill is defined
+            overrideStyleElement = {
+                "a:tcStyle": [{
+                    "a:fill": [{
+                        "a:solidFill": [{
+                            "a:schemeClr": [{
+                                "$": { "val": "lt2" }
+                            }]
+                        }]
+                    }]
+                }]
+            };
+        }
     }
-    } else if (hasBandedCols) {
-        overrideStyleElement = (colIndex % 2 === 0) ? styleDefinition["a:band1V"]?.[0] : styleDefinition["a:band2V"]?.[0];
-    }
+}
+
+
 
     // 3. Merge override style
    // 3. Merge override style (only if it was set above)
 if (overrideStyleElement) {
-    const overrideStyles = parseTableElementStyle(overrideStyleElement, null, isHeaderRow, themeXML);
+    const overrideStyles = parseTableElementStyle(
+    overrideStyleElement,
+    null,
+    isHeaderRow,
+    themeXML,
+    overrideStyleType,
+    rowIndex,
+    colIndex
+);
+
+
     
     Object.keys(overrideStyles).forEach(key => {
         if (overrideStyles[key] !== null) {
@@ -711,6 +787,24 @@ if (overrideStyleElement) {
     }
 
     return finalStyles;
+}
+
+function applyAlphaToColor(hexColor, alphaValue) {
+    if (!alphaValue || !hexColor) return hexColor;
+    
+    // Alpha is a percentage (100000 = 100% = fully opaque)
+    const opacity = parseInt(alphaValue) / 100000;
+    
+    // For backgrounds, blend with white based on opacity
+    const r = parseInt(hexColor.substr(1, 2), 16);
+    const g = parseInt(hexColor.substr(3, 2), 16);
+    const b = parseInt(hexColor.substr(5, 2), 16);
+    
+    const newR = Math.round(r + (255 - r) * (1 - opacity));
+    const newG = Math.round(g + (255 - g) * (1 - opacity));
+    const newB = Math.round(b + (255 - b) * (1 - opacity));
+    
+    return `#${newR.toString(16).padStart(2, '0')}${newG.toString(16).padStart(2, '0')}${newB.toString(16).padStart(2, '0')}`;
 }
 
 async function extractCellContent(cell, isHeader = false, shapeNode = null, themeXML = null, tableFontSize = 18, clrMap = null, masterXML = null) {
@@ -801,6 +895,8 @@ async function extractCellContent(cell, isHeader = false, shapeNode = null, them
             const runs = item.runs;
             const lineBreaks = item.lineBreaks;
             const bulletInfo = item.bulletInfo;
+            // ✅ ADD THIS LINE - Extract line spacing from paragraph properties
+            const lineHeight = extractLineSpacing(pPrNode);
 
             const runTexts = [];
 
@@ -885,7 +981,8 @@ async function extractCellContent(cell, isHeader = false, shapeNode = null, them
             }
 
             if (hasContent) {
-               content.push(`<li style="margin: 0;">${runTexts.join('')}</li>`);
+               content.push(`<li style="margin: 0; padding: 0; line-height: ${lineHeight};">${runTexts.join('')}</li>`);
+
             }
         } else {
             // Close any open list for non-list items
@@ -896,11 +993,9 @@ async function extractCellContent(cell, isHeader = false, shapeNode = null, them
             }
 
             if (hasContent) {
-                // ✅ REMOVED text-align - let cell style handle alignment
-                // ✅ Remove margin and let cell's vertical-align handle positioning
-content.push(`<p style="margin: 0; line-height: 1.2;">${runTexts.join('')}</p>`);
+                content.push(`<p style="margin: 0; line-height: ${lineHeight};">${runTexts.join('')}</p>`);
             } else if (runTexts.length > 0 || lineBreaks.length > 0) {
-                content.push('<br>');
+                // Don't add extra <br> for empty paragraphs in tables
             }
         }
         });
@@ -915,7 +1010,43 @@ content.push(`<p style="margin: 0; line-height: 1.2;">${runTexts.join('')}</p>`)
     return content.length > 0 ? content.join('') : "&nbsp;";
 }
 
-function parseTableElementStyle(styleElement, directTcPr = null, isHeader = false, themeXML = null) {
+function extractLineSpacing(pPr) {
+    if (!pPr) return 1.0;
+    
+    const lnSpc = pPr["a:lnSpc"]?.[0];
+    if (!lnSpc) return 1.0;
+    
+    // Percentage-based spacing (spcPct)
+    if (lnSpc["a:spcPct"]) {
+        const pct = parseInt(lnSpc["a:spcPct"][0]["$"]?.val || "100000");
+        return pct / 100000; // Convert to decimal (100000 = 1.0)
+    }
+    
+    // Point-based spacing (spcPts)
+    if (lnSpc["a:spcPts"]) {
+        const pts = parseInt(lnSpc["a:spcPts"][0]["$"]?.val || "1200");
+        return pts / 100; // Convert points to line height
+    }
+    
+    return 1.0; // Default
+}
+function getTableStyleThemeColor(schemeVal, styleElement, themeXML) {
+    // Check if table style overrides scheme colors
+    const styleClr = styleElement?.["a:styleClr"]?.[0];
+
+    if (styleClr?.["a:schemeClr"]) {
+        const overrideScheme = styleClr["a:schemeClr"][0]?.["$"]?.val;
+        if (overrideScheme) {
+            return getThemeColorValue(overrideScheme, themeXML);
+        }
+    }
+
+    return getThemeColorValue(schemeVal, themeXML);
+}
+
+function parseTableElementStyle(styleElement, directTcPr = null, isHeader = false, themeXML = null, styleType = "wholeTbl") {
+
+    console.log("StyleType:===========================================>", styleType);
     const styles = {
         backgroundColor: null,
         color: null,
@@ -931,15 +1062,15 @@ function parseTableElementStyle(styleElement, directTcPr = null, isHeader = fals
     // 1. Parse base styles from the table style definition (tableStyles.xml)
     if (styleElement) {
         const tcTxStyle = styleElement["a:tcTxStyle"]?.[0];
-        if (tcTxStyle) {
-            // Extract text color
-            const colorNode = tcTxStyle["a:color"]?.[0];
-            if (colorNode?.["a:srgbClr"]) {
-                styles.color = `#${colorNode["a:srgbClr"][0]["$"].val}`;
-            } else if (colorNode?.["a:schemeClr"]) {
-                const schemeVal = colorNode["a:schemeClr"][0]["$"].val;
-                styles.color = getThemeColorValue(schemeVal, themeXML);
-            }
+if (tcTxStyle) {
+    // ✅ Extract text color from schemeClr (not from a:color node)
+    const schemeClrNode = tcTxStyle["a:schemeClr"]?.[0];
+    if (schemeClrNode) {
+        const schemeVal = schemeClrNode["$"]?.val;
+        if (schemeVal) {
+            styles.color = getThemeColorValue(schemeVal, themeXML);
+        }
+    }
 
             // Extract font size
             const fontSize = tcTxStyle["$"]?.sz;
@@ -948,10 +1079,16 @@ if (fontSize) {
     styles.fontSize = `${sizeInPt}pt`;
 }
 
-            // Extract font weight
-            if (tcTxStyle["$"]?.b === "on" || tcTxStyle["b"] || tcTxStyle["$"]?.b === "1") {
-                styles.fontWeight = 'bold';
-            }
+            // Extract font weight - only for specific style types
+if ((tcTxStyle["$"]?.b === "on" || tcTxStyle["b"] || tcTxStyle["$"]?.b === "1") && 
+    (styleType === "firstRow" || styleType === "firstCol" || styleType === "lastCol" || styleType === "lastRow")) {
+    styles.fontWeight = 'bold';
+}
+            // ✅ Extract text alignment from table style
+const algn = tcTxStyle["$"]?.algn;
+if (algn) {
+    styles.textAlign = convertAlgnToCSS(algn);
+}
         }
 
         // Extract background color and borders from tcStyle
@@ -959,37 +1096,47 @@ if (fontSize) {
         if (tcStyle) {
             // Background color
             const fillNode = tcStyle["a:fill"]?.[0]?.["a:solidFill"]?.[0];
-            if (fillNode?.["a:srgbClr"]) {
-                styles.backgroundColor = `#${fillNode["a:srgbClr"][0]["$"].val}`;
-            } else if (fillNode?.["a:schemeClr"]) {
+if (fillNode?.["a:schemeClr"]) {
     const schemeClrNode = fillNode["a:schemeClr"][0];
     let schemeVal = schemeClrNode["$"].val;
-    
-    
-    
-    // Get base color from theme
+
+    if (schemeVal === "phClr") {
+        schemeVal = resolvePlaceholderColor(styleType);
+    }
+
     styles.backgroundColor = getThemeColorValue(schemeVal, themeXML);
 
-    // Apply color modifiers in order
+    // ✅ CRITICAL: Apply tint modifier
     const tint = schemeClrNode["a:tint"]?.[0]?.["$"]?.val;
+    if (tint && styles.backgroundColor) {
+        styles.backgroundColor = applyTintToColor(styles.backgroundColor, parseInt(tint));
+    }
     const shade = schemeClrNode["a:shade"]?.[0]?.["$"]?.val;
     const lumMod = schemeClrNode["a:lumMod"]?.[0]?.["$"]?.val;
     const lumOff = schemeClrNode["a:lumOff"]?.[0]?.["$"]?.val;
+
+    const alpha = schemeClrNode["a:alpha"]?.[0]?.["$"]?.val;
+
     
     if (styles.backgroundColor) {
-        if (tint) {
-            styles.backgroundColor = applyTintToColor(styles.backgroundColor, parseInt(tint));
-        } else if (shade) {
-            styles.backgroundColor = applyTintToColor(styles.backgroundColor, -parseInt(shade));
-        } else if (lumMod || lumOff) {
-            if (pptBackgroundColors && pptBackgroundColors.applyLuminanceModifier) {
-                styles.backgroundColor = pptBackgroundColors.applyLuminanceModifier(
-                    styles.backgroundColor, 
-                    lumMod || "100000", 
-                    lumOff || "0"
-                );
-            }
-        }
+        if (lumMod || lumOff) {
+ if (pptBackgroundColors.applyLuminanceModifier) {
+    styles.backgroundColor = pptBackgroundColors.applyLuminanceModifier(
+        styles.backgroundColor,
+        lumMod || "100000",
+        lumOff || "0"
+    );
+}
+
+} else if (tint) {
+  styles.backgroundColor = applyTintToColor(styles.backgroundColor, parseInt(tint, 10));
+} else if (shade) {
+  styles.backgroundColor = applyTintToColor(styles.backgroundColor, -parseInt(shade, 10));
+}
+
+        if (alpha) {
+        styles.backgroundColor = applyAlphaToColor(styles.backgroundColor, alpha);
+    }
     }
 }
 
@@ -1052,6 +1199,34 @@ if (fontSize) {
 
     return styles;
 }
+
+function resolvePlaceholderColor(styleType) {
+
+    switch (styleType) {
+
+        case "firstRow":
+            return "accent6";   // header row
+
+        case "band1H":
+            return "lt2";       // light gray (NOT lt1)
+
+        case "band2H":
+            return "lt1";       // white (NOT lt2)
+
+        case "wholeTbl":
+            return "lt1";       // default background
+
+        case "firstCol":
+        case "lastCol":
+        case "lastRow":
+            return "lt1";
+
+        default:
+            return "lt1";
+    }
+}
+
+
 
 function parseBorderStyle(borderElement, themeXML) {
     if (!borderElement) return null;
@@ -1196,19 +1371,22 @@ function extractRunStyles(rPr, themeXML, pPr = null, tableFontSize = 18) {
     }
 console.log('Extracted font size:', fontSize);
    if (fontSize) {
-    const sizeInPt = (parseInt(fontSize) / 100) * 0.75;  // Reduce by 25%
+    const sizeInPt = (parseInt(fontSize) / 100);  // ✅ Remove the 0.75 multiplier
     styles.push(`font-size: ${sizeInPt}px`);
 } else {
-    styles.push(`font-size: 10px`);  // Smaller default
+    styles.push(`font-size: 13px`);  // ✅ Larger default
 }
 
     
 
     if (!rPr) return styles.length > 0 ? styles.join('; ') : null;
 
-    // Bold
-    if (rPr["$"]?.b === "1" || rPr["$"]?.b === true) {
+    // ✅ Bold - EXPLICIT check: b="1" means bold, b="0" or missing means NOT bold
+    const boldAttr = rPr["$"]?.b;
+    if (boldAttr === "1" || boldAttr === true) {
         styles.push('font-weight: bold');
+    } else if (boldAttr === "0") {
+        styles.push('font-weight: normal');  // Explicitly override
     }
 
     // Italic
@@ -1647,6 +1825,8 @@ function applyTintToColor(hexColor, tintValue) {
     // Convert back to hex
     return `#${newR.toString(16).padStart(2, '0')}${newG.toString(16).padStart(2, '0')}${newB.toString(16).padStart(2, '0')}`;
 }
+
+
 
 // Helper function to reset cache (useful for testing or when processing multiple presentations)
 function resetTableStylesCache() {

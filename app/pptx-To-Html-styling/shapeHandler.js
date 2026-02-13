@@ -48,6 +48,27 @@ class ShapeHandler {
         return 12700;
     }
 
+// ✅ ADD THIS METHOD to ShapeHandler class
+extractTableCellSpans(tcNode) {
+    try {
+        const gridSpan = parseInt(tcNode?.["$"]?.gridSpan || 1, 10);
+        const rowSpan = parseInt(tcNode?.["$"]?.rowSpan || 1, 10);
+        const vMerge = tcNode?.["$"]?.vMerge; // Vertical merge marker
+        const hMerge = tcNode?.["$"]?.hMerge; // Horizontal merge marker
+        
+        return {
+            gridSpan,
+            rowSpan,
+            vMerge,
+            hMerge,
+            isMerged: gridSpan > 1 || rowSpan > 1,
+            isContinuation: vMerge !== undefined || hMerge !== undefined
+        };
+    } catch (error) {
+        console.error("Error extracting table cell spans:", error);
+        return { gridSpan: 1, rowSpan: 1, isMerged: false, isContinuation: false };
+    }
+}
     isCenterTitlePlaceholder(shapeNode) {
         const phElement = shapeNode?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0];
         if (!phElement) return false;

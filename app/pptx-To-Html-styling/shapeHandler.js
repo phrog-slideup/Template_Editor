@@ -48,27 +48,7 @@ class ShapeHandler {
         return 12700;
     }
 
-// ✅ ADD THIS METHOD to ShapeHandler class
-extractTableCellSpans(tcNode) {
-    try {
-        const gridSpan = parseInt(tcNode?.["$"]?.gridSpan || 1, 10);
-        const rowSpan = parseInt(tcNode?.["$"]?.rowSpan || 1, 10);
-        const vMerge = tcNode?.["$"]?.vMerge; // Vertical merge marker
-        const hMerge = tcNode?.["$"]?.hMerge; // Horizontal merge marker
-        
-        return {
-            gridSpan,
-            rowSpan,
-            vMerge,
-            hMerge,
-            isMerged: gridSpan > 1 || rowSpan > 1,
-            isContinuation: vMerge !== undefined || hMerge !== undefined
-        };
-    } catch (error) {
-        console.error("Error extracting table cell spans:", error);
-        return { gridSpan: 1, rowSpan: 1, isMerged: false, isContinuation: false };
-    }
-}
+
     isCenterTitlePlaceholder(shapeNode) {
         const phElement = shapeNode?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0];
         if (!phElement) return false;
@@ -110,7 +90,7 @@ extractTableCellSpans(tcNode) {
 
         // Process connectors
         if (lineShapeTag && lineShapeTag.length > 0) {
-            console.log(`Processing ${lineShapeTag.length} connectors`); // DEBUG
+            
             for (const cxnSpNode of lineShapeTag) {
                 try {
                     const connectorHtml = await getLineConnectorHandler.convertConnectorToHTML(
@@ -118,7 +98,7 @@ extractTableCellSpans(tcNode) {
                     
                     if (typeof connectorHtml === 'string' && connectorHtml.trim()) {
                         allHtmlElements.push(connectorHtml);
-                        console.log('Connector added:', cxnSpNode?.["p:nvCxnSpPr"]?.[0]?.["p:cNvPr"]?.[0]?.["$"]?.name); // DEBUG
+                        
                     } else {
                         console.warn('Empty connector:', cxnSpNode?.["p:nvCxnSpPr"]?.[0]?.["p:cNvPr"]?.[0]?.["$"]?.name);
                     }
@@ -167,7 +147,7 @@ extractTableCellSpans(tcNode) {
 
                 const chartZIndex = this.getZIndexForShape(chartShapeName);
 
-                console.log(`📊 Chart "${chartShapeName}" → zIndex ${chartZIndex}`);
+               
 
                 let chartHandler = null;
 

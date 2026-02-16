@@ -116,8 +116,6 @@ for (let rowIndex = 0; rowIndex < totalRows; rowIndex++) {
 
         const cellTcPr = cell["a:tcPr"]?.[0];
 
-        console.log('gridCols.length:===============================================>', gridCols.length);
-
         const finalStyles = await getTableElementStyle(
             styleConfig,
             'cell',
@@ -236,8 +234,6 @@ async function extractDynamicTableStyle(tableNode, themeXML, extractor) {
         }
     }
 
-    // Fallback: Extract styling directly from slide XML
-    console.log("before extractSlideTableStyle:===================================");
     const slideBasedStyle = extractSlideTableStyle(tableData, tblPr, themeXML);
 
     return {
@@ -275,9 +271,7 @@ async function getTableStyleById(styleId, extractor) {
     const foundStyle = styles.find(style => style["$"]?.styleId === styleId);
     if (!foundStyle) {
     console.warn(`Table style not found for ID================================: ${styleId}`);
-} else {
-    console.log("FOUND TABLE STYLE===============================:", JSON.stringify(foundStyle, null, 2));
-}
+} 
 
     return foundStyle;
 }
@@ -286,7 +280,6 @@ function extractSlideTableStyle(tableData, tblPr, themeXML) {
     const rows = tableData["a:tr"] || [];
     const hasHeaderRow = tblPr?.["$"]?.firstRow === "1";
     const hasBandedRows = tblPr?.["$"]?.bandRow !== "0";
-console.log("hasBandedRows:===================================", hasBandedRows);
 
     // Analyze actual cell styling patterns
     const styleAnalysis = analyzeSlideTableCells(rows, hasHeaderRow, themeXML);
@@ -661,7 +654,6 @@ async function getTableElementStyle(styleConfig, elementType, cellTcPr, rowIndex
     const { styleDefinition, hasHeaderRow, hasBandedRows, hasBandedCols, hasFirstCol, hasLastCol, hasLastRow } = styleConfig;
     const isHeaderRow = hasHeaderRow && rowIndex === 0;
 
-    console.log(`Row ${rowIndex}: isHeaderRow=${isHeaderRow}, hasBandedRows=${hasBandedRows}`);
 
     // ✅ FIX: If cell has direct tcPr styling, prioritize it completely
     
@@ -1046,7 +1038,6 @@ function getTableStyleThemeColor(schemeVal, styleElement, themeXML) {
 
 function parseTableElementStyle(styleElement, directTcPr = null, isHeader = false, themeXML = null, styleType = "wholeTbl") {
 
-    console.log("StyleType:===========================================>", styleType);
     const styles = {
         backgroundColor: null,
         color: null,
@@ -1369,7 +1360,6 @@ function extractRunStyles(rPr, themeXML, pPr = null, tableFontSize = 18) {
         const defRPr = pPr["a:defRPr"]?.[0];
         fontSize = defRPr?.["$"]?.sz;
     }
-console.log('Extracted font size:', fontSize);
    if (fontSize) {
     const sizeInPt = (parseInt(fontSize) / 100);  // ✅ Remove the 0.75 multiplier
     styles.push(`font-size: ${sizeInPt}px`);

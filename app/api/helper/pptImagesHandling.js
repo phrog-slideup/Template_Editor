@@ -44,15 +44,10 @@ function normalizeImagePath(target) {
 async function getImageFromPicture(node, filePath, files, relationshipsXML, themeXML) {
   try {
 
-    console.log(" @@@@@@22@@@@@@@ Extracting image from picture node...  @@@@@@@@@@@@@@");
-    console.log("Theme accent colors:", themeXML?.["a:theme"]?.[0]?.["a:themeElements"]?.[0]?.["a:clrScheme"]?.[0]);
-
+    
     const nodeName = node?.["p:nvPicPr"]?.[0]?.["p:cNvPr"]?.[0]?.["$"]?.name;
-    console.log('\n=== PICTURE NODE DEBUG ===');
-    console.log('Picture name:', nodeName);
-    console.log('Full nvPicPr:', JSON.stringify(node?.["p:nvPicPr"], null, 2));
+   
     const altText = node?.["p:nvPicPr"]?.[0]?.["p:cNvPr"]?.[0]?.["$"]?.descr || '';
-    console.log('Alt text (descr):====================================>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>', altText);
 
     const blipFillNode = node?.["p:blipFill"]?.[0] ||
       node?.["p:spPr"]?.[0]?.["a:blipFill"]?.[0];
@@ -124,7 +119,6 @@ async function getImageFromPicture(node, filePath, files, relationshipsXML, them
         };
 
         borderStyle = dashStyleMap[prstDash] || 'solid';
-        console.log('✅ Border style extracted from PPT:', prstDash, '→', borderStyle);
       } else {
         console.log('No prstDash found, using solid border');
       }
@@ -138,14 +132,10 @@ async function getImageFromPicture(node, filePath, files, relationshipsXML, them
     const cNvPr = nvPicPr?.["p:cNvPr"]?.[0];
     const hlinkClick = cNvPr?.["a:hlinkClick"]?.[0];
 
-    console.log('=== HYPERLINK EXTRACTION DEBUG ===');
-    console.log('cNvPr exists:', !!cNvPr);
-    console.log('hlinkClick exists:', !!hlinkClick);
 
     if (hlinkClick) {
       // The hyperlink ID is stored in r:id attribute
       const hyperlinkId = hlinkClick?.["$"]?.["r:id"];
-      console.log('Hyperlink ID from picture:', hyperlinkId);
 
       if (hyperlinkId && relationshipsXML) {
         // Find the relationship where Type ends with "hyperlink"
@@ -157,13 +147,11 @@ async function getImageFromPicture(node, filePath, files, relationshipsXML, them
             const relType = rel["$"].Type;
             const isMatch = relId === hyperlinkId && relType.includes('hyperlink');
 
-            console.log(`Checking relationship ${relId}: ${relType} - Match: ${isMatch}`);
             return isMatch;
           });
 
           if (hyperlinkRel) {
             hyperlink = hyperlinkRel["$"].Target;
-            console.log('✅ Hyperlink extracted:', hyperlink);
           } else {
             console.warn('❌ No matching hyperlink relationship found for ID:', hyperlinkId);
           }
@@ -183,10 +171,6 @@ async function getImageFromPicture(node, filePath, files, relationshipsXML, them
     // Extract Shadow Properties
     const effectLst = node?.["p:spPr"]?.[0]?.["a:effectLst"]?.[0];
     const outerShdw = effectLst?.["a:outerShdw"]?.[0];
-    // ADD THESE DEBUG LINES:
-    console.log("=== SHADOW DEBUG ===");
-    console.log("effectLst exists:", !!effectLst);
-    console.log("outerShdw full:", JSON.stringify(outerShdw, null, 2));
 
     // Extract Shadow AND Glow Properties
     let shadowData = null;
@@ -327,7 +311,6 @@ outerShadowData = {
     spread: spreadPx,
     color: shadowColor
 };
-    console.log("outerShadowData (FIXED):", outerShadowData);
 }
 
       // Combine glow and shadow
@@ -479,11 +462,6 @@ function extractImageCropping(blipFillNode) {
   if (!srcRect) return null;
 
   // ✅ ADD THIS DEBUG
-  console.log('===== RAW srcRect from XML =====');
-  console.log('srcRect.l:', srcRect.l);
-  console.log('srcRect.r:', srcRect.r);
-  console.log('srcRect.t:', srcRect.t);
-  console.log('srcRect.b:', srcRect.b);
   const cropping = {
     left: (srcRect.l / 100000) * 100,
     right: (srcRect.r / 100000) * 100,
@@ -495,7 +473,6 @@ function extractImageCropping(blipFillNode) {
     b: parseInt(srcRect.b) || 0
   };
 
-  console.log('Converted to percentages:', cropping);
 
 
   // Check if any cropping is applied

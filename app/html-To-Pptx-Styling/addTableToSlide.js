@@ -427,7 +427,6 @@ if (cellOpts.vert) {
     cellOpts.vertical = cellOpts.vert; // Some versions use 'vertical' instead of 'vert'
 }
 
-console.log('Cell vertical text detection:', { writeDir, transform, vert: cellOpts.vert });
 
             if (colspan > 1) cellOpts.colspan = colspan;
             if (rowspan > 1) cellOpts.rowspan = rowspan;

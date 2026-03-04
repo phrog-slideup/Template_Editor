@@ -3,7 +3,7 @@ const jsdom = require("jsdom");
 const { JSDOM } = jsdom;
 const path = require("path");
 const fs = require("fs");
-const fsPromises = require("fs").promises; 
+const fsPromises = require("fs").promises;
 const puppeteer = require("puppeteer");
 const axios = require("axios");
 const JSZip = require('jszip');
@@ -24,7 +24,6 @@ const sharedCache = require('../api/shared/cache.js');
 
 async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName) {
     try {
-        console.log('🚀 Starting HTML to PPTX conversion with FIXED master support...', originalFolderName);
         clearGradientMetadata();
         const dom = new JSDOM(htmlString);
         const document = dom.window.document;
@@ -32,9 +31,6 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
 
         const hasPlaceholders = Array.from(slides).some(slide =>
             slide.querySelector('.placeholder-picture, .placeholder-text'));
-
-        console.log(`🎯 Detected ${hasPlaceholders ? 'placeholders' : 'no placeholders'} in presentation`);
-
         if (slides.length === 0) {
             throw new Error("No slides found in the provided HTML.");
         }
@@ -47,7 +43,6 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         // Initialize PowerPoint without masters (we'll inject them later)
         const pptx = new PptxGenJS();
 
-        // console.log(pptx.)
         if (pptx._chartCounter !== undefined) {
             pptx._chartCounter = 0;
         }
@@ -79,9 +74,6 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
             };
 
         }
-
-        // STEP 2: Process slides normally (masters will be injected later)
-        console.log('📄 Step 2: Processing slides...');
 
         for (let slideIndex = 0; slideIndex < slides.length; slideIndex++) {
             try {
@@ -134,12 +126,7 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         const extractedSlideX = firstSlideEl?.getAttribute("data-slide-xml") || null;
         sharedCache.slideX = extractedSlideX; // ⭐ Update global cache
 
-        console.log("📌 Slide XML detected from HTML:", sharedCache.slideX);
 
-        // FIXED: Pass the unique directory path to extractAndProcessSlideXMLs
-        console.log("=====================22=======================");
-        console.log("   sharedCache.slideX :- ", sharedCache.slideX);
-        console.log("=====================22=======================");
         const extractionResult = await extractAndProcessSlideXMLs(outputFilePath, slideXmlsDir, sharedCache.slideX);
 
         // Verify extraction was successful
@@ -147,24 +134,8 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
             throw new Error('Failed to extract slide XML files');
         }
 
-        // // NEW STEP 6.5: Fix chart XML bugs before replacing files
-        // console.log('🔧 Step 6.5: Fixing chart XML bugs...');
-        // const chartFixResult = await fixChartXmlBugs(slideXmlsDir);
-
-        // // NEW STEP 6.5A: Fix chart styling (white borders, spacing, colors, grid lines)
-        // console.log('🎨 Step 6.5A: Fixing chart styling...');
-        // const chartStylingResult = await fixChartStyling(slideXmlsDir);
-        // if (chartStylingResult.success && chartStylingResult.chartsFixed > 0) {
-        //     console.log(`   ✅ Fixed styling in ${chartStylingResult.chartsFixed} charts`);
-        // } else if (chartStylingResult.success) {
-        //     console.log('   ℹ️  No chart styling issues found');
-        // } else {
-        //     console.log('   ⚠️  Chart styling fix had issues:', chartStylingResult.error);
-        // }
-
-        // // NEW STEP 6.6: Comprehensive chart XML fix for Syncfusion
-        // console.log('🔧 Step 6.6: Comprehensive chart XML fix...');
-        // const comprehensiveChartResult = await comprehensiveChartXmlFix(slideXmlsDir);
+        // NEW STEP 6.5: Fix chart XML bugs before replacing files
+        const chartFixResult = await fixChartXmlBugs(slideXmlsDir);
 
 
         // ========================================
@@ -172,7 +143,7 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         // ========================================
         console.log('🎨 Step 6.5: Injecting text gradients into slide XML...');
         const gradientResult = await injectTextGradientsIntoSlideXML(slideXmlsDir);
-        
+
         if (gradientResult.success && gradientResult.slidesProcessed > 0) {
             console.log(`   ✅ Successfully processed ${gradientResult.slidesProcessed} slide(s) with gradients`);
         } else if (gradientResult.success) {
@@ -193,20 +164,16 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         console.log('🧹 Step 6.9: Cleaning slides for Syncfusion compatibility...');
         const slideCleanResult = await cleanSlideXmlForSyncfusion(slideXmlsDir);
 
+
         // NEW STEP 6.10: Fix table cell alignment in merged cells
-console.log('🔧 Step 6.10: Fixing table cell alignment...');
-const alignmentFixResult = await fixTableCellAlignment(slideXmlsDir);
+        console.log('🔧 Step 6.10: Fixing table cell alignment...');
+        const alignmentFixResult = await fixTableCellAlignment(slideXmlsDir);
 
         const fileFolderName = originalFolderName; // e.g., 'Agenda'
         const filesDir = path.resolve(__dirname, '../files');
 
         // STEP 7: Replace slide1.xml in the PPTX with the converted slide1.xml
 
-        console.log('🔄 Step 7: Replacing slide1.xml in PPTX...', fileFolderName);
-        console.log('🔄 Step 7.1: req path...', fileFolderName);
-
-        // Now slideXmlsDir contains the actual directory where files were extracted
-        // Replace both slideX.xml and slideX.xml.rels files
         await replaceSlideXMLInPPTX(fileFolderName, slideXmlsDir);
 
         // Replace Images 
@@ -226,7 +193,6 @@ const alignmentFixResult = await fixTableCellAlignment(slideXmlsDir);
         console.log('🔄 Step 8: Converting zip to final PPTX...');
         const conversionResult = await convertZipToPptxFile(sourceFilePath, zipFileOutput, fileFolderName);
 
-        console.log("🎉 PPTX file created successfully with proper master support:", conversionResult);
 
         return JSON.stringify({
             success: true,
@@ -494,22 +460,33 @@ async function processSlideContent(pptx, pptSlide, slideElement, slideContext) {
 
             // NEW: Add chart processing before other element types
             if (addChartToSlide.isChartElement(element)) {
-                console.log("Processing chart element:", element.className);
-                // const chartProcessed = await addChartToSlide.processChartElement(pptx, pptSlide, element, slideContext);
+                // const chartProcessed = chartawait addChartToSlide.processChartElement(pptx, pptSlide, element, slideContext);
                 const chartProcessed = await addChartToSlide.addChartToSlide(pptx, pptSlide, element, slideContext);
                 if (chartProcessed) {
-                    console.log("   ✅ Chart processed successfully");
                     processedElements.add(element);
                     continue;
-                } else {
-                    console.log("   ⚠️ Chart processing failed, trying other processors");
-                    // Don't continue here - let it fall through to other processors
                 }
             }
 
             if (element.classList.contains("shape") || element.classList.contains("custom-shape") || element.id === "custGeom" || element.classList.contains("sli-svg-connector")) {
-                await processShapeElement(pptx, pptSlide, element, slideContext);
-                processedElements.add(element);
+
+                // CASE 2: shape + image-container — shape-type image with crop offsets
+                if (
+                    element.classList.contains("image-container") &&
+                    element.getAttribute("data-shape-type") === "image"
+                ) {
+                    const imgElement = element.querySelector("img");
+                    if (imgElement && !isMasterElement(imgElement)) {
+                        await addImage.addImageToSlide(pptx, pptSlide, imgElement, slideContext, element);
+                        processedElements.add(element);
+                    } else {
+                        await processShapeElement(pptx, pptSlide, element, slideContext);
+                        processedElements.add(element);
+                    }
+                } else {
+                    await processShapeElement(pptx, pptSlide, element, slideContext);
+                    processedElements.add(element);
+                }
             }
             else if (element.classList.contains("sli-layout")) {
                 await processLayoutElement(pptx, pptSlide, element, slideContext, processedElements);
@@ -520,17 +497,17 @@ async function processSlideContent(pptx, pptSlide, slideElement, slideContext) {
                 if (imgElement && !isMasterElement(imgElement)) {
 
                     if (element.classList.contains('placeholder-picture')) {
-
+                        // CASE 1 (placeholder variant): handled by placeholder processor
                         await processPlaceholderElement(pptx, pptSlide, element, slideContext);
                     } else {
-                        await addImage.addImageToSlide(pptx, pptSlide, imgElement, slideContext);
+                        // CASE 1: plain image-container with optional srcrect crop attributes
+                        await addImage.addImageToSlide(pptx, pptSlide, imgElement, slideContext, element);
                     }
                     processedElements.add(element);
                 }
             }
             else if (element.tagName === "IMG") {
                 if (element.closest('.placeholder-picture')) {
-
                     await processPlaceholderElement(pptx, pptSlide, element, slideContext);
                 } else {
                     await addImage.addImageToSlide(pptx, pptSlide, element, slideContext);
@@ -540,7 +517,6 @@ async function processSlideContent(pptx, pptSlide, slideElement, slideContext) {
             else if (element.tagName === "DIV" && element.classList.contains('table-container') && !processedElements.has(element)) {
                 const table = element.querySelector('table');
                 if (table) {
-                    console.log('Processing table-container with table element'); // Debug log
 
                     addTable.addTableToSlide(pptSlide, table, slideContext, element);
 
@@ -553,7 +529,6 @@ async function processSlideContent(pptx, pptSlide, slideElement, slideContext) {
                 // Only process if not already processed as part of table-container
                 const container = element.closest('.table-container');
                 if (!container || processedElements.has(container)) {
-                    console.log('Processing direct table element'); // Debug log
                     addTable.addTableToSlide(pptSlide, element, slideContext);
                     processedElements.add(element);
                 }
@@ -588,13 +563,11 @@ function isMasterElement(element) {
     if (element.closest('.master') ||
         element.closest('.sli-master') ||
         element.closest('.custom-shape-master')) {
-        console.log(`   🚫 Filtering out element inside master container`);
         return true;
     }
 
     // Check for specific master IDs or attributes
     if (element.id && element.id.includes('master')) {
-        console.log(`   🚫 Filtering out element with master ID: ${element.id}`);
         return true;
     }
 
@@ -765,17 +738,28 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
         }
 
         // Handle placeholder text
-        if (element.classList.contains('placeholder-text') || element.querySelector('.sli-txt-box.placeholder-text')) {            
+        if (element.classList.contains('placeholder-text') || element.querySelector('.sli-txt-box.placeholder-text')) {
             const placeholderType = determinePlaceholderType(element, 'text');
             const position = extractElementPosition(element, slideContext);
-       
+
             const textElement = element.classList.contains('sli-txt-box') ? element : element.querySelector('.sli-txt-box');
-       
+
             // ✅ FIXED: Get txtph attributes from the textElement, not the outer element
             const txtPhType = textElement?.getAttribute('txtphtype') || textElement?.getAttribute('txtPhType') || '';
-            const txtPhIdx = textElement?.getAttribute('txtphidx') || textElement?.getAttribute('txtPhIdx') || '';
             const txtPhSz = textElement?.getAttribute('txtphsz') || textElement?.getAttribute('txtPhSz') || '';
-       
+
+            // ✅ FIX BUG 1: Sanitize ph idx to prevent 4294967295 (0xFFFFFFFF)
+            // Title-type placeholders in OOXML do NOT have an idx attribute.
+            // When idx is absent in the XML, ph["$"]?.idx is undefined → stored as ''
+            // pptxgenjs converts '' to parseInt('') = NaN → falls back to -1
+            // JavaScript bitwise -1 >>> 0 = 4294967295, which PowerPoint cannot parse.
+            // Fix: only pass placeholderIdx when the raw value is a valid non-negative integer ≤ 255.
+            const _rawTxtPhIdx = textElement?.getAttribute('txtphidx') || textElement?.getAttribute('txtPhIdx') || '';
+            const _parsedTxtPhIdx = _rawTxtPhIdx !== '' ? parseInt(_rawTxtPhIdx, 10) : NaN;
+            const txtPhIdx = (!isNaN(_parsedTxtPhIdx) && _parsedTxtPhIdx >= 0 && _parsedTxtPhIdx <= 255)
+                ? _parsedTxtPhIdx
+                : undefined;
+
             let textOptions = extractTextStyle(textElement);
             // ✅ CRITICAL FIX: Extract margins from the FIRST PARAGRAPH element
             const extractMarginValue = (styleValue) => {
@@ -783,18 +767,17 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                 const parsed = parseFloat(styleValue);
                 return isNaN(parsed) ? 0 : parsed;
             };
-        
+
             let textBoxMarginLeft = 0;
             let textBoxMarginRight = 0;
             let textBoxMarginTop = 0;
             let textBoxMarginBottom = 0;
-        
+
             // Get the first paragraph to extract text box margins
             if (textElement) {
                 const firstParagraph = textElement.querySelector('p');
                 if (firstParagraph && firstParagraph.style) {
-                    console.log("First paragraph style:", firstParagraph.getAttribute('style'));
-                    
+
                     // Extract margins from inline styles
                     const pStyle = firstParagraph.style;
                     textBoxMarginLeft = extractMarginValue(pStyle.marginLeft);
@@ -803,30 +786,30 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                     textBoxMarginBottom = extractMarginValue(pStyle.marginBottom);
                 }
             }
-        
+
             // ✅ Helper to extract paragraph spacing (separate from text box margins)
             const extractParagraphSpacing = (pElement) => {
                 const style = pElement.style;
-                
+
                 // Get the raw margin values
                 const marginTop = extractMarginValue(style.marginTop);
                 const marginBottom = extractMarginValue(style.marginBottom);
-                
+
                 // Subtract the text box margins to get ONLY paragraph spacing
                 const spaceBefore = Math.max(0, marginTop - textBoxMarginTop);
                 const spaceAfter = Math.max(0, marginBottom - textBoxMarginBottom);
-                
+
                 return {
                     spaceBefore: Math.round(spaceBefore),
                     spaceAfter: Math.round(spaceAfter)
                 };
-            };            
+            };
             // ✅ FIX: Process text with BR tags properly
             let textRuns = [];
-           
+
             if (textElement) {
                 const paragraphs = textElement.querySelectorAll('p');
-               
+
                 if (paragraphs.length > 0) {
                     // Process each paragraph
                     paragraphs.forEach((p, pIndex) => {
@@ -843,7 +826,7 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                                 }
                                 return;
                             }
-                           
+
                             // Handle SPAN tags
                             if (node.nodeType === 1 && node.tagName === 'SPAN') {
                                 let spanText = node.textContent || '';
@@ -858,7 +841,7 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                                         color: node.getAttribute('originaltxtcolor') || textOptions.color,
                                         fontFace: spanStyle.fontFamily?.replace(/['"]/g, '') || textOptions.fontFace
                                     };
-        
+
                                     // ✅ CRITICAL: Apply paragraph spacing to FIRST span only
                                     if (isFirstRunInParagraph && pIndex > 0) {
                                         // Only apply spacing for paragraphs after the first
@@ -870,14 +853,14 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                                         }
                                         isFirstRunInParagraph = false;
                                     }
-        
+
                                     paragraphTextRuns.push({
                                         text: spanText,
                                         options: spanOptions
                                     });
                                 }
                             }
-        
+
                             // Handle text nodes
                             if (node.nodeType === 3) {
                                 let text = node.textContent || '';
@@ -888,7 +871,7 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                                         color: textOptions.color,
                                         fontFace: textOptions.fontFace
                                     };
-        
+
                                     // ✅ CRITICAL: Apply paragraph spacing to FIRST run only
                                     if (isFirstRunInParagraph && pIndex > 0) {
                                         if (paragraphSpacing.spaceBefore > 0) {
@@ -899,7 +882,7 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                                         }
                                         isFirstRunInParagraph = false;
                                     }
-        
+
                                     paragraphTextRuns.push({
                                         text: text,
                                         options: textNodeOptions
@@ -907,10 +890,10 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                                 }
                             }
                         });
-        
+
                         // Add paragraph runs to main textRuns array
                         textRuns.push(...paragraphTextRuns);
-        
+
                         // ✅ Add paragraph break with proper spacing handling
                         if (pIndex < paragraphs.length - 1 && paragraphTextRuns.length > 0) {
                             const lastRun = paragraphTextRuns[paragraphTextRuns.length - 1];
@@ -925,7 +908,7 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                     if (textContent) {
                         textRuns.push({
                             text: textContent,
-                            options: { 
+                            options: {
                                 bold: false,
                                 fontSize: textOptions.fontSize,
                                 color: textOptions.color,
@@ -935,13 +918,13 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                     }
                 }
             }
-       
+
             // Fallback if no text runs were created
             if (textRuns.length === 0) {
                 const placeholderText = getPlaceholderText(placeholderType);
                 textRuns.push({
                     text: placeholderText,
-                    options: { 
+                    options: {
                         bold: false,
                         fontSize: textOptions.fontSize,
                         color: textOptions.color,
@@ -949,18 +932,18 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                     }
                 });
             }
-       
+
             // Extract color and luminosity adjustments from the span
             const spanElement = textElement?.querySelector('span');
             let textColor = spanElement?.getAttribute('originaltxtcolor') || '';
             const lumMod = spanElement?.getAttribute('originallummod');
             const lumOff = spanElement?.getAttribute('originallumoff');
-        
+
             // Handle text positioning and alignment
             const justifyContent = element.style.justifyContent || 'flex-start';
             const alignItems = element.style.alignItems || 'flex-start';
             const textAlign = textElement?.style.textAlign || 'left';
-        
+
             // Setting horizontal alignment
             let align = 'left';
             if (textAlign === 'center' || justifyContent === 'center') {
@@ -970,7 +953,7 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
             } else if (textAlign === 'justify') {
                 align = 'justify';
             }
-        
+
             // Vertical alignment
             let valign = 'top';
             if (alignItems === 'center') {
@@ -978,22 +961,22 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
             } else if (alignItems === 'flex-end') {
                 valign = 'bottom';
             }
-        
+
             // ✅ CRITICAL FIX: Create margin effect by adjusting position and size
             // Convert pixels to inches (96 DPI for screen, PowerPoint uses inches)
             const marginLeftInches = textBoxMarginLeft / 96;
             const marginRightInches = textBoxMarginRight / 96;
             const marginTopInches = textBoxMarginTop / 96;
             const marginBottomInches = textBoxMarginBottom / 96;
-        
+
             // Adjust position to account for left/top margins
             const adjustedX = position.x + marginLeftInches;
             const adjustedY = position.y + marginTopInches;
-        
+
             // Reduce width/height to account for left/right and top/bottom margins
             const adjustedW = position.w - marginLeftInches - marginRightInches;
             const adjustedH = position.h - marginTopInches - marginBottomInches;
-        
+
             pptSlide.addText(
                 textRuns,
                 {
@@ -1124,7 +1107,6 @@ async function fixChartXmlBugs(slideXmlsDir) {
         const xmlFiles = chartFiles.filter(file => file.match(/^chart\d+\.xml$/));
 
         if (xmlFiles.length === 0) {
-            console.log('   ℹ️  No chart XML files found');
             return { success: true, chartsFixed: 0 };
         }
 
@@ -1217,10 +1199,7 @@ async function fixChartXmlBugs(slideXmlsDir) {
                 // Write fixed XML back if modified
                 if (modified && chartXml !== originalXml) {
                     await fsPromises.writeFile(chartPath, chartXml, 'utf8');
-                    console.log(`   ✅ Fixed chart XML bugs in ${chartFile}`);
                     fixedCount++;
-                } else {
-                    console.log(`   ✓ No issues found in ${chartFile}`);
                 }
 
             } catch (error) {
@@ -1240,85 +1219,13 @@ async function fixChartXmlBugs(slideXmlsDir) {
     }
 }
 
-async function cleanChartXmlForSyncfusion(slideXmlsDir) {
-    try {
-        console.log('🧹 Cleaning chart XML for Syncfusion compatibility...');
-
-        const chartsDir = path.join(slideXmlsDir, 'charts');
-
-        // Check if charts directory exists
-        if (!await checkDirectoryExists(chartsDir)) {
-            console.log('   ℹ️  No charts directory found, skipping Syncfusion cleanup');
-            return { success: true, chartsFixed: 0 };
-        }
-
-        const chartFiles = await fsPromises.readdir(chartsDir);
-        const chartXmlFiles = chartFiles.filter(file => file.match(/^chart\d+\.xml$/));
-
-        if (chartXmlFiles.length === 0) {
-            console.log('   ℹ️  No chart XML files found');
-            return { success: true, chartsFixed: 0 };
-        }
-
-        let fixedCount = 0;
-
-        for (const chartFile of chartXmlFiles) {
-            try {
-                const chartPath = path.join(chartsDir, chartFile);
-                let chartContent = await fsPromises.readFile(chartPath, 'utf8');
-                const originalContent = chartContent;
-
-                // Fix 1: Remove whitespace-only content from defRPr tags
-                // This specific issue causes Syncfusion PNG export to fail
-                chartContent = chartContent.replace(
-                    /<a:defRPr([^>]*)>\s+<\/a:defRPr>/g,
-                    '<a:defRPr$1/>'
-                );
-
-                // Fix 2: Ensure all self-closing tags are properly formatted
-                // Clean up other common empty tags
-                chartContent = chartContent.replace(
-                    /<(a:bodyPr|a:lstStyle|a:effectLst)>\s*<\/\1>/g,
-                    '<$1/>'
-                );
-
-                // Check if any changes were made
-                if (chartContent !== originalContent) {
-                    await fsPromises.writeFile(chartPath, chartContent, 'utf8');
-                    console.log(`   ✅ Fixed Syncfusion compatibility issues in ${chartFile}`);
-                    fixedCount++;
-                } else {
-                    console.log(`   ✓ No Syncfusion issues found in ${chartFile}`);
-                }
-
-            } catch (error) {
-                console.error(`   ❌ Error cleaning ${chartFile}: ${error.message}`);
-            }
-        }
-
-        console.log(`   🎉 Syncfusion cleanup complete - ${fixedCount} file(s) fixed`);
-
-        return {
-            success: true,
-            chartsFixed: fixedCount,
-            totalCharts: chartXmlFiles.length
-        };
-
-    } catch (error) {
-        console.error('   ❌ Error in cleanChartXmlForSyncfusion:', error);
-        return { success: false, error: error.message };
-    }
-}
-
 async function cleanSlideXmlForSyncfusion(slideXmlsDir) {
     try {
-        console.log('🧹 Cleaning slide XML for Syncfusion compatibility...');
 
         const slidesDir = path.join(slideXmlsDir, 'slides');
 
         // Check if slides directory exists
         if (!await checkDirectoryExists(slidesDir)) {
-            console.log('   ℹ️  No slides directory found, skipping slide cleanup');
             return { success: true, slidesFixed: 0 };
         }
 
@@ -1326,7 +1233,6 @@ async function cleanSlideXmlForSyncfusion(slideXmlsDir) {
         const slideXmlFiles = slideFiles.filter(file => file.match(/^slide\d+\.xml$/));
 
         if (slideXmlFiles.length === 0) {
-            console.log('   ℹ️  No slide XML files found');
             return { success: true, slidesFixed: 0 };
         }
 
@@ -1378,21 +1284,48 @@ async function cleanSlideXmlForSyncfusion(slideXmlsDir) {
                 // Fix 7: Remove any invalid control characters
                 slideContent = slideContent.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
 
+                // ✅ FIX BUG 4: Collapse whitespace-only text inside <p:cNvPr> to self-closing.
+                // <p:cNvPr> is an attribute-only element in OOXML.  Any text node
+                // (even plain whitespace) inside it violates the schema and triggers
+                // PowerPoint's repair dialog.
+                slideContent = slideContent.replace(
+                    /<p:cNvPr([^>]*)>\s*<\/p:cNvPr>/g,
+                    '<p:cNvPr$1/>'
+                );
+
+                // ✅ FIX BUG 2: Replace srgbClr with scheme-colour token values.
+                // When pptxgenjs receives a {type:'schemeClr', val:'tx1'} colour object
+                // it extracts the .val property and writes it into srgbClr, producing
+                // invalid XML like <a:srgbClr val="tx1"/>.  Post-process the XML to
+                // convert all such occurrences to the correct <a:schemeClr val="..."/> element.
+                // Handles both self-closing and open/close variants, and is case-insensitive.
+                const SCHEME_TOKENS = 'tx1|tx2|bg1|bg2|accent1|accent2|accent3|accent4|accent5|accent6|hlink|folHlink|dk1|dk2|lt1|lt2|phClr';
+                const schemeTokenRegex = new RegExp(
+                    `<a:srgbClr\\s+val="(${SCHEME_TOKENS})"\\s*(?:/>|>\\s*</a:srgbClr>)`,
+                    'gi'
+                );
+                slideContent = slideContent.replace(schemeTokenRegex, (match, token) => {
+                    return `<a:schemeClr val="${token.toLowerCase()}"/>`;
+                });
+                // Also handle srgbClr that has child elements (e.g. lumMod) and a scheme token val
+                const schemeTokenWithChildrenRegex = new RegExp(
+                    `<a:srgbClr\\s+val="(${SCHEME_TOKENS})"\\s*>(([\\s\\S]*?))</a:srgbClr>`,
+                    'gi'
+                );
+                slideContent = slideContent.replace(schemeTokenWithChildrenRegex, (match, token, children) => {
+                    return `<a:schemeClr val="${token.toLowerCase()}">${children}</a:schemeClr>`;
+                });
+
                 // Check if any changes were made
                 if (slideContent !== originalContent) {
                     await fsPromises.writeFile(slidePath, slideContent, 'utf8');
-                    console.log(`   ✅ Fixed Syncfusion compatibility issues in ${slideFile}`);
                     fixedCount++;
-                } else {
-                    console.log(`   ✓ No Syncfusion issues found in ${slideFile}`);
                 }
 
             } catch (error) {
                 console.error(`   ❌ Error cleaning ${slideFile}: ${error.message}`);
             }
         }
-
-        console.log(`   🎉 Slide XML cleanup complete - ${fixedCount} file(s) fixed`);
 
         return {
             success: true,
@@ -1408,12 +1341,10 @@ async function cleanSlideXmlForSyncfusion(slideXmlsDir) {
 
 async function comprehensiveChartXmlFix(slideXmlsDir) {
     try {
-        console.log('🔧 Applying comprehensive chart XML fixes for Syncfusion...');
 
         const chartsDir = path.join(slideXmlsDir, 'charts');
 
         if (!await checkDirectoryExists(chartsDir)) {
-            console.log('   ℹ️  No charts directory found');
             return { success: true, chartsFixed: 0 };
         }
 
@@ -1421,7 +1352,6 @@ async function comprehensiveChartXmlFix(slideXmlsDir) {
         const chartXmlFiles = chartFiles.filter(file => file.match(/^chart\d+\.xml$/));
 
         if (chartXmlFiles.length === 0) {
-            console.log('   ℹ️  No chart XML files found');
             return { success: true, chartsFixed: 0 };
         }
 
@@ -1432,8 +1362,6 @@ async function comprehensiveChartXmlFix(slideXmlsDir) {
                 const chartPath = path.join(chartsDir, chartFile);
                 let chartContent = await fsPromises.readFile(chartPath, 'utf8');
                 const originalContent = chartContent;
-
-                console.log(`   🔍 Processing ${chartFile}...`);
 
                 // FIX 1: Remove whitespace before closing tags
                 chartContent = chartContent.replace(/\s+(<\/[ac]:[^>]+>)/g, '$1');
@@ -1503,7 +1431,6 @@ async function comprehensiveChartXmlFix(slideXmlsDir) {
 
                 if (chartContent !== originalContent) {
                     await fsPromises.writeFile(chartPath, chartContent, 'utf8');
-                    console.log(`   ✅ Fixed ${chartFile}`);
                     fixedCount++;
                 } else {
                     console.log(`   ✓ No fixes needed for ${chartFile}`);
@@ -1514,7 +1441,6 @@ async function comprehensiveChartXmlFix(slideXmlsDir) {
             }
         }
 
-        console.log(`   🎉 Chart XML fix complete - ${fixedCount} file(s) fixed`);
 
         return {
             success: true,
@@ -1530,12 +1456,10 @@ async function comprehensiveChartXmlFix(slideXmlsDir) {
 
 async function fixChartRelationships(slideXmlsDir) {
     try {
-        console.log('🔗 Fixing chart relationships...');
 
         const chartsRelsDir = path.join(slideXmlsDir, 'charts', '_rels');
 
         if (!await checkDirectoryExists(chartsRelsDir)) {
-            console.log('   ℹ️  No chart relationships directory');
             return { success: true };
         }
 
@@ -1560,7 +1484,6 @@ async function fixChartRelationships(slideXmlsDir) {
 
                 if (relsContent !== originalContent) {
                     await fsPromises.writeFile(relsPath, relsContent, 'utf8');
-                    console.log(`   ✅ Fixed relationships in ${relsFile}`);
                 }
 
             } catch (error) {
@@ -1568,7 +1491,6 @@ async function fixChartRelationships(slideXmlsDir) {
             }
         }
 
-        console.log('   ✅ Chart relationships check complete');
         return { success: true };
 
     } catch (error) {
@@ -1579,12 +1501,10 @@ async function fixChartRelationships(slideXmlsDir) {
 
 async function validateEmbeddedExcel(slideXmlsDir) {
     try {
-        console.log('📊 Validating embedded Excel files...');
 
         const embeddingsDir = path.join(slideXmlsDir, 'embeddings');
 
         if (!await checkDirectoryExists(embeddingsDir)) {
-            console.log('   ℹ️  No embeddings directory');
             return { success: true };
         }
 
@@ -1598,7 +1518,6 @@ async function validateEmbeddedExcel(slideXmlsDir) {
                 const excelPath = path.join(embeddingsDir, excelFile);
                 const stats = await fsPromises.stat(excelPath);
 
-                console.log(`   📄 ${excelFile}: ${stats.size} bytes`);
 
                 if (stats.size === 0) {
                     console.error(`   ❌ Excel file is empty!`);
@@ -1608,8 +1527,6 @@ async function validateEmbeddedExcel(slideXmlsDir) {
                 if (stats.size < 100) {
                     console.warn(`   ⚠️  Excel file seems too small`);
                 }
-
-                console.log(`   ✅ Excel file validated`);
 
             } catch (error) {
                 console.error(`   ❌ Error validating ${excelFile}:`, error.message);
@@ -1974,8 +1891,6 @@ async function extractAndProcessSlideXMLs(pptxFilePath, customOutputDir = null, 
             }
         }
 
-        console.log("originalSlideNumber ------- >> ", originalSlideNumber);
-
         // Get www-data user and group IDs
         let wwwDataUid, wwwDataGid;
         try {
@@ -2259,7 +2174,6 @@ async function extractAndProcessSlideXMLs(pptxFilePath, customOutputDir = null, 
 
 async function replaceSlideXMLInPPTX(fileFolderName, extractedSlidesDir) {
     try {
-
         // Validate inputs
         if (!fileFolderName || !extractedSlidesDir) {
             throw new Error('Invalid folder name or extracted slides directory path.');
@@ -2278,31 +2192,21 @@ async function replaceSlideXMLInPPTX(fileFolderName, extractedSlidesDir) {
         // Paths for extracted files
         const extractedSlidesPath = path.join(extractedSlidesDir, 'slides');
         const extractedRelsPath = path.join(extractedSlidesDir, '_rels');
-        const extractedChartsPath = path.join(extractedSlidesDir, 'charts');
-        const extractedChartRelsPath = path.join(extractedSlidesDir, 'charts', '_rels');
-        const extractedEmbeddingsPath = path.join(extractedSlidesDir, 'embeddings');
 
         // Check if extracted directories exist
         const slidesExist = await checkDirectoryExists(extractedSlidesPath);
         const relsExist = await checkDirectoryExists(extractedRelsPath);
-        const chartsExist = await checkDirectoryExists(extractedChartsPath);
-        const chartRelsExist = await checkDirectoryExists(extractedChartRelsPath);
-        const embeddingsExist = await checkDirectoryExists(extractedEmbeddingsPath);
 
-        if (!slidesExist && !relsExist && !chartsExist && !chartRelsExist && !embeddingsExist) {
-            throw new Error('No extracted files found to replace');
+        if (!slidesExist && !relsExist) {
+            throw new Error('No extracted slide files found to replace');
         }
 
         let replacedCount = 0;
 
         // Replace slideX.xml files
         if (slidesExist) {
-
             const slideFiles = await fsPromises.readdir(extractedSlidesPath);
-
             const xmlFiles = slideFiles.filter(file => file.match(/^slide\d+\.xml$/));
-
-            console.log(`📄 Found ${xmlFiles.length} slide XML files to replace`);
 
             for (const xmlFile of xmlFiles) {
                 try {
@@ -2367,156 +2271,10 @@ async function replaceSlideXMLInPPTX(fileFolderName, extractedSlidesDir) {
             }
         }
 
-        // Replace chartX.xml files
-        if (chartsExist) {
-            const chartFiles = await fsPromises.readdir(extractedChartsPath);
-            const chartXmlFiles = chartFiles.filter(file => file.match(/^chart\d+\.xml$/));
-
-            for (const chartFile of chartXmlFiles) {
-                try {
-                    // Read converted chart XML content
-                    const convertedChartPath = path.join(extractedChartsPath, chartFile);
-                    const convertedChartContent = await fsPromises.readFile(convertedChartPath, 'utf8');
-
-                    // Target path in PPTX structure
-                    const targetChartPath = path.join(targetDir, 'ppt', 'charts', chartFile);
-
-                    // Ensure charts directory exists
-                    const chartsDir = path.dirname(targetChartPath);
-                    await fsPromises.mkdir(chartsDir, { recursive: true });
-
-                    // Check if target file exists
-                    try {
-                        await fsPromises.access(targetChartPath);
-                        await fsPromises.writeFile(targetChartPath, convertedChartContent, 'utf8');
-
-                        replacedCount++;
-                    } catch {
-                        console.log(`   ℹ️ Creating new chart file: ${chartFile}`);
-                        await fsPromises.writeFile(targetChartPath, convertedChartContent, 'utf8');
-                        replacedCount++;
-                    }
-                } catch (error) {
-                    console.error(`   ❌ Error replacing ${chartFile}: ${error.message}`);
-                }
-            }
-        }
-
-        // Replace chartX.xml.rels files
-        if (chartRelsExist) {
-            const chartRelsFiles = await fsPromises.readdir(extractedChartRelsPath);
-            const chartRelsXmlFiles = chartRelsFiles.filter(file => file.match(/^chart\d+\.xml\.rels$/));
-
-            for (const chartRelsFile of chartRelsXmlFiles) {
-                try {
-                    // Read converted chart rels content
-                    const convertedChartRelsPath = path.join(extractedChartRelsPath, chartRelsFile);
-                    const convertedChartRelsContent = await fsPromises.readFile(convertedChartRelsPath, 'utf8');
-
-                    // Target path in PPTX structure
-                    const targetChartRelsPath = path.join(targetDir, 'ppt', 'charts', '_rels', chartRelsFile);
-
-                    // Ensure chart _rels directory exists
-                    const chartRelsDir = path.dirname(targetChartRelsPath);
-                    await fsPromises.mkdir(chartRelsDir, { recursive: true });
-
-                    // Check if target file exists and merge if needed
-                    let finalChartRelsContent = convertedChartRelsContent;
-
-                    try {
-                        await fsPromises.access(targetChartRelsPath);
-                        const originalChartRelsContent = await fsPromises.readFile(targetChartRelsPath, 'utf8');
-
-                        // You might want to merge chart rels files similar to slide rels
-                        // For now, we'll replace completely, but you can add merge logic if needed
-                        finalChartRelsContent = convertedChartRelsContent;
-                    } catch {
-                        console.log(`   ℹ️ Creating new chart rels file: ${chartRelsFile}`);
-                    }
-
-                    // 🆕 Remove style1.xml and colors1.xml relationships from chart rels
-                    finalChartRelsContent = finalChartRelsContent.replace(
-                        /<Relationship[^>]*Target="style1\.xml"[^>]*\/>\s*/g,
-                        ''
-                    );
-                    finalChartRelsContent = finalChartRelsContent.replace(
-                        /<Relationship[^>]*Target="colors1\.xml"[^>]*\/>\s*/g,
-                        ''
-                    );
-                    console.log(`   🧹 Cleaned chart rels: removed style1.xml and colors1.xml relationships`);
-
-                    await fsPromises.writeFile(targetChartRelsPath, finalChartRelsContent, 'utf8');
-
-                    replacedCount++;
-                } catch (error) {
-                    console.error(`   ❌ Error replacing ${chartRelsFile}: ${error.message}`);
-                }
-            }
-        }
-
-        // Replace embedded Excel files
-        if (embeddingsExist) {
-            // Source (extracted) files
-            const embeddingFiles = await fsPromises.readdir(extractedEmbeddingsPath);
-            const excelFiles = embeddingFiles.filter(file =>
-                /^Microsoft_Excel_Worksheet\d+\.xlsx$/i.test(file)
-            );
-
-            // Target embeddings dir inside the PPTX folder
-            const targetEmbeddingsDir = path.join(targetDir, 'ppt', 'embeddings');
-            await fsPromises.mkdir(targetEmbeddingsDir, { recursive: true });
-
-            // 1) Remove any existing Excel files in ppt/embeddings
-            try {
-                const existingTargetEmbeds = await fsPromises.readdir(targetEmbeddingsDir);
-                const existingExcel = existingTargetEmbeds.filter(name => /\.xlsx$/i.test(name));
-                if (existingExcel.length) {
-
-                    for (const oldXlsx of existingExcel) {
-                        const oldPath = path.join(targetEmbeddingsDir, oldXlsx);
-                        try {
-                            await fsPromises.unlink(oldPath);
-                        } catch (delErr) {
-                            console.warn(`   ⚠️ Could not remove ${oldXlsx}: ${delErr.message}`);
-                        }
-                    }
-                } else {
-                    console.log("   ℹ️ No existing Excel embeddings to remove");
-                }
-            } catch (scanErr) {
-                console.warn(`   ⚠️ Could not scan target embeddings dir: ${scanErr.message}`);
-            }
-
-            // 2) Create (write) fresh Excel embeddings
-            for (const excelFile of excelFiles) {
-                try {
-                    const srcPath = path.join(extractedEmbeddingsPath, excelFile);
-                    const buf = await fsPromises.readFile(srcPath);
-
-                    const targetExcelPath = path.join(targetEmbeddingsDir, excelFile);
-                    await fsPromises.writeFile(targetExcelPath, buf);
-
-                    replacedCount++;
-                } catch (error) {
-                    console.error(`   ❌ Error writing ${excelFile}: ${error.message}`);
-                }
-            }
-        }
-
-
-        console.log(`   🎉 Successfully replaced ${replacedCount} files total`);
-
         return {
             success: true,
-            message: `Successfully replaced ${replacedCount} files (slides, rels, charts, chart rels, and embeddings)`,
-            replacedCount,
-            details: {
-                slidesProcessed: slidesExist,
-                relsProcessed: relsExist,
-                chartsProcessed: chartsExist,
-                chartRelsProcessed: chartRelsExist,
-                embeddingsProcessed: embeddingsExist
-            }
+            message: `Successfully replaced ${replacedCount} slide-related files`,
+            replacedCount
         };
 
     } catch (error) {
@@ -2581,7 +2339,6 @@ async function replaceSlideImages(fileFolderName, extractedSlidesDir) {
                     } catch {
                         // If file doesn't exist, add it
                         await fsPromises.writeFile(targetMediaPath, convertedMediaContent);
-                        console.log(`   ✅ Added: ${mediaFile}`);
                     }
                     replacedOrAddedCount++;
                 } catch (error) {
@@ -2589,8 +2346,6 @@ async function replaceSlideImages(fileFolderName, extractedSlidesDir) {
                 }
             }
         }
-
-        console.log(`   🎉 Successfully processed ${replacedOrAddedCount} media files total`);
 
         return {
             success: true,
@@ -2740,55 +2495,12 @@ async function normalizeChartReferences(fileFolderName, slideXmlsDir) {
                         if (chartFile !== latestChart) {
                             try {
                                 await fsPromises.unlink(path.join(chartsDir, chartFile));
-                                console.log(`   Removed duplicate ${chartFile}`);
                             } catch (error) {
                                 console.log(`   Could not remove ${chartFile}`);
                             }
                         }
                     }
                 }
-            }
-
-            // 🆕 Remove style1.xml and colors1.xml files
-            console.log('🗑️  Removing chart style and color files...');
-            const filesToRemove = ['style1.xml', 'colors1.xml'];
-            for (const fileToRemove of filesToRemove) {
-                try {
-                    const filePath = path.join(chartsDir, fileToRemove);
-                    if (await checkFileExists(filePath)) {
-                        await fsPromises.unlink(filePath);
-                        console.log(`   ✅ Removed ${fileToRemove}`);
-                    }
-                } catch (error) {
-                    console.log(`   ⚠️  Could not remove ${fileToRemove}: ${error.message}`);
-                }
-            }
-        }
-
-        // 4. Update [Content_Types].xml to remove style1.xml and colors1.xml Override entries
-        console.log('📝 Updating [Content_Types].xml...');
-        const contentTypesPath = path.join(targetDir, '[Content_Types].xml');
-
-        if (await checkFileExists(contentTypesPath)) {
-            try {
-                let contentTypesXml = await fsPromises.readFile(contentTypesPath, 'utf8');
-
-                // Remove style1.xml Override entry
-                contentTypesXml = contentTypesXml.replace(
-                    /<Override\s+PartName="\/ppt\/charts\/style1\.xml"[^>]*\/>\s*/g,
-                    ''
-                );
-
-                // Remove colors1.xml Override entry
-                contentTypesXml = contentTypesXml.replace(
-                    /<Override\s+PartName="\/ppt\/charts\/colors1\.xml"[^>]*\/>\s*/g,
-                    ''
-                );
-
-                await fsPromises.writeFile(contentTypesPath, contentTypesXml, 'utf8');
-                console.log('   ✅ Updated [Content_Types].xml - removed style1.xml and colors1.xml entries');
-            } catch (error) {
-                console.log(`   ⚠️  Error updating [Content_Types].xml: ${error.message}`);
             }
         }
 
@@ -2834,7 +2546,11 @@ async function convertZipToPptxFile(sourceFolder, zipFileOutput, customName = nu
                 // Add file to zip
                 const relativePath = path.relative(sourceFolder, itemPath);
                 const fileContent = fs.readFileSync(itemPath);
-                zipFolder.file(relativePath, fileContent);
+                // ✅ FIX BUG 5: OOXML/ZIP spec requires forward slashes as path separators.
+                // path.relative() uses the OS separator (backslash on Windows), which causes
+                // PowerPoint repair dialogs on all platforms.  Normalise to forward slashes.
+                const zipPath = relativePath.replace(/\\/g, '/');
+                zipFolder.file(zipPath, fileContent);
             } else if (stat.isDirectory()) {
                 // Create folder in zip and recursively add its contents
                 const relativePath = path.relative(sourceFolder, itemPath);
@@ -2855,7 +2571,6 @@ async function convertZipToPptxFile(sourceFolder, zipFileOutput, customName = nu
         addToZip(sourceFolder);
 
         // Generate the zip buffer
-        console.log(`🔄 Generating archive...`);
         const zipBuffer = await zip.generateAsync({
             type: 'nodebuffer',
             compression: 'DEFLATE',
@@ -2866,7 +2581,6 @@ async function convertZipToPptxFile(sourceFolder, zipFileOutput, customName = nu
 
         // Save the zip file to the output path
         fs.writeFileSync(zipFileOutput, zipBuffer);
-        console.log(`🎉 ZIP file created successfully at: ${zipFileOutput}`);
 
         // 🛡️ PROTECTED RENAME FROM .zip TO .pptx
         const directory = path.dirname(zipFileOutput);
@@ -2877,7 +2591,6 @@ async function convertZipToPptxFile(sourceFolder, zipFileOutput, customName = nu
 
         // Check if PPTX already exists and create a safe temporary name
         if (fs.existsSync(tempPptxPath)) {
-            console.log(`⚠️ File ${tempPptxName} already exists! Creating with temporary name...`);
 
             // Generate a unique temporary name
             const timestamp = Date.now();
@@ -2887,7 +2600,6 @@ async function convertZipToPptxFile(sourceFolder, zipFileOutput, customName = nu
 
         // Safely rename to PPTX (with temporary name if needed)
         fs.renameSync(zipFileOutput, tempPptxPath);
-        console.log(`🔄 Safely renamed to: ${tempPptxName}`);
 
         // Generate final filename with timestamp and optional custom name
         const finalBaseName = customName || baseNameFromZip;
@@ -2915,14 +2627,9 @@ async function convertZipToPptxFile(sourceFolder, zipFileOutput, customName = nu
 
         // Final rename from temp to actual filename
         fs.renameSync(tempPptxPath, actualFileName);
-        console.log(`🏷️ Final renamed file: ${path.basename(actualFileName)}`);
 
         // 🔍 Check if any existing files were preserved
         const originalPptx = path.join(directory, `${baseNameFromZip}.pptx`);
-
-        // if (fs.existsSync(originalPptx) && originalPptx !== actualFileName) {
-        //     console.log(`✅ Original file preserved: ${baseNameFromZip}.pptx`);
-        // }
 
         return {
             success: true,
@@ -2941,18 +2648,15 @@ async function convertZipToPptxFile(sourceFolder, zipFileOutput, customName = nu
 }
 async function fixTableCellAlignment(slideXmlsDir) {
     try {
-        console.log('🔧 Fixing table cell alignment in merged cells...');
-
         const slidesDir = path.join(slideXmlsDir, 'slides');
-        
+
         if (!await checkDirectoryExists(slidesDir)) {
-            console.log('   ℹ️  No slides directory found');
             return { success: true, slidesFixed: 0 };
         }
 
         const slideFiles = await fsPromises.readdir(slidesDir);
         const slideXmlFiles = slideFiles.filter(file => file.match(/^slide\d+\.xml$/));
-        
+
         let fixedCount = 0;
 
         for (const slideFile of slideXmlFiles) {
@@ -2969,20 +2673,19 @@ async function fixTableCellAlignment(slideXmlsDir) {
                 while ((rowMatch = rowRegex.exec(slideContent)) !== null) {
                     const rowContent = rowMatch[1];
                     const fullRow = rowMatch[0];
-                    
+
                     // Check if row has merged cells (hMerge)
                     if (rowContent.includes('hMerge="1"')) {
                         // Find first cell with alignment
                         const firstCellMatch = rowContent.match(/<a:tc[^>]*>([\s\S]*?)<\/a:tc>/);
                         if (firstCellMatch) {
                             const firstCellContent = firstCellMatch[1];
-                            
+
                             // Extract alignment from first cell
                             const alignMatch = firstCellContent.match(/<a:pPr\s+algn="([^"]+)"/);
                             if (alignMatch) {
                                 const alignment = alignMatch[1];
-                                console.log(`   📌 Found alignment="${alignment}" in merged row`);
-                                
+
                                 // Fix all hMerge cells in this row to have alignment
                                 let fixedRow = fullRow.replace(
                                     /<a:tc\s+hMerge="1">([\s\S]*?)<\/a:tc>/g,
@@ -3006,7 +2709,7 @@ async function fixTableCellAlignment(slideXmlsDir) {
                                         }
                                     }
                                 );
-                                
+
                                 rowsToFix.push({ original: fullRow, fixed: fixedRow });
                             }
                         }
@@ -3020,7 +2723,6 @@ async function fixTableCellAlignment(slideXmlsDir) {
 
                 if (slideContent !== originalContent) {
                     await fsPromises.writeFile(slidePath, slideContent, 'utf8');
-                    console.log(`   ✅ Fixed merged cell alignment in ${slideFile}`);
                     fixedCount++;
                 }
 
@@ -3028,8 +2730,6 @@ async function fixTableCellAlignment(slideXmlsDir) {
                 console.error(`   ❌ Error fixing ${slideFile}: ${error.message}`);
             }
         }
-
-        console.log(`   🎉 Table alignment fix complete - ${fixedCount} slide(s) fixed`);
 
         return {
             success: true,

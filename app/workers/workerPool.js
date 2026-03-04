@@ -149,7 +149,7 @@ class WorkerPool extends EventEmitter {
         userId: taskData.userId || null,
         sessionId: taskData.sessionId || null
       };
-      
+
       this.stats.totalTasks++;
       this.stats.queuedTasks++;
 
@@ -161,12 +161,12 @@ class WorkerPool extends EventEmitter {
       }
 
       this.taskQueue.push(task);
-      
+
       // Log queue status for concurrent operations
       if (this.taskQueue.length > 1 || this.busyWorkers.size > 0) {
         console.log(`[Pool] Queued task ${taskId} - Queue: ${this.taskQueue.length}, Busy: ${this.busyWorkers.size}, Available: ${this.availableWorkers.length}`);
       }
-      
+
       this.processNextTask();
     });
   }
@@ -175,7 +175,7 @@ class WorkerPool extends EventEmitter {
     if (this.taskQueue.length === 0 || this.availableWorkers.length === 0) {
       return;
     }
-    
+
     const task = this.taskQueue.shift();
     const worker = this.availableWorkers.shift();
 
@@ -227,7 +227,7 @@ class WorkerPool extends EventEmitter {
         }
         if (messageHandler) worker.removeListener('message', messageHandler);
         if (errorHandler) worker.removeListener('error', errorHandler);
-        
+
         // Remove from active tasks
         this.activeTasks.delete(task.id);
       };
@@ -269,7 +269,7 @@ class WorkerPool extends EventEmitter {
         }
         resolveTask(result.success, result, result.error);
       };
-      
+
       errorHandler = (error) => {
         resolveTask(false, null, `Worker error: ${error.message}`);
         this.handleWorkerError(worker, error);
@@ -305,11 +305,11 @@ class WorkerPool extends EventEmitter {
 
   handleWorkerTimeout(worker) {
     console.warn(`[Pool] Worker ${worker.workerId} timed out (task: ${worker.currentTaskId}), terminating...`);
-    
+
     if (worker.currentTaskId) {
       this.activeTasks.delete(worker.currentTaskId);
     }
-    
+
     this.terminateWorker(worker);
     if (!this.isShuttingDown) {
       this.replaceWorker(worker);
@@ -319,11 +319,11 @@ class WorkerPool extends EventEmitter {
   handleWorkerError(worker, error) {
     console.error(`[Pool] Worker ${worker.workerId} error (task: ${worker.currentTaskId}):`, error.message);
     this.stats.workerCrashes++;
-    
+
     if (worker.currentTaskId) {
       this.activeTasks.delete(worker.currentTaskId);
     }
-    
+
     this.removeWorkerFromCollections(worker);
 
     if (worker.currentTask && !worker.currentTask.isResolved) {
@@ -342,11 +342,11 @@ class WorkerPool extends EventEmitter {
       console.error(`[Pool] Worker ${worker.workerId} exited with code ${code} (task: ${worker.currentTaskId})`);
       this.stats.workerCrashes++;
     }
-    
+
     if (worker.currentTaskId) {
       this.activeTasks.delete(worker.currentTaskId);
     }
-    
+
     this.removeWorkerFromCollections(worker);
 
     if (worker.currentTask && !worker.currentTask.isResolved) {
@@ -457,12 +457,12 @@ class WorkerPool extends EventEmitter {
     const stats = this.getStats();
     const activeTasks = this.getActiveTasks();
     const isHealthy = stats.activeWorkers >= this.minWorkers && !this.isShuttingDown;
-    
-    return { 
-      healthy: isHealthy, 
-      stats, 
+
+    return {
+      healthy: isHealthy,
+      stats,
       activeTasks,
-      timestamp: new Date().toISOString() 
+      timestamp: new Date().toISOString()
     };
   }
 

@@ -145,8 +145,6 @@ function addLayoutToSlide(pptx, pptSlide, element) {
         if (!pptSlide.layouts) pptSlide.layouts = [];
         pptSlide.layouts.push(layoutData);
 
-        console.log(`Layout added successfully: ${w}" x ${h}" at (${x}", ${y}")`);
-
     } catch (error) {
         console.error(`Failed to add layout to slide:`, error);
         

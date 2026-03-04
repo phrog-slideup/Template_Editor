@@ -27,9 +27,6 @@ async function getMasterBackground(masterXML, themeXML, relationshipsXML = null,
     const bgPr = masterBgNode?.["p:bgPr"]?.[0];
     if (bgPr) {
       result = await processBgPr(bgPr, themeXML, relationshipsXML, layoutXML, pptxInstance);
-
-      console.log("result ==========-----111------------- >>>>>>>>>>>> ", result);
-
     }
 
     // Check for background reference
@@ -37,17 +34,12 @@ async function getMasterBackground(masterXML, themeXML, relationshipsXML = null,
       const bgRef = masterBgNode?.["p:bgRef"]?.[0];
       if (bgRef) {
         result = await processBgRef(bgRef, themeXML, layoutXML);
-        console.log("result ==========-------222----------- >>>>>>>>>>>> ", result);
-
       }
     }
 
     // If no specific background found, get default from theme
     if (!result) {
       result = await getDefaultMasterBackground(themeXML);
-
-      console.log("result ==========-------3333----------- >>>>>>>>>>>> ", result);
-
     }
 
     // FIXED: Convert RGBA to hex if needed

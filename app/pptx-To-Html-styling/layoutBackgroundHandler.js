@@ -12,8 +12,6 @@ if (!fs.existsSync(imageSavePath)) {
 async function getLayoutBackgroundColor(layoutXML, themeXML, relationshipsXML, masterXML, extractor) {
     try {
 
-        // console.log("slideLayoutBg ==========----------------111111------- >>>>>>>>>>>>>> ", layoutXML);
-
         if (!layoutXML) {
             console.log("No layout XML provided");
             return { backgroundCSS: "" };
@@ -25,7 +23,19 @@ async function getLayoutBackgroundColor(layoutXML, themeXML, relationshipsXML, m
         const layoutBgPr = layoutCsld?.["p:bg"]?.[0]?.["p:bgPr"]?.[0];
 
         if (!layoutBgPr) {
-            // console.log("No layout background properties found");
+            console.log("No layout background properties found");
+
+            const masterBgPr = masterXML?.["p:sldMaster"]?.["p:cSld"]?.[0]?.["p:bg"]?.[0]?.["p:bgPr"]?.[0];
+            if (masterBgPr) {
+                console.log("Found master background properties, trying to resolve...");
+                const masterBgResult = await processLayoutSolidFill(masterBgPr["a:solidFill"]?.[0], themeXML, masterXML);
+
+                if (masterBgResult) {
+                    console.log("Master background result found: ", masterBgResult);
+                    return masterBgResult;
+                }
+            }
+
             return { backgroundCSS: "" };
         }
 
@@ -33,6 +43,9 @@ async function getLayoutBackgroundColor(layoutXML, themeXML, relationshipsXML, m
         const layoutSolidFill = layoutBgPr?.["a:solidFill"]?.[0];
         if (layoutSolidFill) {
             const solidFillResult = await processLayoutSolidFill(layoutSolidFill, themeXML, masterXML);
+
+            console.log("solidFillResult ==========>>>> ", solidFillResult);
+
             if (solidFillResult) {
                 return solidFillResult;
             }
@@ -42,6 +55,9 @@ async function getLayoutBackgroundColor(layoutXML, themeXML, relationshipsXML, m
         const layoutGradFill = layoutBgPr?.["a:gradFill"]?.[0];
         if (layoutGradFill) {
             const gradientResult = await processLayoutGradientFill(layoutGradFill, themeXML, masterXML);
+
+            console.log("gradientResult ==========>>>> ", gradientResult);
+
             if (gradientResult) {
                 return gradientResult;
             }
@@ -51,6 +67,9 @@ async function getLayoutBackgroundColor(layoutXML, themeXML, relationshipsXML, m
         const layoutPattFill = layoutBgPr?.["a:pattFill"]?.[0];
         if (layoutPattFill) {
             const patternResult = await processLayoutPatternFill(layoutPattFill, themeXML, masterXML);
+
+            console.log("patternResult ==========>>>> ", patternResult);
+
             if (patternResult) {
                 return patternResult;
             }
@@ -63,6 +82,8 @@ async function getLayoutBackgroundColor(layoutXML, themeXML, relationshipsXML, m
 
         if (layoutPictureTextureFill) {
             const pictureResult = await processLayoutPictureFill(layoutPictureTextureFill, relationshipsXML, extractor);
+            console.log("pictureResult ==========>>>> ", pictureResult);
+
             if (pictureResult) {
                 return pictureResult;
             }
@@ -72,6 +93,8 @@ async function getLayoutBackgroundColor(layoutXML, themeXML, relationshipsXML, m
         const layoutBgRef = layoutCsld?.["p:bg"]?.[0]?.["p:bgRef"]?.[0];
         if (layoutBgRef) {
             const bgRefResult = await processLayoutBackgroundReference(layoutBgRef, masterXML, themeXML);
+            console.log("bgRefResult ==========>>>> ", bgRefResult);
+
             if (bgRefResult) {
                 return bgRefResult;
             }

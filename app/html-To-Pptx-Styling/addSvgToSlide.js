@@ -6,163 +6,135 @@ const PptxGenJS = require("pptxgenjs");
  */
 function convertSvgPathToPptxPoints(pathData, viewBoxWidth, viewBoxHeight, shapeWidth, shapeHeight) {
     if (!pathData || !viewBoxWidth || !viewBoxHeight) {
-        console.log('   ❌ Invalid parameters for path conversion');
         return [];
     }
 
-    // Syncfusion-safe:
-    // Avoid emitting PptxGenJS "curve" points, because pptxgen writes <a:cubicBezTo>/<a:quadBezTo>.
-    // Some renderers (Syncfusion) fail on those. We flatten curves into a few <a:lnTo>.
     const points = [];
     try {
+        // Clean up path data
         const cleanPathData = pathData.replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
         const commands = cleanPathData.match(/[MLHVCSQTAZ][^MLHVCSQTAZ]*/gi);
 
         if (!commands || commands.length === 0) {
-            console.log('   ❌ No valid path commands found');
             return [];
         }
-
-        console.log(`   🔍 Found ${commands.length} path commands`);
 
         let currentX = 0, currentY = 0;
         let pathStartX = 0, pathStartY = 0;
         let hasMoveTo = false;
 
-        const toPoint = (x, y, moveTo = false) => ({
-            x: (x / viewBoxWidth) * shapeWidth,
-            y: (y / viewBoxHeight) * shapeHeight,
-            ...(moveTo ? { moveTo: true } : {})
-        });
-
-        const pushPoint = (x, y, moveTo = false) => points.push(toPoint(x, y, moveTo));
-
-        const cubicAt = (p0, p1, p2, p3, t) => {
-            const mt = 1 - t;
-            const mt2 = mt * mt;
-            const t2 = t * t;
-            return (
-                p0 * mt2 * mt +
-                3 * p1 * mt2 * t +
-                3 * p2 * mt * t2 +
-                p3 * t2 * t
-            );
-        };
-
-        const quadAt = (p0, p1, p2, t) => {
-            const mt = 1 - t;
-            return (mt * mt) * p0 + (2 * mt * t) * p1 + (t * t) * p2;
-        };
-
-        // Keep this small; your "working XML" uses very few line segments for curves.
-        const FLATTEN_SEGMENTS_CUBIC = 3; // adds 3 intermediate lnTo + final
-        const FLATTEN_SEGMENTS_QUAD = 3;
-
-        commands.forEach((cmd) => {
+        commands.forEach((cmd, index) => {
             const type = cmd[0].toUpperCase();
             const isRelative = cmd[0] !== cmd[0].toUpperCase();
             const coords = cmd.slice(1).trim().split(/[\s,]+/).map(parseFloat).filter(n => !isNaN(n));
 
             switch (type) {
-                case 'M': { // Move to; additional pairs become implicit lineTo
-                    for (let i = 0; i + 1 < coords.length; i += 2) {
-                        const x = isRelative ? currentX + coords[i] : coords[i];
-                        const y = isRelative ? currentY + coords[i + 1] : coords[i + 1];
+                case 'M': // Move to
+                    if (coords.length >= 2) {
+                        currentX = isRelative ? currentX + coords[0] : coords[0];
+                        currentY = isRelative ? currentY + coords[1] : coords[1];
+                        pathStartX = currentX;
+                        pathStartY = currentY;
 
-                        currentX = x; currentY = y;
-
-                        if (!hasMoveTo) {
-                            pathStartX = currentX; pathStartY = currentY;
-                            pushPoint(currentX, currentY, true);
-                            hasMoveTo = true;
-                        } else {
-                            pushPoint(currentX, currentY, false);
-                        }
+                        const point = {
+                            x: (currentX / viewBoxWidth) * shapeWidth,
+                            y: (currentY / viewBoxHeight) * shapeHeight,
+                            moveTo: true
+                        };
+                        points.push(point);
+                        hasMoveTo = true;
                     }
                     break;
-                }
 
-                case 'L': { // Line to (multiple pairs)
-                    for (let i = 0; i + 1 < coords.length; i += 2) {
-                        currentX = isRelative ? currentX + coords[i] : coords[i];
-                        currentY = isRelative ? currentY + coords[i + 1] : coords[i + 1];
-                        pushPoint(currentX, currentY, false);
+                case 'L': // Line to
+                    if (coords.length >= 2) {
+                        currentX = isRelative ? currentX + coords[0] : coords[0];
+                        currentY = isRelative ? currentY + coords[1] : coords[1];
+
+                        const point = {
+                            x: (currentX / viewBoxWidth) * shapeWidth,
+                            y: (currentY / viewBoxHeight) * shapeHeight
+                        };
+                        points.push(point);
                     }
                     break;
-                }
 
-                case 'H': { // Horizontal line (multiple values)
-                    for (let i = 0; i < coords.length; i++) {
-                        currentX = isRelative ? currentX + coords[i] : coords[i];
-                        pushPoint(currentX, currentY, false);
+                case 'H': // Horizontal line
+                    if (coords.length >= 1) {
+                        currentX = isRelative ? currentX + coords[0] : coords[0];
+                        const point = {
+                            x: (currentX / viewBoxWidth) * shapeWidth,
+                            y: (currentY / viewBoxHeight) * shapeHeight
+                        };
+                        points.push(point);
                     }
                     break;
-                }
 
-                case 'V': { // Vertical line (multiple values)
-                    for (let i = 0; i < coords.length; i++) {
-                        currentY = isRelative ? currentY + coords[i] : coords[i];
-                        pushPoint(currentX, currentY, false);
+                case 'V': // Vertical line
+                    if (coords.length >= 1) {
+                        currentY = isRelative ? currentY + coords[0] : coords[0];
+                        const point = {
+                            x: (currentX / viewBoxWidth) * shapeWidth,
+                            y: (currentY / viewBoxHeight) * shapeHeight
+                        };
+                        points.push(point);
                     }
                     break;
-                }
 
-                case 'C': { // Cubic Bezier (multiple segments)
-                    for (let i = 0; i + 5 < coords.length; i += 6) {
-                        const x1 = isRelative ? currentX + coords[i] : coords[i];
-                        const y1 = isRelative ? currentY + coords[i + 1] : coords[i + 1];
-                        const x2 = isRelative ? currentX + coords[i + 2] : coords[i + 2];
-                        const y2 = isRelative ? currentY + coords[i + 3] : coords[i + 3];
-                        const x3 = isRelative ? currentX + coords[i + 4] : coords[i + 4];
-                        const y3 = isRelative ? currentY + coords[i + 5] : coords[i + 5];
+                case 'C': // Cubic Bezier curve
+                    if (coords.length >= 6) {
+                        const x1 = isRelative ? currentX + coords[0] : coords[0];
+                        const y1 = isRelative ? currentY + coords[1] : coords[1];
+                        const x2 = isRelative ? currentX + coords[2] : coords[2];
+                        const y2 = isRelative ? currentY + coords[3] : coords[3];
+                        currentX = isRelative ? currentX + coords[4] : coords[4];
+                        currentY = isRelative ? currentY + coords[5] : coords[5];
 
-                        const startX = currentX, startY = currentY;
-
-                        for (let s = 1; s <= FLATTEN_SEGMENTS_CUBIC; s++) {
-                            const t = s / (FLATTEN_SEGMENTS_CUBIC + 1);
-                            const xi = cubicAt(startX, x1, x2, x3, t);
-                            const yi = cubicAt(startY, y1, y2, y3, t);
-                            pushPoint(xi, yi, false);
-                        }
-
-                        currentX = x3; currentY = y3;
-                        pushPoint(currentX, currentY, false);
+                        const point = {
+                            x: (currentX / viewBoxWidth) * shapeWidth,
+                            y: (currentY / viewBoxHeight) * shapeHeight,
+                            curve: {
+                                type: 'cubic',
+                                x1: (x1 / viewBoxWidth) * shapeWidth,
+                                y1: (y1 / viewBoxHeight) * shapeHeight,
+                                x2: (x2 / viewBoxWidth) * shapeWidth,
+                                y2: (y2 / viewBoxHeight) * shapeHeight
+                            }
+                        };
+                        points.push(point);
                     }
                     break;
-                }
 
-                case 'Q': { // Quadratic Bezier (multiple segments)
-                    for (let i = 0; i + 3 < coords.length; i += 4) {
-                        const x1 = isRelative ? currentX + coords[i] : coords[i];
-                        const y1 = isRelative ? currentY + coords[i + 1] : coords[i + 1];
-                        const x2 = isRelative ? currentX + coords[i + 2] : coords[i + 2];
-                        const y2 = isRelative ? currentY + coords[i + 3] : coords[i + 3];
+                case 'Q': // Quadratic Bezier curve
+                    if (coords.length >= 4) {
+                        const x1 = isRelative ? currentX + coords[0] : coords[0];
+                        const y1 = isRelative ? currentY + coords[1] : coords[1];
+                        currentX = isRelative ? currentX + coords[2] : coords[2];
+                        currentY = isRelative ? currentY + coords[3] : coords[3];
 
-                        const startX = currentX, startY = currentY;
-
-                        for (let s = 1; s <= FLATTEN_SEGMENTS_QUAD; s++) {
-                            const t = s / (FLATTEN_SEGMENTS_QUAD + 1);
-                            const xi = quadAt(startX, x1, x2, t);
-                            const yi = quadAt(startY, y1, y2, t);
-                            pushPoint(xi, yi, false);
-                        }
-
-                        currentX = x2; currentY = y2;
-                        pushPoint(currentX, currentY, false);
+                        const point = {
+                            x: (currentX / viewBoxWidth) * shapeWidth,
+                            y: (currentY / viewBoxHeight) * shapeHeight,
+                            curve: {
+                                type: 'quadratic',
+                                x1: (x1 / viewBoxWidth) * shapeWidth,
+                                y1: (y1 / viewBoxHeight) * shapeHeight
+                            }
+                        };
+                        points.push(point);
                     }
                     break;
-                }
 
-                case 'Z': { // Close path
-                    if (hasMoveTo) points.push({ close: true });
+                case 'Z': // Close path
+                    if (hasMoveTo) {
+                        points.push({ close: true });
+                    }
                     currentX = pathStartX;
                     currentY = pathStartY;
                     break;
-                }
             }
         });
 
-        console.log(`   ✅ Converted to ${points.length} points (moveTo: ${hasMoveTo})`);
         return points;
 
     } catch (error) {
@@ -210,8 +182,6 @@ function createDynamicShapeOptions(element, slideContext, points, svgStyles) {
         }
     }
 
-    console.log(`   🎨 Stroke analysis: strokeWidthRaw="${strokeWidthRaw}", parsed=${strokeWidth}`);
-
     // Extract opacity
     const opacity = parseFloat(style.opacity || svgStyles.opacity || '1');
     const transparency = opacity < 1 ? Math.round((1 - opacity) * 100) : 0;
@@ -228,7 +198,6 @@ function createDynamicShapeOptions(element, slideContext, points, svgStyles) {
     // Add fill if it's not transparent/none
     if (fillColor !== null) {
         shapeOptions.fill = fillColor;
-        console.log(`   🎨 Added fill: ${fillColor}`);
     }
 
     // FIXED: Only add stroke if strokeWidth > 0 (not just truthy)
@@ -237,11 +206,7 @@ function createDynamicShapeOptions(element, slideContext, points, svgStyles) {
             color: stroke,
             width: Math.min(strokeWidth, 10)
         };
-        console.log(`   🎨 Added stroke: ${stroke}, width: ${strokeWidth}`);
-    } else {
-        console.log(`   🎨 No stroke: stroke=${stroke}, strokeWidth=${strokeWidth}`);
     }
-
     // Add transparency if needed
     if (transparency > 0 && transparency <= 100) {
         shapeOptions.transparency = transparency;
@@ -330,31 +295,26 @@ function createFallbackShape(shapeOptions, fallbackType = 'rect') {
  * FIXED: Validate shape options without adding unwanted strokes
  */
 function validateShapeOptions(shapeOptions) {
-    console.log('   🔍 Validating shape options...');
 
     // Check dimensions
     if (shapeOptions.w <= 0 || shapeOptions.h <= 0) {
-        console.log(`   ❌ Invalid dimensions: ${shapeOptions.w}x${shapeOptions.h}`);
         return false;
     }
 
     // Check position bounds and fix if needed
     if (shapeOptions.x < 0 || shapeOptions.y < 0) {
-        console.log(`   ⚠️ Negative position detected: (${shapeOptions.x}, ${shapeOptions.y}), fixing...`);
         shapeOptions.x = Math.max(0, shapeOptions.x);
         shapeOptions.y = Math.max(0, shapeOptions.y);
     }
 
     // Check points array
     if (!shapeOptions.points || shapeOptions.points.length === 0) {
-        console.log('   ❌ No points array or empty points');
         return false;
     }
 
     // Ensure we have a valid moveTo command
     const hasValidMoveTo = shapeOptions.points.some(p => p.moveTo === true);
     if (!hasValidMoveTo) {
-        console.log('   ❌ No valid moveTo command found in points');
         return false;
     }
 
@@ -362,11 +322,8 @@ function validateShapeOptions(shapeOptions) {
     const hasFill = shapeOptions.fill !== undefined && shapeOptions.fill !== null;
     const hasStroke = shapeOptions.line && shapeOptions.line.width > 0;
 
-    console.log(`   📊 Visibility: fill=${hasFill}, stroke=${hasStroke}`);
-
     // FIXED: Only add stroke if BOTH fill and stroke are missing (truly invisible shape)
     if (!hasFill && !hasStroke) {
-        console.log('   ⚠️ Shape has no fill and no stroke - adding minimal stroke for visibility');
         shapeOptions.line = {
             color: "CCCCCC", // Use light gray instead of black for minimal visibility
             width: 0.5       // Use thinner line
@@ -375,7 +332,6 @@ function validateShapeOptions(shapeOptions) {
         console.log('   ✅ Shape has fill but no stroke - this is valid, no stroke added');
     }
 
-    console.log('   ✅ Shape options validation passed');
     return true;
 }
 
@@ -384,14 +340,12 @@ function validateShapeOptions(shapeOptions) {
  */
 function addSvgToSlide(pptSlide, svgElement, elementStyle, slideContext) {
     try {
-        console.log('   🎯 Processing SVG element...');
 
         // Extract SVG properties
         const viewBox = svgElement.getAttribute('viewBox');
         const pathElement = svgElement.querySelector('path');
 
         if (!pathElement) {
-            console.log('   ⚠️ No path element found in SVG');
             return false;
         }
 
@@ -402,18 +356,14 @@ function addSvgToSlide(pptSlide, svgElement, elementStyle, slideContext) {
             if (viewBoxValues.length >= 4 && !viewBoxValues.some(isNaN)) {
                 viewBoxWidth = viewBoxValues[2];
                 viewBoxHeight = viewBoxValues[3];
-                console.log(`   📏 ViewBox: ${viewBoxWidth}x${viewBoxHeight}`);
             }
         }
 
         // Extract path data
         const pathData = pathElement.getAttribute('d');
         if (!pathData || pathData.trim() === '') {
-            console.log('   ⚠️ No valid path data found');
             return false;
         }
-
-        console.log(`   📝 Path data: ${pathData.substring(0, 100)}${pathData.length > 100 ? '...' : ''}`);
 
         // Get parent element for positioning
         const parentElement = svgElement.closest('.shape.custom-shape') ||
@@ -422,18 +372,14 @@ function addSvgToSlide(pptSlide, svgElement, elementStyle, slideContext) {
             svgElement.parentElement;
 
         if (!parentElement) {
-            console.log('   ⚠️ No valid parent element found');
             return false;
         }
 
         const style = parentElement.style;
-        console.log(`   📍 Parent element: ${parentElement.className}, ID: ${parentElement.id}`);
 
         // Calculate shape dimensions in inches (72 DPI)
         const shapeWidthInches = (parseFloat(style.width) || 100) / 72;
         const shapeHeightInches = (parseFloat(style.height) || 100) / 72;
-
-        console.log(`   📐 Shape dimensions: ${shapeWidthInches}" x ${shapeHeightInches}"`);
 
         // Convert SVG path to PowerPoint points
         const points = convertSvgPathToPptxPoints(
@@ -449,8 +395,6 @@ function addSvgToSlide(pptSlide, svgElement, elementStyle, slideContext) {
             return false;
         }
 
-        console.log(`   ✅ Converted to ${points.length} points`);
-
         // FIXED: Extract SVG styling with explicit stroke-width handling
         const svgStyles = {
             fill: pathElement.getAttribute('fill') || svgElement.style.fill,
@@ -459,19 +403,13 @@ function addSvgToSlide(pptSlide, svgElement, elementStyle, slideContext) {
             opacity: pathElement.getAttribute('opacity') || svgElement.style.opacity || '1'
         };
 
-        console.log(`   🎨 SVG styles extracted:`, {
-            fill: svgStyles.fill,
-            stroke: svgStyles.stroke,
-            strokeWidth: svgStyles.strokeWidth,
-            opacity: svgStyles.opacity
-        });
+
 
         // Create shape options
         const shapeOptions = createDynamicShapeOptions(parentElement, slideContext, points, svgStyles);
 
         // Validate shape options
         if (!validateShapeOptions(shapeOptions)) {
-            console.log('   ⚠️ Shape options validation failed, using fallback');
             const { fallback, type } = createFallbackShape(shapeOptions);
             pptSlide.addShape(type, fallback);
             return true;
@@ -482,23 +420,12 @@ function addSvgToSlide(pptSlide, svgElement, elementStyle, slideContext) {
 
         // Try to add the shape
         try {
-            console.log(`   🔧 Attempting to add custGeom shape with options:`, {
-                x: shapeOptions.x,
-                y: shapeOptions.y,
-                w: shapeOptions.w,
-                h: shapeOptions.h,
-                pointsCount: shapeOptions.points.length,
-                fill: shapeOptions.fill,
-                hasLine: !!shapeOptions.line,
-                lineWidth: shapeOptions.line?.width
-            });
+
 
             pptSlide.addShape('custGeom', shapeOptions);
-            console.log('   ✅ Successfully added custom geometry shape');
             return true;
 
         } catch (custGeomError) {
-            console.log(`   ❌ custGeom failed: ${custGeomError.message}`);
 
             // Fallback: Try polygon approach
             try {
@@ -509,18 +436,15 @@ function addSvgToSlide(pptSlide, svgElement, elementStyle, slideContext) {
                     simplifiedOptions.objectName = `Simplified SVG Polygon (${parentElement.className || 'unnamed'})`;
 
                     pptSlide.addShape('custGeom', simplifiedOptions);
-                    console.log('   ✅ Added simplified polygon shape');
                     return true;
                 }
             } catch (simplifiedError) {
-                console.log(`   ❌ Simplified polygon failed: ${simplifiedError.message}`);
             }
 
             // Final fallback: Rectangle
             const { fallback, type } = createFallbackShape(shapeOptions, 'rect');
             fallback.objectName = `SVG Fallback Rectangle (${parentElement.className || 'unnamed'})`;
             pptSlide.addShape(type, fallback);
-            console.log('   ⚠️ Used rectangle fallback');
             return true;
         }
 
@@ -584,7 +508,6 @@ function addSvgConnectorToSlide(pptSlide, svgElement, elementStyle, slideContext
 
         // Skip connector if stroke width is 0
         if (strokeWidth <= 0) {
-            console.log('   ⚠️ Connector has stroke-width=0, skipping');
             return false;
         }
 
@@ -615,32 +538,26 @@ function addSvgConnectorToSlide(pptSlide, svgElement, elementStyle, slideContext
  */
 function processSvgElement(pptSlide, element, slideContext) {
     try {
-        console.log('   🔍 >>>>>>>>>>>>>>>>>>>>>>>>>>--- >>  Processing SVG element with classes:', element.className);
 
         const svgElement = element.querySelector('svg');
         if (!svgElement) {
-            console.log('   ❌ No SVG element found');
             return false;
         }
 
         // Log SVG properties for debugging
         const viewBox = svgElement.getAttribute('viewBox');
         const pathElements = svgElement.querySelectorAll('path');
-        console.log(`   📊 SVG info: viewBox=${viewBox}, paths=${pathElements.length}`);
 
         // Determine SVG type based on parent classes
         const isConnector = element.classList.contains('sli-svg-connector');
         const isCustomShape = element.classList.contains('custom-shape') || element.id === 'custGeom';
 
         if (isConnector) {
-            console.log('   🔗 Processing as connector');
             return addSvgConnectorToSlide(pptSlide, svgElement, element.style, slideContext);
         }
         else if (isCustomShape) {
-            console.log('   🎨 Processing as custom shape');
             return addSvgToSlide(pptSlide, svgElement, element.style, slideContext);
         } else {
-            console.log('   🎨 Processing as default custom shape');
             return addSvgToSlide(pptSlide, svgElement, element.style, slideContext);
         }
 

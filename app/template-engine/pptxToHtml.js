@@ -2,7 +2,7 @@ const { DOMParser, XMLSerializer } = require("@xmldom/xmldom");
 const xml2js = require("xml2js");
 const path = require("path");
 const { posix } = require("path");
-const fs = require("fs").promises; 
+const fs = require("fs").promises;
 
 const pptBackgroundColors = require("../pptx-To-Html-styling/pptBackgroundColors.js");
 const pptTextAllInfo = require("../pptx-To-Html-styling/pptTextAllInfo.js");
@@ -307,6 +307,10 @@ class pptxToHtml {
         let slideLayoutBg
         if (slideBg === "#000000" || !slideBg) {
           slideLayoutBg = await pptLayoutBackgroundColors.getLayoutBackgroundColor(layoutXML, themeXML, layoutRelationship, masterXML, this);
+
+          if (!slideLayoutBg.backgroundCSS) {
+            slideLayoutBg = { backgroundCSS: "#ffffff" }; // Treat as no background if CSS is missing or empty
+          }
         }
 
         if (slideBg === "#000000" || slideBg == "") {
@@ -319,7 +323,7 @@ class pptxToHtml {
         let htmlContent = '';
 
         if (parseInt(flag) === 1) {
-          htmlContent = `<div class="sli-slide"
+          htmlContent = `<div class="sli-slide" id="sli-slide"
             data-original-width="${slideSize.width}"
             data-original-height="${slideSize.height}"
             data-slide-xml="${slidePath}"
@@ -328,7 +332,7 @@ class pptxToHtml {
            width:${slideSize.width}px;
            height:${slideSize.height}px;">`;
         } else {
-          htmlContent = `<div class="sli-slide"
+          htmlContent = `<div class="sli-slide" id="sli-slide"
           data-original-width="${slideSize.width}"
           data-original-height="${slideSize.height}"
           data-slide-xml="${slidePath}"
@@ -551,7 +555,6 @@ class pptxToHtml {
           const tcArray = table?.["a:graphic"]?.[0]?.["a:graphicData"]?.[0]?.["a:tbl"]?.[0]?.["a:tr"]?.[0]?.["a:tc"] || [];
           tcArray.forEach((cell, idx) => {
             const algn = cell?.["a:txBody"]?.[0]?.["a:p"]?.[0]?.["a:pPr"]?.[0]?.["$"]?.algn;
-            console.log(`Cell ${idx} alignment:`, algn);
           });
         });
         // Process pictures and SVGs
@@ -635,11 +638,7 @@ class pptxToHtml {
           const blipNode = picNode?.["p:blipFill"]?.[0]?.["a:blip"]?.[0];
           const svgContent = await this.getSVGContent(blipNode, relationshipsXML);
 
-          console.log("     theme File **** -- > ", themeXML);
-
-          const imageInfo = await this.getImageFromPicture(picNode, slidePath, relationshipsXML, themeXML);
-
-          console.log(" @@@@@@##---##@@@@@@@ Extracting image from picture node... -->", imageInfo);
+          const imageInfo = await this.getImageFromPicture(picNode, slidePath, relationshipsXML, themeXML, masterXML);
 
           const matchingNode = nodes.find(node => node.name === nodeName);
           // Fetch imgProps, blurEffect, and blurAmount
@@ -731,12 +730,11 @@ class pptxToHtml {
               // Add outer shadow effect
               if (imageInfo.shadow.shadow) {
                 const { blur, offsetX, offsetY, spread, color } = imageInfo.shadow.shadow;
-    shadows.push(`${offsetX.toFixed(2)}px ${offsetY.toFixed(2)}px ${blur.toFixed(2)}px ${(spread || 0).toFixed(2)}px ${color}`);
+                shadows.push(`${offsetX.toFixed(2)}px ${offsetY.toFixed(2)}px ${blur.toFixed(2)}px ${(spread || 0).toFixed(2)}px ${color}`);
               }
 
               if (shadows.length > 0) {
                 boxShadowCSS = `box-shadow: ${shadows.join(", ")};`;
-                console.log("Generated Shadow CSS:", boxShadowCSS);
               }
             }
             const finalFilter = imgcss.blurAmount ? `filter: blur(${imgcss.blurAmount}px) contrast(${imgcss.contrastValue || 1});` : combinedFilter;
@@ -751,7 +749,6 @@ class pptxToHtml {
             if (imageInfo.hyperlink) {
               hyperlinkOpen = `<a href="${imageInfo.hyperlink}" style="display:block; width:100%; height:100%; position:absolute; top:0; left:0;">`;
               hyperlinkClose = "</a>";
-              console.log("✅ Wrapping image in anchor tag:", imageInfo.hyperlink);
             }
 
             // ✅ SIMPLE ONCLICK APPROACH - No anchor tag needed
@@ -760,10 +757,6 @@ class pptxToHtml {
 
             // ✅ Simplified - show image first, then add cropping
             let imgStyle = `position:absolute; width:100%; height:100%; object-fit: ${objectFit}; opacity:${imgcss.opacity}; pointer-events: none; ${finalFilter}`;
-
-            console.log("Image:", imageInfo.src);
-            console.log("Has cropping?", imageInfo.hasCropping);
-            console.log("Cropping data:", imageInfo.cropping);
 
             if (imageInfo.hasCropping && imageInfo.cropping) {
               const crop = imageInfo.cropping;
@@ -873,7 +866,6 @@ class pptxToHtml {
 
       // Look for slide layout relationship
       if (attrs.Type === "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout") {
-        // console.log("Found slide layout relationship:", attrs.Target);
         return attrs.Target; // Returns something like "../slideLayouts/slideLayout2.xml"
       }
     }
@@ -898,7 +890,6 @@ class pptxToHtml {
 
       // Look for slide master relationship
       if (attrs.Type === "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster") {
-        // console.log("Found slide master relationship:", attrs.Target);
         return attrs.Target; // Returns something like "../slideMasters/slideMaster1.xml"
       }
     }

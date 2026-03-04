@@ -27,9 +27,8 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
     let textAlign = 'left';
     let justifyContent = "flex-start";
     let textbgColor = '';
-    let getAlignItem = '';
+    let getAlignItem = 'flex-start'; // horizontal (align-items on cross-axis) — derived from algn
     const textKind = resolveThemeFont.getTextKindFromShape(shapeNode); // 'title' | 'body' | 'other'
-    // console.log("font type =====",textKind);
     let txtPhPath = shapeNode?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"];
 
     let txtPhValues = [];
@@ -47,9 +46,11 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
     const position = pptTextAllInfo.getPositionFromShape(shapeNode);
     const rotation = pptTextAllInfo.getRotation(shapeNode);
     const placeholderType = shapeNode?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0]?.["$"]?.type;
-    getAlignItem = getAlignItemsFromPptx(shapeNode, layoutXML, placeholderType);
+    // justifyContent (vertical) comes from bodyPr anchor (t/ctr/b)
+    justifyContent = getJustifyContentFromAnchor(shapeNode, layoutXML, placeholderType);
+    // getAlignItem (horizontal) will be derived from textAlign after paragraph processing — see below
     // Get font size with proper flag parameter
-    const fontSize = pptTextAllInfo.getFontSize(shapeNode,masterXML);
+    const fontSize = pptTextAllInfo.getFontSize(shapeNode, masterXML);
     // DEBUG: Add comprehensive font size debugging
     const allFontSizes = pptTextAllInfo.getAllFontSizesInShape(shapeNode);
     const shapeName = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvPr"]?.[0]?.["$"]?.name;
@@ -63,13 +64,13 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
 
     try {
         const bodyPr = shapeNode?.["p:txBody"]?.[0]?.["a:bodyPr"]?.[0];
-        
+
         const emuToPixels = (emuValue) => {
             if (!emuValue) return 0;
             const emu = parseInt(emuValue, 10);
             return emu / getEMUDivisor(); // 12700
         };
-    
+
         // First try to get margins from the shape itself
         if (bodyPr && bodyPr["$"]) {
             const attributes = bodyPr["$"];
@@ -78,11 +79,11 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
             marginBottom = Math.round(emuToPixels(attributes.bIns));
             marginLeft = Math.round(emuToPixels(attributes.lIns));
         }
-    
+
         // ✅ NEW: If margins are still 0, inherit from layout/master
         if (marginLeft === 0 && marginRight === 0 && marginTop === 0 && marginBottom === 0) {
             const placeholderType = shapeNode?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0]?.["$"]?.type;
-            
+
             // Try layout first
             if (placeholderType && layoutXML) {
                 const layoutShape = findPlaceholderInLayout(placeholderType, layoutXML);
@@ -94,22 +95,21 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
                         marginRight = Math.round(emuToPixels(layoutAttrs.rIns)) || marginRight;
                         marginBottom = Math.round(emuToPixels(layoutAttrs.bIns)) || marginBottom;
                         marginLeft = Math.round(emuToPixels(layoutAttrs.lIns)) || marginLeft;
-                        
-                        console.log(`📦 Layout margins: T=${marginTop}px, R=${marginRight}px, B=${marginBottom}px, L=${marginLeft}px`);
+
                     }
                 }
             }
-    
+
             // ✅ NEW: If still 0, try master
             if (marginLeft === 0 && marginRight === 0 && marginTop === 0 && marginBottom === 0) {
                 if (masterXML && placeholderType) {
                     const masterShapes = masterXML?.["p:sldMaster"]?.[0]?.["p:cSld"]?.[0]?.["p:spTree"]?.[0]?.["p:sp"] || [];
-                    
+
                     const masterShape = masterShapes.find(shape => {
                         const phType = shape?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0]?.["$"]?.type;
                         return phType === placeholderType;
                     });
-    
+
                     if (masterShape) {
                         const masterBodyPr = masterShape?.["p:txBody"]?.[0]?.["a:bodyPr"]?.[0];
                         if (masterBodyPr && masterBodyPr["$"]) {
@@ -118,8 +118,7 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
                             marginRight = Math.round(emuToPixels(masterAttrs.rIns)) || marginRight;
                             marginBottom = Math.round(emuToPixels(masterAttrs.bIns)) || marginBottom;
                             marginLeft = Math.round(emuToPixels(masterAttrs.lIns)) || marginLeft;
-                            
-                            console.log(`📦 Master margins: T=${marginTop}px, R=${marginRight}px, B=${marginBottom}px, L=${marginLeft}px`);
+
                         }
                     }
                 }
@@ -163,31 +162,28 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
                     const pointsValue = parseInt(lineSpacingPts) / 100;
                     emptyParagraphLineHeight = Math.round(pointsValue) + 'px';
                 } else if (lineSpacingPct) {
-                    let effectiveFontSize = fontSize;
-                    if (endParaRPr?.["$"]?.sz) {
-                        effectiveFontSize = parseInt(endParaRPr["$"].sz) / 100;
-                    }
+                    // Use unitless ratio — CSS best practice, avoids pixel-rounding issues
                     const pctVal = parseInt(lineSpacingPct);
-                    const lineHeightPoints = (pctVal / 100000) * effectiveFontSize;
-                    const minLineHeight = effectiveFontSize * 1.1;
-                    const finalLineHeight = Math.max(lineHeightPoints, minLineHeight);
-                    emptyParagraphLineHeight = Math.round(finalLineHeight) + 'px';
+                    const lineHeightRatio = pctVal / 100000;
+                    emptyParagraphLineHeight = lineHeightRatio.toFixed(2); // unitless, e.g. "1.00"
                 }
             }
 
+            // align-items (horizontal cross-axis) is derived from paragraph algn (l/ctr/r)
+            // justify-content (vertical main-axis) comes from bodyPr anchor — already set above
             switch (textAlign) {
                 case "center":
-                    justifyContent = "center";
+                    getAlignItem = "center";
                     break;
                 case "right":
-                    justifyContent = "flex-end";
+                    getAlignItem = "flex-end";
                     break;
                 case "justify":
-                    justifyContent = "space-between";
+                    getAlignItem = "flex-start"; // no cross-axis equivalent for justify
                     break;
                 case "left":
                 default:
-                    justifyContent = "flex-start";
+                    getAlignItem = "flex-start";
                     break;
             }
 
@@ -268,19 +264,21 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
 
             textAlign = getTextAlignmentFromParagraph(pPrNode, shapeNode, placeholderType, layoutXML);
 
+            // align-items (horizontal cross-axis) is derived from paragraph algn (l/ctr/r)
+            // justify-content (vertical main-axis) comes from bodyPr anchor — already set above
             switch (textAlign) {
                 case "center":
-                    justifyContent = "center";
+                    getAlignItem = "center";
                     break;
                 case "right":
-                    justifyContent = "flex-end";
+                    getAlignItem = "flex-end";
                     break;
                 case "justify":
-                    justifyContent = "space-between";
+                    getAlignItem = "flex-start"; // no cross-axis equivalent for justify
                     break;
                 case "left":
                 default:
-                    justifyContent = "flex-start";
+                    getAlignItem = "flex-start";
                     break;
             }
 
@@ -304,27 +302,16 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
                     const pointsValue = parseInt(lineSpacingPts) / 100;
                     lineHeight = Math.round(pointsValue) + 'px';
                 } else if (lineSpacingPct) {
-                    let effectiveFontSizeInPoints = fontSize;
-
-                    const run = runs[0];
-                    const runRPr = run?.["a:rPr"]?.[0];
-                    const runFontSize = runRPr?.["$"]?.sz;
-                    if (runFontSize) {
-                        effectiveFontSizeInPoints = parseInt(runFontSize) / 100;
-                    }
-
+                    // Use unitless ratio — CSS best practice, avoids pixel-rounding issues
+                    // e.g. spcPct val="100000" → 1.00 (100%), val="150000" → 1.50 (150%)
                     const pctVal = parseInt(lineSpacingPct);
-                    const lineHeightPoints = (pctVal / 100000) * effectiveFontSizeInPoints;
-
-                    const minLineHeight = effectiveFontSizeInPoints * 1.1;
-                    const finalLineHeight = Math.max(lineHeightPoints, minLineHeight);
-
-                    lineHeight = Math.round(finalLineHeight) + 'px';
+                    const lineHeightRatio = pctVal / 100000;
+                    lineHeight = lineHeightRatio.toFixed(2); // unitless, e.g. "1.00"
                 } else {
                     const defaultLineHeightPx = Math.round(fontSize * 1.2);
                     lineHeight = defaultLineHeightPx + 'px';
                 }
-            } 
+            }
             else {
                 const defaultLineHeightPx = Math.round(fontSize * 1.2);
                 lineHeight = defaultLineHeightPx + 'px';
@@ -416,35 +403,35 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
                 if (hasContent) {
                     const isFirstParagraph = paragraphIndex === 0;
                     const isLastParagraph = paragraphIndex === paragraphs.length - 1;
-                
+
                     // Extract first-line indent
                     let textIndent = 0;
                     const indentAttr = pPrNode?.["$"]?.indent;
                     if (indentAttr) {
                         textIndent = Math.round(parseInt(indentAttr) / getEMUDivisor());
                     }
-                
+
                     // Extract left margin from paragraph (ADDITIONAL to text box margin)
                     let paragraphMarginLeft = 0;
                     let paragraphMarginTop = 0;
                     let paragraphMarginRight = 0;
                     let paragraphMarginBottom = 0;
-                    
+
                     const marLAttr = pPrNode?.["$"]?.marL;
-                    
+
                     if (marLAttr) {
                         // Direct margin from slide
                         paragraphMarginLeft = Math.round(parseInt(marLAttr) / getEMUDivisor());
                     } else {
                         // 🔧 FIX: Inherit from master/layout if missing (returns all 4 margins)
                         const inheritedMargins = getInheritedParagraphMargin(
-                            shapeNode, 
-                            layoutXML, 
-                            masterXML, 
+                            shapeNode,
+                            layoutXML,
+                            masterXML,
                             placeholderType,
                             pPrNode?.["$"]?.lvl ? parseInt(pPrNode["$"].lvl) : 0
                         );
-                        
+
                         if (inheritedMargins !== null) {
                             paragraphMarginLeft = inheritedMargins.left || 0;
                             paragraphMarginTop = inheritedMargins.top || 0;
@@ -452,7 +439,7 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
                             paragraphMarginBottom = inheritedMargins.bottom || 0;
                         }
                     }
-                    
+
                     const hasMargin = paragraphMarginLeft > 0;
                     if (hasMargin && runTexts.length > 0) {
                         // Strip leading &nbsp; entities AND regular spaces from first run only
@@ -463,21 +450,21 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
                     let effectiveMarginBottom;
                     let effectiveMarginLeft;
                     let effectiveMarginRight;
-                
-                    if (isFirstParagraph) {                        
+
+                    if (isFirstParagraph) {
                         // First paragraph: paragraph spacing + all paragraph-specific margins
                         effectiveMarginTop = paragraphMarginTop;
                         effectiveMarginLeft = paragraphMarginLeft;  // Don't add marginLeft (text box margin)
                         effectiveMarginRight = paragraphMarginRight;  // Add paragraph-specific right margin
                         effectiveMarginBottom = 0; // Will be set below if last paragraph
-                    } else {                        
+                    } else {
                         // Subsequent paragraphs: paragraph spacing + all paragraph-specific margins
                         effectiveMarginTop = spaceBefore + paragraphMarginTop;
                         effectiveMarginLeft = paragraphMarginLeft;
                         effectiveMarginRight = paragraphMarginRight;
                         effectiveMarginBottom = 0;
                     }
-                
+
                     if (isLastParagraph) {
                         effectiveMarginBottom = spaceAfter + paragraphMarginBottom;
                     } else {
@@ -485,7 +472,7 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
                     }
 
                     const paragraphStyle = `text-align: ${textAlign}; line-height: ${lineHeight}; margin-left: ${effectiveMarginLeft}px; margin-right: ${effectiveMarginRight}px; margin-top: ${effectiveMarginTop}px; margin-bottom: ${effectiveMarginBottom}px;${textIndent !== 0 ? ` text-indent: ${textIndent}px;` : ''}`;
-                
+
                     htmlContent.push(`<p style="${paragraphStyle}">${runTexts.join('')}</p>`);
                 }
                 else if (runTexts.length > 0 || lineBreaks.length > 0) {
@@ -549,7 +536,7 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
         text: text || " ",
         txtPhValues,
         textAlign: textAlign,
-        // justifyContent: justifyContent,
+        justifyContent: justifyContent,
         fontSize: fontSize,
         textbgColor: textbgColor || '',
         fontColor: fontColor,
@@ -566,30 +553,26 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
 }
 
 
-function getAlignItemsFromPptx(shapeNode, layoutXML, placeholderType) {
+// Returns justify-content value (vertical main-axis) from bodyPr anchor attribute.
+// With flex-direction:column, justify-content controls VERTICAL positioning (t/ctr/b).
+function getJustifyContentFromAnchor(shapeNode, layoutXML, placeholderType) {
 
     const anchor = shapeNode?.["p:txBody"]?.[0]?.["a:bodyPr"]?.[0]?.["$"]?.anchor;
-    let txtalg = '';
     if (anchor) {
-        txtalg = convertAnchorToFlexAlign(anchor);
-
-        return txtalg;
+        return convertAnchorToFlexJustify(anchor);
     }
 
     if (placeholderType && layoutXML) {
         const layoutShape = findPlaceholderInLayout(placeholderType, layoutXML);
-
         if (layoutShape) {
             const layoutAnchor = layoutShape?.["p:txBody"]?.[0]?.["a:bodyPr"]?.[0]?.["$"]?.anchor;
-
             if (layoutAnchor) {
-                let AnchorToFlexAlign = convertAnchorToFlexAlign(layoutAnchor);
-                return AnchorToFlexAlign;
+                return convertAnchorToFlexJustify(layoutAnchor);
             }
         }
     }
 
-    return "flex-start";
+    return "flex-start"; // default: top
 }
 
 // NEW: Helper method to detect empty paragraphs
@@ -822,11 +805,11 @@ function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight,
     const hasHyperlink = runRPrNode?.["a:hlinkClick"];
     let hyperlinkStart = '';
     let hyperlinkEnd = '';
-    
+
     if (hasHyperlink) {
         const tooltip = hasHyperlink[0]?.["$"]?.tooltip || '';
         const rId = hasHyperlink[0]?.["$"]?.["r:id"] || '';
-        
+
         // You'll need to resolve rId to actual URL from slide relationships
         hyperlinkStart = `<a href="#" title="${tooltip}" style="color: blue; text-decoration: underline;">`;
         hyperlinkEnd = '</a>';
@@ -874,18 +857,23 @@ function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight,
 
     if (fontFamily?.startsWith?.('+')) fontFamily = 'Calibri';
 
-    let fontWeight = runRPrNode?.["$"]?.b;
+    // Parse fontWeight from XML string to integer (XML attributes are strings: "0" or "1")
+    const fontWeightRaw = runRPrNode?.["$"]?.b;
+    let fontWeight = fontWeightRaw !== undefined ? parseInt(fontWeightRaw, 10) : null;
 
-    if (!fontWeight && fallbackTxtWeight == 1) {
-        fontWeight = fallbackTxtWeight;
-    }
-    if (fontWeight == 1) {
+    if (fontWeight === 1) {
+        // Explicit bold from run properties
         fontWeight = "bold";
-    } else if (!fontWeight && fontFamily == "Helvetica Neue Ltd Std-Bd") {
-        fontWeight = "bold";
-    } else if (!fontWeight == 0 && fontFamily == "Helvetica Neue Ltd Std-Bd") {
+    } else if (fontWeight === 0 && fontFamily === "Helvetica Neue Ltd Std-Bd") {
+        // Explicit non-bold override — switch to regular variant
         fontFamily = "Helvetica Neue Ltd Std";
         fontWeight = "normal";
+    } else if (fontWeight === null && fallbackTxtWeight == 1) {
+        // No run-level weight set — inherit from lstStyle fallback
+        fontWeight = "bold";
+    } else if (fontWeight === null && fontFamily === "Helvetica Neue Ltd Std-Bd") {
+        // Font name implies bold — apply bold
+        fontWeight = "bold";
     } else {
         fontWeight = "normal";
     }
@@ -1029,7 +1017,7 @@ function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight,
         const baselineValue = parseInt(baseline);
         // PowerPoint uses 30000 = 30% for typical superscript
         const percent = baselineValue / 100000; // Convert to decimal
-        
+
         if (baselineValue > 0) {
             // Superscript: negative top offset, smaller font
             const topOffset = -(fontSize * 0.4); // More pronounced lift
@@ -1073,11 +1061,21 @@ function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight,
         `line-height: ${lineHeight}`
     ].filter(s => s).join('; ');
 
+    const isWhitespaceOnly = textValue.trim() === "" || textValue === " ";
+
+    if (isWhitespaceOnly) {
+
+        const spaceStyles = styles.replace('white-space: pre-wrap', 'white-space: normal');
+        return `<span class="span-txt" ${gradientDataAttrs} originalEA="${originalEA}" originCS="${originCS}" originSYM="${originSYM}" latinFont="${latinFont}" originalTxtColor="${originalTxtColor}" originalLumMod="${originalLumMod}" originalLumOff="${originalLumOff}" alpha="${opacity}" cap="${capValue || ''}" style="${spaceStyles};">&nbsp; </span>`;
+    }
+
     // ✅ CRITICAL FIX: Preserve leading spaces (convert to &nbsp;)
-    const preservedText = textValue.replace(/^ +/, match => '&nbsp;'.repeat(match.length));
+    const preservedText = textValue
+        .replace(/^ +/, match => '&nbsp;'.repeat(match.length))
+        .replace(/ +$/, match => '&nbsp;'.repeat(match.length));
 
     return `<span class="span-txt" ${gradientDataAttrs} originalEA="${originalEA}" originCS="${originCS}" originSYM="${originSYM}" latinFont="${latinFont}" originalTxtColor="${originalTxtColor}" originalLumMod="${originalLumMod}" originalLumOff="${originalLumOff}" alpha="${opacity}" cap="${capValue || ''}" style="${styles};">${preservedText}</span>`;
-    
+
 }
 
 // NEW: Extract text gradient fill
@@ -1306,13 +1304,27 @@ function generateListStyles(bulletInfo) {
     return styles.trim();
 }
 
-function convertAnchorToFlexAlign(anchor) {
+// Maps bodyPr anchor → justify-content value for flex-direction:column containers
+// (vertical main-axis): t=top, ctr=center, b=bottom
+function convertAnchorToFlexJustify(anchor) {
     switch (anchor) {
         case "ctr": return "center";
         case "b": return "flex-end";
         case "t": return "flex-start";
         case "just": return "space-between";
         case "dist": return "space-around";
+        default: return "flex-start";
+    }
+}
+
+// Maps paragraph algn → align-items value for flex-direction:column containers
+// (horizontal cross-axis): l=left, ctr=center, r=right
+function convertAlignToFlexItems(algn) {
+    switch (algn) {
+        case "ctr": return "center";
+        case "r": return "flex-end";
+        case "just": return "flex-start"; // no direct cross-axis equivalent
+        case "l":
         default: return "flex-start";
     }
 }
@@ -1490,9 +1502,11 @@ function getInheritedPropertiesFromShape(shapeNode, level = 0) {
     try {
         // Navigate: shapeNode -> p:txBody -> a:lstStyle -> a:lvl1pPr (or lvl2pPr, etc.) -> a:defRPr
         const txBody = shapeNode?.["p:txBody"]?.[0];
+
         if (!txBody) return null;
 
         const lstStyle = txBody?.["a:lstStyle"]?.[0];
+
         if (!lstStyle) return null;
 
         // Try to get the level from the first paragraph if available
@@ -1679,12 +1693,11 @@ function extractTextOutline(shapeNode, themeXML, clrMap) {
             if (widthEMU) {
                 outlineInfo.width = Math.round(parseInt(widthEMU) / getEMUDivisor());
             } else {
-                outlineInfo.width = 1;
+                outlineInfo.width = 0;
             }
 
             // Check for gradient fill first
             const gradFill = lnNode?.["a:gradFill"]?.[0];
-            // console.log("gradFill=======",gradFill);
 
             if (gradFill) {
                 // Extract gradient stops
@@ -1698,7 +1711,6 @@ function extractTextOutline(shapeNode, themeXML, clrMap) {
 
                     if (schemeClr) {
                         const schemeVal = schemeClr["$"]?.val;
-                        console.log(`Scheme ${schemeVal} resolved to:`, colorHelper.resolveThemeColorHelper(schemeVal, themeXML, null));
                         outlineInfo.color = colorHelper.resolveThemeColorHelper(schemeVal, themeXML, null);
 
                         // Apply any color modifications
@@ -1729,7 +1741,6 @@ function extractTextOutline(shapeNode, themeXML, clrMap) {
                 if (outlineInfo.hasClipPath) {
                     // Negative inset to prevent clip-path from cutting off the border
                     const inset = -outlineInfo.width;
-                    console.log("outlineInfo.borderRadius", outlineInfo.borderRadius);
                     outlineInfo.css = `
                         border: ${outlineInfo.width}px ${outlineInfo.style} ${outlineInfo.color}; 
                         border-radius: ${outlineInfo.borderRadius}px;
@@ -1737,6 +1748,7 @@ function extractTextOutline(shapeNode, themeXML, clrMap) {
                     `.replace(/\s+/g, ' ').trim();
                 } else {
                     outlineInfo.css = `border: ${outlineInfo.width}px ${outlineInfo.style} ${outlineInfo.color}; border-radius: ${outlineInfo.borderRadius}px;`;
+
                 }
             }
 
@@ -1762,7 +1774,6 @@ function extractTextOutline(shapeNode, themeXML, clrMap) {
             const schemeClr = lnRef?.["a:schemeClr"]?.[0];
             if (schemeClr) {
                 const schemeVal = schemeClr["$"]?.val;
-                console.log(`Scheme ${schemeVal} resolved to:`, colorHelper.resolveThemeColorHelper(schemeVal, themeXML, null));
                 outlineInfo.color = colorHelper.resolveThemeColorHelper(schemeVal, themeXML, null);
 
                 const shade = schemeClr["a:shade"]?.[0]?.["$"]?.val;
@@ -1791,7 +1802,7 @@ function extractTextOutline(shapeNode, themeXML, clrMap) {
                 '3': 3
             };
 
-            outlineInfo.width = lineWidths[idx] || 2;
+            outlineInfo.width = lineWidths[idx] || 0;
 
             if (outlineInfo.width > 0) {
                 // NEW: Adjust clip-path to show border
@@ -1805,6 +1816,7 @@ function extractTextOutline(shapeNode, themeXML, clrMap) {
                     `.replace(/\s+/g, ' ').trim();
                 } else {
                     outlineInfo.css = `border: ${outlineInfo.width}px ${outlineInfo.style} ${outlineInfo.color}; border-radius: ${outlineInfo.borderRadius}px;`;
+
                 }
             }
 
@@ -1979,7 +1991,7 @@ function extractColorFromNode(solidFill, themeXML) {
 
 function getInheritedParagraphMargin(shapeNode, layoutXML, masterXML, placeholderType, level) {
     const divisor = 12700;
-    
+
     // Initialize return object with all four margins
     let margins = {
         left: null,
@@ -1987,7 +1999,7 @@ function getInheritedParagraphMargin(shapeNode, layoutXML, masterXML, placeholde
         right: null,
         bottom: null
     };
-    
+
     // 🔧 FIX 1: Check shape's own lstStyle FIRST (before layout/master)
     const lstStyle = shapeNode?.["p:txBody"]?.[0]?.["a:lstStyle"]?.[0];
     if (lstStyle) {
@@ -1995,16 +2007,15 @@ function getInheritedParagraphMargin(shapeNode, layoutXML, masterXML, placeholde
         const levelPr = lstStyle[levelKey]?.[0];
         const marL = levelPr?.["$"]?.marL;
         if (marL) {
-            console.log(`Found marL in shape lstStyle: ${marL}`);
             margins.left = Math.round(parseInt(marL) / divisor);
             return margins; // Return with left margin from lstStyle
         }
     }
-    
+
     // 🔧 FIX 2: For ctrTitle, check BOTH titleStyle AND bodyStyle in master
     if (masterXML && (placeholderType === "ctrTitle" || placeholderType === "title")) {
         const txStyles = masterXML?.["p:sldMaster"]?.[0]?.["p:txStyles"]?.[0];
-        
+
         if (txStyles) {
             // Try titleStyle first
             const titleStyle = txStyles["p:titleStyle"]?.[0];
@@ -2012,30 +2023,28 @@ function getInheritedParagraphMargin(shapeNode, layoutXML, masterXML, placeholde
                 const levelKey = `a:lvl${level + 1}pPr`;
                 const levelPr = titleStyle?.[levelKey]?.[0];
                 const marL = levelPr?.["$"]?.marL;
-                
+
                 if (marL) {
-                    // console.log(`Found marL in master titleStyle: ${marL}`);
                     margins.left = Math.round(parseInt(marL) / divisor);
                     return margins;
                 }
             }
-            
+
             // 🔧 NEW: Also check bodyStyle for ctrTitle (some templates store it there)
             const bodyStyle = txStyles["p:bodyStyle"]?.[0];
             if (bodyStyle) {
                 const levelKey = `a:lvl${level + 1}pPr`;
                 const levelPr = bodyStyle?.[levelKey]?.[0];
                 const marL = levelPr?.["$"]?.marL;
-                
+
                 if (marL) {
-                    // console.log(`Found marL in master bodyStyle: ${marL}`);
                     margins.left = Math.round(parseInt(marL) / divisor);
                     return margins;
                 }
             }
         }
     }
-    
+
     // Try layout (for non-title placeholders)
     if (placeholderType && layoutXML) {
         const layoutShape = findPlaceholderInLayout(placeholderType, layoutXML);
@@ -2046,46 +2055,40 @@ function getInheritedParagraphMargin(shapeNode, layoutXML, masterXML, placeholde
                 const levelPr = layoutLstStyle[levelKey]?.[0];
                 const marL = levelPr?.["$"]?.marL;
                 if (marL) {
-                    // console.log(`Found marL in layout: ${marL}`);
                     margins.left = Math.round(parseInt(marL) / divisor);
                     return margins;
                 }
             }
         }
     }
-    
+
     // 🔧 NEW FIX: Use bodyPr margins (lIns, tIns, rIns, bIns) as fallback
     const bodyPr = shapeNode?.["p:txBody"]?.[0]?.["a:bodyPr"]?.[0];
     if (bodyPr?.["$"]) {
         const attrs = bodyPr["$"];
-        
+
         if (attrs.lIns) {
             margins.left = Math.round(parseInt(attrs.lIns) / divisor);
-            // console.log(`Using lIns as fallback margin: ${attrs.lIns} -> ${margins.left}px`);
         }
-        
+
         if (attrs.tIns) {
             margins.top = Math.round(parseInt(attrs.tIns) / divisor);
-            // console.log(`Using tIns as fallback margin: ${attrs.tIns} -> ${margins.top}px`);
         }
-        
+
         if (attrs.rIns) {
             margins.right = Math.round(parseInt(attrs.rIns) / divisor);
-            // console.log(`Using rIns as fallback margin: ${attrs.rIns} -> ${margins.right}px`);
         }
-        
+
         if (attrs.bIns) {
             margins.bottom = Math.round(parseInt(attrs.bIns) / divisor);
-            // console.log(`Using bIns as fallback margin: ${attrs.bIns} -> ${margins.bottom}px`);
         }
-        
+
         // Return if any margin was found
         if (margins.left !== null || margins.top !== null || margins.right !== null || margins.bottom !== null) {
             return margins;
         }
     }
-    
-    console.log(`No marL or bodyPr margins found for placeholder type: ${placeholderType}, level: ${level}`);
+
     return null;
 }
 

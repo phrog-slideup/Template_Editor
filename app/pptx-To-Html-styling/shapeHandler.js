@@ -93,8 +93,7 @@ class ShapeHandler {
             
             for (const cxnSpNode of lineShapeTag) {
                 try {
-                    const connectorHtml = await getLineConnectorHandler.convertConnectorToHTML(
-                        cxnSpNode, this.themeXML, this.clrMap, this.masterXML, this.layoutXML);
+                    const connectorHtml = await getLineConnectorHandler.convertConnectorToHTML(cxnSpNode, this.nodes, this.themeXML, this.clrMap, this.masterXML, this.layoutXML);
                     
                     if (typeof connectorHtml === 'string' && connectorHtml.trim()) {
                         allHtmlElements.push(connectorHtml);

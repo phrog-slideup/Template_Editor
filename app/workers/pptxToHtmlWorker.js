@@ -85,7 +85,6 @@ parentPort.on("message", async (taskData) => {
     const taskId = generateUniqueTaskId();
     const startTime = Date.now();
     let extractor = null;
-    let parser = null;
 
     try {
         const { fileBuffer, filePath, flag, userId, sessionId } = taskData;
@@ -93,51 +92,31 @@ parentPort.on("message", async (taskData) => {
         // Input validation
         if (!fileBuffer) throw new Error('fileBuffer is required');
         if (!filePath) throw new Error('filePath is required');
+        // if (flag === undefined || flag === null) throw new Error('flag parameter is required');
         if (!Buffer.isBuffer(fileBuffer) && !(fileBuffer instanceof Uint8Array)) {
             throw new Error('fileBuffer must be a Buffer or Uint8Array');
         }
-        if (fileBuffer.length === 0) {
-            throw new Error('fileBuffer is empty');
-        }
 
-        // ============================================================================
-        // CRITICAL FIX FOR RACE CONDITION:
-        // Use unique file name per task to prevent collisions when multiple workers
-        // process files with the same original name simultaneously
-        // ============================================================================
-        const originalFileName = `${path.basename(filePath, '.pptx')}_${taskId}.pptx`;
-        
-        // console.log(`[${taskId}] Original file: ${filePath}`);
-        // console.log(`[${taskId}] Task-isolated name: ${originalFileName}`);
+        console.log(`[${taskId}] Starting PPTX to HTML conversion for user:${userId || 'unknown'}, session:${sessionId || 'unknown'}, file:${path.basename(filePath)}`);
 
         // Create parser with task isolation
-        parser = new pptxParser(fileBuffer);
+        const parser = new pptxParser(fileBuffer);
         const unzippedFiles = await parser.unzip();
-        
-        if (!unzippedFiles) {
-            throw new Error('Failed to unzip PPTX file - invalid or corrupted file');
-        }
+        if (!unzippedFiles) throw new Error('Failed to unzip PPTX file');
 
-        console.log(`[${taskId}] File extracted successfully`);
-
-        // Create extractor with isolated filename to prevent race conditions
+        // Use unique file name for this task to prevent collision
+        const originalFileName = `${path.basename(filePath, '.pptx')}_${taskId}.pptx`;
         extractor = new pptxToHtml(unzippedFiles, originalFileName);
         overrideGetImageFromPicture(extractor);
 
         const slides = await extractor.convertAllSlidesToHTML(flag);
-        
-        // Validate conversion result
-        if (!slides) {
-            throw new Error('Conversion returned null or undefined');
-        }
-        if (!Array.isArray(slides)) {
-            throw new Error(`Conversion failed - expected array but got ${typeof slides}`);
-        }
-        if (slides.length === 0) {
-            throw new Error('Conversion resulted in zero slides - file may be empty or invalid');
+        if (!slides || !Array.isArray(slides)) {
+            throw new Error('Conversion failed - slides is not a valid array');
         }
 
         const processingTime = Date.now() - startTime;
+
+        console.log(`[${taskId}] Conversion successful in ${processingTime}ms, ${slides.length} slides`);
 
         parentPort.postMessage({
             success: true,
@@ -153,10 +132,7 @@ parentPort.on("message", async (taskData) => {
             processingDetails: {
                 uniqueTaskId: taskId,
                 originalFileName: filePath,
-                isolatedFileName: originalFileName,
-                bufferSize: fileBuffer.length,
-                raceConditionPrevented: true,
-                concurrentOperationSafe: true
+                isolatedFileName: originalFileName
             }
         });
 
@@ -177,16 +153,11 @@ parentPort.on("message", async (taskData) => {
         });
     } finally {
         try {
-            // Cleanup extractor and parser objects
+            // Only cleanup extractor object, not files
             if (extractor) {
                 if (typeof extractor.cleanup === 'function') extractor.cleanup();
                 if (typeof extractor.destroy === 'function') extractor.destroy();
                 extractor = null;
-            }
-            if (parser) {
-                if (typeof parser.cleanup === 'function') parser.cleanup();
-                if (typeof parser.destroy === 'function') parser.destroy();
-                parser = null;
             }
             if (global.gc) global.gc();
         } catch (cleanupError) {
@@ -237,5 +208,10 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 // Graceful shutdown
-parentPort.on("close", () => { });
-process.on('SIGTERM', () => process.exit(0));
+parentPort.on("close", () => {
+    // Silent close
+});
+
+process.on('SIGTERM', () => {
+    process.exit(0);
+});

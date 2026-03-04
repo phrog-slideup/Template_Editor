@@ -72,7 +72,6 @@ class masterHtml {
                                     '<div$1 style="visibility: hidden;">'
                                 );
                             }
-
                         }
 
                         if (shapeHtml && shapeHtml.trim() !== '') {

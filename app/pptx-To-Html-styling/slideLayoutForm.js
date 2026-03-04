@@ -47,7 +47,6 @@ class slideLayoutForm {
     }
 
     async createSlideLayoutForm(slideLayoutXML, themeXML, extractor, slidePath, slideRelXML, layoutRelationship, masterXML = null) {
-
         if (!slideLayoutXML) return "";
 
         // Extract color mapping similar to main slide processing
@@ -62,7 +61,7 @@ class slideLayoutForm {
         const tableNodes = slideLayoutXML?.["p:sldLayout"]?.["p:cSld"]?.[0]?.["p:spTree"]?.[0]?.["p:graphicFrame"] || [];
 
         let htmlContent = "";
-
+        
         // Create a ShapeHandler instance similar to main slide processing
         const shapeHandler = new ShapeHandler(themeXML, clrMap, this.nodes, extractor, this.layoutPath, this.layoutRelationship, 0);
 
@@ -358,7 +357,6 @@ class slideLayoutForm {
         const customGeometry = this.extractCustomGeometry(shape);
 
         if (customGeometry) {
-
             // Custom geometry detected, use convertShapeToHTML to convert it to HTML
             let shapeHtml = await shapeHandler.convertShapeToHTML(shape, themeXML, slidePath, this.masterXML);
 

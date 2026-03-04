@@ -14,7 +14,6 @@ function registerTextGradient(textContent, gradientData) {
     const key = textContent.substring(0, 50).trim();
     if (key) {
         textGradientRegistry.set(key, gradientData);
-        console.log(`📝 Registered gradient for text: "${key.substring(0, 20)}..."`);
     }
 }
 
@@ -23,7 +22,6 @@ function registerTextGradient(textContent, gradientData) {
  */
 function clearGradientMetadata() {
     textGradientRegistry.clear();
-    console.log('🧹 Cleared gradient metadata');
 }
 
 /**
@@ -83,14 +81,11 @@ function generateGradientFillXML(gradientData) {
 async function postProcessSlideXMLForGradients(slideXmlContent, slideIndex) {
     try {
         if (textGradientRegistry.size === 0) {
-            console.log(`   ℹ️  Slide ${slideIndex + 1}: No gradients to inject`);
             return slideXmlContent;
         }
 
         let modifiedXml = slideXmlContent;
         let gradientsInjected = 0;
-
-        console.log(`   🔍 Slide ${slideIndex + 1}: Processing ${textGradientRegistry.size} gradient texts...`);
 
         // For each registered gradient text
         for (const [textKey, gradientData] of textGradientRegistry.entries()) {
@@ -125,25 +120,12 @@ async function postProcessSlideXMLForGradients(slideXmlContent, slideIndex) {
                 if (gradientXml) {
                     matchCount++;
                     gradientsInjected++;
-                    console.log(`   ✅ Gradient #${gradientsInjected}: "${textKey.substring(0, 35)}..."`);
                     // Replace solidFill with gradFill, keep everything else
                     return beforeFill + gradientXml + afterFillAndRest;
                 }
                 
                 return fullMatch;
             });
-
-            if (matchCount > 0) {
-                console.log(`   📊 Replaced ${matchCount} instance(s) of "${textKey.substring(0, 25)}..."`);
-            } else {
-                console.log(`   ⚠️  No XML match for: "${textKey.substring(0, 35)}..."`);
-            }
-        }
-
-        if (gradientsInjected > 0) {
-            console.log(`   🎉 Slide ${slideIndex + 1}: ${gradientsInjected} gradients successfully injected`);
-        } else {
-            console.log(`   ⚠️  Slide ${slideIndex + 1}: No gradients were injected - check XML structure`);
         }
 
         return modifiedXml;

@@ -149,16 +149,16 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
                 o.underline = { style: 'sng' };
             }
             // ✅ ADD LINE HEIGHT EXTRACTION
-const lh = s.match(/line-height:\s*([^;]+)/i)?.[1]?.trim();
-if (lh) {
-    const lineHeightNum = parseFloat(lh);
-    if (!isNaN(lineHeightNum)) {
-        // PptxGenJS lineSpacing uses points, not percentage
-        // line-height 1.0 = 12pt, 1.2 = 14.4pt (for 12pt font)
-        // Store as-is for now, will calculate based on font size later
-        o.lineSpacingMultiplier = lineHeightNum;
-    }
-}
+            const lh = s.match(/line-height:\s*([^;]+)/i)?.[1]?.trim();
+            if (lh) {
+                const lineHeightNum = parseFloat(lh);
+                if (!isNaN(lineHeightNum)) {
+                    // PptxGenJS lineSpacing uses points, not percentage
+                    // line-height 1.0 = 12pt, 1.2 = 14.4pt (for 12pt font)
+                    // Store as-is for now, will calculate based on font size later
+                    o.lineSpacingMultiplier = lineHeightNum;
+                }
+            }
 
             return o;
         };
@@ -212,30 +212,30 @@ if (lh) {
                 if (li.tagName?.toLowerCase() !== 'li') continue;
 
                 const runs = extractRunsFromNode(li);
-                
+
                 const liAlign = (li.querySelector('p[style*="text-align"]')?.getAttribute('style') || '')
                     .match(/text-align:\s*([^;]+)/i)?.[1]?.trim().toLowerCase();
 
                 // ✅ Extract line spacing from <p> inside <li>
-// ✅ Extract line spacing from <p> inside <li>
-const liPara = li.querySelector('p');
-let lineSpacingMultiplier = null;
-if (liPara && liPara.style.lineHeight) {
-    const lh = parseFloat(liPara.style.lineHeight);
-    if (!isNaN(lh)) {
-        lineSpacingMultiplier = lh;
-    }
-}
+                // ✅ Extract line spacing from <p> inside <li>
+                const liPara = li.querySelector('p');
+                let lineSpacingMultiplier = null;
+                if (liPara && liPara.style.lineHeight) {
+                    const lh = parseFloat(liPara.style.lineHeight);
+                    if (!isNaN(lh)) {
+                        lineSpacingMultiplier = lh;
+                    }
+                }
 
-const paraOpts = Object.assign(
-    {},
-    bulletBase,
-    indentLevel ? { indentLevel: Math.min(5, indentLevel) } : {},
-    lineSpacingMultiplier ? { lineSpacing: Math.round(lineSpacingMultiplier * 12) } : {}, // Convert to points
-    liAlign === 'center' ? { align: 'center' } :
-        liAlign === 'right' ? { align: 'right' } :
-            liAlign === 'left' ? { align: 'left' } : {}
-);
+                const paraOpts = Object.assign(
+                    {},
+                    bulletBase,
+                    indentLevel ? { indentLevel: Math.min(5, indentLevel) } : {},
+                    lineSpacingMultiplier ? { lineSpacing: Math.round(lineSpacingMultiplier * 12) } : {}, // Convert to points
+                    liAlign === 'center' ? { align: 'center' } :
+                        liAlign === 'right' ? { align: 'right' } :
+                            liAlign === 'left' ? { align: 'left' } : {}
+                );
 
                 paras.push({
                     text: runs.length > 0 ? runs : [{ text: ' ' }],
@@ -322,28 +322,28 @@ const paraOpts = Object.assign(
     const pptxRows = [];
 
     let maxColumns = 0;
-const _occGrid = Array.from({ length: rows.length }, () => ({}));
+    const _occGrid = Array.from({ length: rows.length }, () => ({}));
 
-for (let i = 0; i < rows.length; i++) {
-    const htmlRow = rows[i];
-    let colCursor = 0;
+    for (let i = 0; i < rows.length; i++) {
+        const htmlRow = rows[i];
+        let colCursor = 0;
 
-    for (let j = 0; j < htmlRow.cells.length; j++) {
-        while (_occGrid[i][colCursor]) colCursor++;
-        
-        const cell = htmlRow.cells[j];
-        const colspan = parseInt(cell.getAttribute('colspan')) || 1;
-        const rowspan = parseInt(cell.getAttribute('rowspan')) || 1;
+        for (let j = 0; j < htmlRow.cells.length; j++) {
+            while (_occGrid[i][colCursor]) colCursor++;
 
-        for (let r = 0; r < rowspan; r++) {
-            for (let c = 0; c < colspan; c++) {
-                if (i + r < rows.length) _occGrid[i + r][colCursor + c] = true;
+            const cell = htmlRow.cells[j];
+            const colspan = parseInt(cell.getAttribute('colspan')) || 1;
+            const rowspan = parseInt(cell.getAttribute('rowspan')) || 1;
+
+            for (let r = 0; r < rowspan; r++) {
+                for (let c = 0; c < colspan; c++) {
+                    if (i + r < rows.length) _occGrid[i + r][colCursor + c] = true;
+                }
             }
+            colCursor += colspan;
         }
-        colCursor += colspan;
+        if (colCursor > maxColumns) maxColumns = colCursor;
     }
-    if (colCursor > maxColumns) maxColumns = colCursor;
-}
 
 
     let rowHeights = [];
@@ -365,7 +365,7 @@ for (let i = 0; i < rows.length; i++) {
     for (let i = 0; i < rows.length; i++) {
         const htmlRow = rows[i];
         const pptxCells = [];
-        
+
         const rowBgColor = extractBackgroundColor(htmlRow);
         const rowTextColor = extractTextColor(htmlRow);
 
@@ -384,7 +384,7 @@ for (let i = 0; i < rows.length; i++) {
             const cellStyleAttr = cell.getAttribute('style') || '';
 
             // Base cell options
-            const cellOpts = { 
+            const cellOpts = {
                 color: '000000',
                 border: [
                     { pt: 1, color: 'FFFFFF' },
@@ -395,37 +395,37 @@ for (let i = 0; i < rows.length; i++) {
             };
 
             // Text rotation/vertical text
-           // Text rotation/vertical text - check BOTH writing-mode AND transform
-const writeDir = cellStyleAttr.match(/writing-mode:\s*([^;]+)/i)?.[1]?.trim();
-const transform = cellStyleAttr.match(/transform:\s*rotate\(([^)]+)\)/i)?.[1]?.trim();
-const isVerticalText =
-  writeDir === 'vertical-rl' ||
-  writeDir === 'tb-rl' ||
-  transform === '90deg' ||
-  transform === '270deg' ||
-  transform === '-90deg';
+            // Text rotation/vertical text - check BOTH writing-mode AND transform
+            const writeDir = cellStyleAttr.match(/writing-mode:\s*([^;]+)/i)?.[1]?.trim();
+            const transform = cellStyleAttr.match(/transform:\s*rotate\(([^)]+)\)/i)?.[1]?.trim();
+            const isVerticalText =
+                writeDir === 'vertical-rl' ||
+                writeDir === 'tb-rl' ||
+                transform === '90deg' ||
+                transform === '270deg' ||
+                transform === '-90deg';
 
-// PptxGenJS valid vert values: 'eaVert', 'horz', 'mongolianVert', 'vert', 'vert270', 'wordArtVert', 'wordArtVertRtl'
-if (writeDir && (writeDir === 'vertical-rl' || writeDir === 'tb-rl' || writeDir === 'vertical-lr')) {
-    if (transform && (transform === '180deg' || transform === '180')) {
-        // vertical-rl + rotate(180deg) = bottom-to-top
-        cellOpts.vert = 'vert270';
-    } else {
-        // Just vertical-rl = top-to-bottom  
-        cellOpts.vert = 'vert';
-    }
-} else if (transform) {
-    if (transform === '90deg' || transform === '90') {
-        cellOpts.vert = 'vert';
-    } else if (transform === '270deg' || transform === '270' || transform === '-90deg') {
-        cellOpts.vert = 'vert270';
-    }
-}
+            // PptxGenJS valid vert values: 'eaVert', 'horz', 'mongolianVert', 'vert', 'vert270', 'wordArtVert', 'wordArtVertRtl'
+            if (writeDir && (writeDir === 'vertical-rl' || writeDir === 'tb-rl' || writeDir === 'vertical-lr')) {
+                if (transform && (transform === '180deg' || transform === '180')) {
+                    // vertical-rl + rotate(180deg) = bottom-to-top
+                    cellOpts.vert = 'vert270';
+                } else {
+                    // Just vertical-rl = top-to-bottom  
+                    cellOpts.vert = 'vert';
+                }
+            } else if (transform) {
+                if (transform === '90deg' || transform === '90') {
+                    cellOpts.vert = 'vert';
+                } else if (transform === '270deg' || transform === '270' || transform === '-90deg') {
+                    cellOpts.vert = 'vert270';
+                }
+            }
 
-// ✅ CRITICAL: Set vertical property at the TOP LEVEL, not nested
-if (cellOpts.vert) {
-    cellOpts.vertical = cellOpts.vert; // Some versions use 'vertical' instead of 'vert'
-}
+            // ✅ CRITICAL: Set vertical property at the TOP LEVEL, not nested
+            if (cellOpts.vert) {
+                cellOpts.vertical = cellOpts.vert; // Some versions use 'vertical' instead of 'vert'
+            }
 
 
             if (colspan > 1) cellOpts.colspan = colspan;
@@ -463,26 +463,26 @@ if (cellOpts.vert) {
                 cellOpts.bold = true;
             }
 
-            
+
 
             // Vertical alignment
             // Vertical alignment
-const va = cellStyleAttr.match(/vertical-align:\s*([^;]+)/i)?.[1]?.trim().toLowerCase();
-if (va === 'top') {
-    cellOpts.valign = 'top';
-} else if (va === 'bottom') {
-    cellOpts.valign = 'bottom';
-} else if (va === 'middle' || va === 'center') {
-    cellOpts.valign = 'middle';
-}
+            const va = cellStyleAttr.match(/vertical-align:\s*([^;]+)/i)?.[1]?.trim().toLowerCase();
+            if (va === 'top') {
+                cellOpts.valign = 'top';
+            } else if (va === 'bottom') {
+                cellOpts.valign = 'bottom';
+            } else if (va === 'middle' || va === 'center') {
+                cellOpts.valign = 'middle';
+            }
 
-// ✅ For vertical text, also ensure proper alignment
-if (cellOpts.vert) {
-    // Vertical text defaults to top if not specified
-    if (!cellOpts.valign) {
-        cellOpts.valign = 'top';
-    }
-}
+            // ✅ For vertical text, also ensure proper alignment
+            if (cellOpts.vert) {
+                // Vertical text defaults to top if not specified
+                if (!cellOpts.valign) {
+                    cellOpts.valign = 'top';
+                }
+            }
 
             // Cell padding
             const paddingTop = cellStyleAttr.match(/padding-top:\s*([^;]+)/i)?.[1];
@@ -492,48 +492,48 @@ if (cellOpts.vert) {
             const paddingAll = cellStyleAttr.match(/(?:^|;)\s*padding:\s*([^;]+)/i)?.[1];
 
             const parsePaddingToPoints = (value) => {
-    if (!value) return null;
-    const num = parseFloat(value);
-    if (isNaN(num)) return null;
-    
-    // PptxGenJS expects points, converts internally: points * 12700 = EMUs
-    
-    if (value.includes('px')) {
-        return num * 0.75; // px to points (96 DPI: 1pt = 1.333px)
-    } else if (value.includes('pt')) {
-        return num; // Already in points
-    } else if (value.includes('in')) {
-        return num * 72; // inches to points (72pt = 1in)
-    } else {
-        return num * 0.75; // Default: assume px
-    }
-};
+                if (!value) return null;
+                const num = parseFloat(value);
+                if (isNaN(num)) return null;
+
+                // PptxGenJS expects points, converts internally: points * 12700 = EMUs
+
+                if (value.includes('px')) {
+                    return num * 0.75; // px to points (96 DPI: 1pt = 1.333px)
+                } else if (value.includes('pt')) {
+                    return num; // Already in points
+                } else if (value.includes('in')) {
+                    return num * 72; // inches to points (72pt = 1in)
+                } else {
+                    return num * 0.75; // Default: assume px
+                }
+            };
 
             if (paddingAll) {
-    const parts = paddingAll.trim().split(/\s+/);
-    if (parts.length === 1) {
-        const pt = parsePaddingToPoints(parts[0]);
-        if (pt !== null) cellOpts.margin = pt;
-    } else if (parts.length === 2) {
-        const ptV = parsePaddingToPoints(parts[0]);
-        const ptH = parsePaddingToPoints(parts[1]);
-        if (ptV !== null && ptH !== null) {
-            cellOpts.margin = [ptV, ptH, ptV, ptH];
-        }
-    } else if (parts.length === 4) {
-        const margins = parts.map(p => parsePaddingToPoints(p));
-        if (margins.every(m => m !== null)) {
-            cellOpts.margin = margins;
-        }
-    }
-} else if (paddingTop || paddingRight || paddingBottom || paddingLeft) {
-    const ptT = parsePaddingToPoints(paddingTop) || 0;
-    const ptR = parsePaddingToPoints(paddingRight) || 0;
-    const ptB = parsePaddingToPoints(paddingBottom) || 0;
-    const ptL = parsePaddingToPoints(paddingLeft) || 0;
-    
-    cellOpts.margin = [ptT, ptR, ptB, ptL];
-}
+                const parts = paddingAll.trim().split(/\s+/);
+                if (parts.length === 1) {
+                    const pt = parsePaddingToPoints(parts[0]);
+                    if (pt !== null) cellOpts.margin = pt;
+                } else if (parts.length === 2) {
+                    const ptV = parsePaddingToPoints(parts[0]);
+                    const ptH = parsePaddingToPoints(parts[1]);
+                    if (ptV !== null && ptH !== null) {
+                        cellOpts.margin = [ptV, ptH, ptV, ptH];
+                    }
+                } else if (parts.length === 4) {
+                    const margins = parts.map(p => parsePaddingToPoints(p));
+                    if (margins.every(m => m !== null)) {
+                        cellOpts.margin = margins;
+                    }
+                }
+            } else if (paddingTop || paddingRight || paddingBottom || paddingLeft) {
+                const ptT = parsePaddingToPoints(paddingTop) || 0;
+                const ptR = parsePaddingToPoints(paddingRight) || 0;
+                const ptB = parsePaddingToPoints(paddingBottom) || 0;
+                const ptL = parsePaddingToPoints(paddingLeft) || 0;
+
+                cellOpts.margin = [ptT, ptR, ptB, ptL];
+            }
 
             // Font size
             const fs = cellStyleAttr.match(/font-size:\s*([^;]+)/i)?.[1]?.trim();
@@ -568,15 +568,15 @@ if (cellOpts.vert) {
             const parseBorderSide = (side) => {
                 const match = cellStyleAttr.match(new RegExp(`border-${side}:\\s*([^;]+)`, 'i'));
                 if (!match?.[1]) return null;
-                
+
                 const borderValue = match[1].trim();
                 if (borderValue === 'none' || borderValue === '0') {
                     return { pt: 0, color: '000000' };
                 }
-                
+
                 const parts = borderValue.split(/\s+/);
                 let bPt = 1, bColor = 'FFFFFF';
-                
+
                 parts.forEach(p => {
                     const w = p.match(/^(\d+(?:\.\d+)?)(px|pt)?$/i);
                     if (w) {
@@ -588,7 +588,7 @@ if (cellOpts.vert) {
                         bColor = rgbToHex(p);
                     }
                 });
-                
+
                 return { pt: bPt, color: bColor };
             };
 
@@ -608,67 +608,67 @@ if (cellOpts.vert) {
             // ✅ CRITICAL FIX: Apply cell alignment to text runs
             // ✅ Extract text alignment from cell style
             // ✅ Extract and apply text alignment
-const ta = cellStyleAttr.match(/text-align:\s*([^;]+)/i)?.[1]?.trim().toLowerCase();
-let paragraphAlign = null;
+            const ta = cellStyleAttr.match(/text-align:\s*([^;]+)/i)?.[1]?.trim().toLowerCase();
+            let paragraphAlign = null;
 
-if (ta === 'center') paragraphAlign = 'center';
-else if (ta === 'right') paragraphAlign = 'right';
-else if (ta === 'left') paragraphAlign = 'left';
-else if (ta === 'justify') paragraphAlign = 'justify';
+            if (ta === 'center') paragraphAlign = 'center';
+            else if (ta === 'right') paragraphAlign = 'right';
+            else if (ta === 'left') paragraphAlign = 'left';
+            else if (ta === 'justify') paragraphAlign = 'justify';
 
 
 
-// Apply alignment to content structure
-if (Array.isArray(rich) && rich.length > 0 && typeof rich[0] === 'object') {
-    // Has paragraph structure (from lists or formatted content)
-    rich = rich.map(item => {
-    if (item && typeof item === 'object' && item.text !== undefined) {
-        const existingAlign = item.options?.align;
-        
-        // Don't override if paragraph already has explicit alignment
-        if (!existingAlign && paragraphAlign) {
-            return {
-                text: item.text,
-                options: {
-                    ...item.options,
-                    align: paragraphAlign
-                }
-            };
-        }
-    }
-    return item;
-});
-} else if (paragraphAlign) {
-    // Plain runs array - wrap in paragraph with alignment
-    rich = [{
-        text: rich,
-        options: { align: paragraphAlign }
-    }];
-}
+            // Apply alignment to content structure
+            if (Array.isArray(rich) && rich.length > 0 && typeof rich[0] === 'object') {
+                // Has paragraph structure (from lists or formatted content)
+                rich = rich.map(item => {
+                    if (item && typeof item === 'object' && item.text !== undefined) {
+                        const existingAlign = item.options?.align;
 
-          if (isVerticalText) {
-  // Keep table cell empty
-  pptxCells.push({
-    text: '',
-    options: cellOpts
-  });
+                        // Don't override if paragraph already has explicit alignment
+                        if (!existingAlign && paragraphAlign) {
+                            return {
+                                text: item.text,
+                                options: {
+                                    ...item.options,
+                                    align: paragraphAlign
+                                }
+                            };
+                        }
+                    }
+                    return item;
+                });
+            } else if (paragraphAlign) {
+                // Plain runs array - wrap in paragraph with alignment
+                rich = [{
+                    text: rich,
+                    options: { align: paragraphAlign }
+                }];
+            }
 
-  // Store overlay info for later
-  verticalOverlays.push({
-    text: rich,
-    rowIndex: i,
-    colIndex: columnsUsed - colspan,
-    colspan,
-    rowspan,
-    cellOpts
-  });
+            if (isVerticalText) {
+                // Keep table cell empty
+                pptxCells.push({
+                    text: '',
+                    options: cellOpts
+                });
 
-} else {
-  pptxCells.push({
-    text: rich,
-    options: cellOpts
-  });
-}
+                // Store overlay info for later
+                verticalOverlays.push({
+                    text: rich,
+                    rowIndex: i,
+                    colIndex: columnsUsed - colspan,
+                    colspan,
+                    rowspan,
+                    cellOpts
+                });
+
+            } else {
+                pptxCells.push({
+                    text: rich,
+                    options: cellOpts
+                });
+            }
 
         }
 
@@ -694,47 +694,47 @@ if (Array.isArray(rich) && rich.length > 0 && typeof rich[0] === 'object') {
 
     slide.addTable(pptxRows, tableOpts);
     // ---- Overlay vertical text as rotated text boxes ----
-verticalOverlays.forEach(item => {
-  const { text, rowIndex, colIndex, colspan, rowspan, cellOpts } = item;
+    verticalOverlays.forEach(item => {
+        const { text, rowIndex, colIndex, colspan, rowspan, cellOpts } = item;
 
-  // Calculate X position
-  let x = xPos;
-  for (let c = 0; c < colIndex; c++) {
-    x += colWArr[c];
-  }
+        // Calculate X position
+        let x = xPos;
+        for (let c = 0; c < colIndex; c++) {
+            x += colWArr[c];
+        }
 
-  // Calculate Y position
-  let y = yPos;
-  for (let r = 0; r < rowIndex; r++) {
-    y += rowHeights[r];
-  }
+        // Calculate Y position
+        let y = yPos;
+        for (let r = 0; r < rowIndex; r++) {
+            y += rowHeights[r];
+        }
 
-  // Cell dimensions
-  let w = 0;
-  for (let c = 0; c < colspan; c++) {
-    w += colWArr[colIndex + c];
-  }
+        // Cell dimensions
+        let w = 0;
+        for (let c = 0; c < colspan; c++) {
+            w += colWArr[colIndex + c];
+        }
 
-  let h = 0;
-  for (let r = 0; r < rowspan; r++) {
-    h += rowHeights[rowIndex + r];
-  }
+        let h = 0;
+        for (let r = 0; r < rowspan; r++) {
+            h += rowHeights[rowIndex + r];
+        }
 
-  slide.addText(text, {
-    x,
-    y,
-    w,
-    h,
-    vert: cellOpts.vert === 'vert270' ? 'vert270' : 'vert',
-    align: 'center',
-    valign: 'middle',
-    fontFace: cellOpts.fontFace,
-    fontSize: cellOpts.fontSize,
-    color: cellOpts.color,
-    bold: cellOpts.bold,
-    italic: cellOpts.italic
-  });
-});
+        slide.addText(text, {
+            x,
+            y,
+            w,
+            h,
+            vert: cellOpts.vert === 'vert270' ? 'vert270' : 'vert',
+            align: 'center',
+            valign: 'middle',
+            fontFace: cellOpts.fontFace,
+            fontSize: cellOpts.fontSize,
+            color: cellOpts.color,
+            bold: cellOpts.bold,
+            italic: cellOpts.italic
+        });
+    });
 
 }
 

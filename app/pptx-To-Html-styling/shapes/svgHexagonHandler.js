@@ -48,13 +48,6 @@ function generateHexagonSVG({
     // Apply or ignore rotation based on flag
     const effectiveRotation = ignoreRotation ? 0 : rotation;
 
-    // Log which adj value is being used
-    if (useDefaultAdj) {
-        console.log(`ℹ️ Using PowerPoint default adj: 25000 (instead of extracted XML adj: ${effectiveAdj})`);
-    } else {
-        console.log(`ℹ️ Using extracted adj value: ${effectiveAdj}`);
-    }
-
     // Calculate hexagon with effective adj value
     const front = calculateCorrectPowerPointHexagon(w, h, effectiveAdj, effectiveVF);
 
@@ -227,12 +220,6 @@ function extractHexagon3DProperties(shapeNode, options = {}) {
         const rotValue = parseInt(xfrm["$"].rot);
         const rotationDegrees = (rotValue / 60000) % 360;
         properties.rotation = rotationDegrees;
-
-        if (options.ignoreRotation) {
-            console.log(`ℹ️  XML rotation: ${rotationDegrees.toFixed(2)}° (IGNORED)`);
-        } else {
-            console.log(`✅ XML rotation: ${rotationDegrees.toFixed(2)}° (APPLIED)`);
-        }
     }
 
     // Extract hexagon adjustment values
@@ -247,11 +234,6 @@ function extractHexagon3DProperties(shapeNode, options = {}) {
                 const xmlAdj = parseInt(formula.replace("val ", ""));
                 properties.hexagonAdj = xmlAdj;
 
-                if (options.useDefaultAdj) {
-                    console.log(`ℹ️  XML adj: ${xmlAdj} (${(xmlAdj / 1000).toFixed(2)}%) - Using default 25000 (25%) instead`);
-                } else {
-                    console.log(`✅ Using XML adj: ${xmlAdj} (${(xmlAdj / 1000).toFixed(2)}%)`);
-                }
             } else if (name === "vf" && formula?.startsWith("val ")) {
                 properties.hexagonVF = parseInt(formula.replace("val ", ""));
             }

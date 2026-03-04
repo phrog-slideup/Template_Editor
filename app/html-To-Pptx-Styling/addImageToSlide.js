@@ -3,8 +3,8 @@ const fs = require("fs");
 const axios = require("axios");
 const normalizeStyle = require("../api/helper/colorHelper");
 const clrHelper = require("../api/helper/colorHelper.js");
+
 async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
-    console.log('Adding image to slide:', imgElement);
     let src = imgElement.getAttribute("src");
 
     const style = imgElement.style;
@@ -12,7 +12,6 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
     const objName = parent.getAttribute("data-name");
 
     const altText = parent?.getAttribute("data-alt-text") || '';
-    console.log('🏷️ Alt text from HTML:', altText);
 
     const parentStyle = parent ? parent.style : {};
 
@@ -100,12 +99,8 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
             }
         }
 
-        console.log('=== SHADOW EXTRACTION ===');
-        console.log('Box-shadow value:', boxShadowValue);
-
         if (boxShadowValue && boxShadowValue !== 'none') {
             pptxShadow = convertBoxShadowToPptxFormat(boxShadowValue);
-            console.log('✅ Converted to pptxgenjs format:', pptxShadow);
         }
     }
 
@@ -168,7 +163,6 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
         srcRectT = parent.getAttribute('srcrectt') || '';
         srcRectB = parent.getAttribute('srcrectb') || '';
 
-        console.log('🔍 Extracted srcRect from parent:', { srcRectL, srcRectR, srcRectT, srcRectB });
     }
     // Fallback to img element
     if (!srcRectL && !srcRectR && !srcRectT && !srcRectB) {
@@ -177,14 +171,8 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
         srcRectT = imgElement.getAttribute('srcrectt') || imgElement.getAttribute('srcRectT') || '';
         srcRectB = imgElement.getAttribute('srcrectb') || imgElement.getAttribute('srcRectB') || '';
 
-        console.log('🔍 Fallback: Extracted srcRect from img:', { srcRectL, srcRectR, srcRectT, srcRectB });
     }
 
-    // ========================================
-    // ✅ STEP 2: Convert srcRect to pptxgenjs crop format
-    // PowerPoint srcRect values are in 1/100,000ths of the image size
-    // pptxgenjs expects decimal values (0.0 to 1.0)
-    // ========================================
     // Parse srcRect values (can be negative!)
     const parsedL = parseInt(srcRectL) || 0;
     const parsedR = parseInt(srcRectR) || 0;
@@ -192,9 +180,6 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
     const parsedB = parseInt(srcRectB) || 0;
 
     const hasCrop = parsedL !== 0 || parsedR !== 0 || parsedT !== 0 || parsedB !== 0;
-
-    console.log('📊 srcRect from HTML:', { parsedL, parsedR, parsedT, parsedB });
-
 
 
     // Extract hyperlink
@@ -293,15 +278,13 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
             //     h: (100000 - parsedT - parsedB) * 50
             // };
 
-            // console.log('✅ Applied sizing:', imageOptions.sizing);
-            // console.log('✅ Applied cropping to pptxgenjs:', imageOptions.sizing);
+
             imageOptions._srcRect = {
                 l: parsedL,
                 r: parsedR,
                 t: parsedT,
                 b: parsedB
             };
-            console.log('🔧 Stored srcRect for manual XML injection:', imageOptions._srcRect);
         } else {
             // No crop - use cover to maintain aspect ratio
             imageOptions.sizing = { type: 'cover' };
@@ -319,22 +302,20 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
         // Add shadow if exists
         if (pptxShadow) {
             imageOptions.shadow = pptxShadow;
-            console.log('✅ Shadow added to pptxgenjs:', pptxShadow);
         }
         if (pptxShadow && pptxShadow.spread) {
-    // Store sx/sy for XML post-processing
-    // spread in px → approximate scale percentage (e.g., 9px spread ≈ 103%)
-    const scalePct = 100 + Math.round(pptxShadow.spread / 3);
-    imageOptions._shadowScale = {
-        sx: scalePct * 1000,  // e.g., 103000
-        sy: scalePct * 1000
-    };
-}
+            // Store sx/sy for XML post-processing
+            // spread in px → approximate scale percentage (e.g., 9px spread ≈ 103%)
+            const scalePct = 100 + Math.round(pptxShadow.spread / 3);
+            imageOptions._shadowScale = {
+                sx: scalePct * 1000,  // e.g., 103000
+                sy: scalePct * 1000
+            };
+        }
 
         // Add hyperlink if exists
         if (hyperlink) {
             imageOptions.hyperlink = { url: hyperlink };
-            console.log('✅ Hyperlink added to image:', hyperlink);
         }
 
         // Add image to slide
@@ -361,82 +342,82 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
         //     });
         // }
         // ✅ ADD BORDER with style support and fallback
-        if (borderWidth > 0) {
-            // Map CSS border styles to pptxgenjs dashType
-            const borderStyleMap = {
-                'solid': 'solid',
-                'dotted': 'dot',
-                'dashed': 'dash',
-                'double': 'solid',      // Fallback: use solid
-                'groove': 'solid',      // Fallback: use solid
-                'ridge': 'solid',       // Fallback: use solid
-                'inset': 'solid',       // Fallback: use solid
-                'outset': 'solid',      // Fallback: use solid
-                'none': 'solid',        // Fallback: use solid
-                'hidden': 'solid'       // Fallback: use solid
-            };
+        // if (borderWidth > 0) {
+        //     // Map CSS border styles to pptxgenjs dashType
+        //     const borderStyleMap = {
+        //         'solid': 'solid',
+        //         'dotted': 'dot',
+        //         'dashed': 'dash',
+        //         'double': 'solid',      // Fallback: use solid
+        //         'groove': 'solid',      // Fallback: use solid
+        //         'ridge': 'solid',       // Fallback: use solid
+        //         'inset': 'solid',       // Fallback: use solid
+        //         'outset': 'solid',      // Fallback: use solid
+        //         'none': 'solid',        // Fallback: use solid
+        //         'hidden': 'solid'       // Fallback: use solid
+        //     };
 
-            // Get pptxgenjs dashType with fallback to 'solid'
-            const pptxDashType = borderStyleMap[borderStyle.toLowerCase()] || 'solid';
+        //     // Get pptxgenjs dashType with fallback to 'solid'
+        //     const pptxDashType = borderStyleMap[borderStyle.toLowerCase()] || 'solid';
 
-            // Adjust width for dotted/dashed styles (they look thinner)
-            let adjustedWidth = borderWidth * 72;
-            if (pptxDashType === 'dot' || pptxDashType === 'dash') {
-                adjustedWidth = Math.max(adjustedWidth * 1.2, 1); // Boost by 20%, minimum 1pt
-            }
+        //     // Adjust width for dotted/dashed styles (they look thinner)
+        //     let adjustedWidth = borderWidth * 72;
+        //     if (pptxDashType === 'dot' || pptxDashType === 'dash') {
+        //         adjustedWidth = Math.max(adjustedWidth * 1.2, 1); // Boost by 20%, minimum 1pt
+        //     }
 
-            console.log('Adding border rectangle:', {
-                color: borderColor.replace('#', ''),
-                width: adjustedWidth,
-                dashType: pptxDashType,
-                originalStyle: borderStyle
-            });
+        //     console.log('Adding border rectangle:', {
+        //         color: borderColor.replace('#', ''),
+        //         width: adjustedWidth,
+        //         dashType: pptxDashType,
+        //         originalStyle: borderStyle
+        //     });
 
-            try {
-                const parent = imgElement.closest(".image-container");
-                const objName = parent.getAttribute("data-name");
+        //     try {
+        //         const parent = imgElement.closest(".image-container");
+        //         const objName = parent.getAttribute("data-name");
 
-                const parentStyle = parent ? parent.style : {};
+        //         const parentStyle = parent ? parent.style : {};
 
 
-                pptSlide.addShape(pptx.shapes.RECTANGLE, {
-                    x: x,
-                    y: y,
-                    w: w,
-                    h: h,
-                    fill: { transparency: 100 }, // Completely transparent
-                    line: {
-                        color: borderColor.replace('#', ''),
-                        width: adjustedWidth,
-                        dashType: pptxDashType
-                    },
-                    rotate: rotation // Match image rotation
-                });
+        //         pptSlide.addShape(pptx.shapes.RECTANGLE, {
+        //             x: x,
+        //             y: y,
+        //             w: w,
+        //             h: h,
+        //             fill: { transparency: 100 }, // Completely transparent
+        //             line: {
+        //                 color: borderColor.replace('#', ''),
+        //                 width: adjustedWidth,
+        //                 dashType: pptxDashType
+        //             },
+        //             rotate: rotation // Match image rotation
+        //         });
 
-                console.log('✅ Border added successfully');
-            } catch (borderError) {
-                // Fallback: try with just solid border if specific style fails
-                console.warn('Border style failed, falling back to solid:', borderError);
-                try {
-                    pptSlide.addShape(pptx.shapes.RECTANGLE, {
-                        x: x,
-                        y: y,
-                        w: w,
-                        h: h,
-                        fill: { transparency: 100 },
-                        line: {
-                            color: borderColor.replace('#', ''),
-                            width: borderWidth * 72,
-                            dashType: 'solid' // Fallback to solid
-                        },
-                        rotate: rotation
-                    });
-                    console.log('✅ Border added with solid fallback');
-                } catch (fallbackError) {
-                    console.error('❌ Border completely failed:', fallbackError);
-                }
-            }
-        }
+        //         console.log('✅ Border added successfully');
+        //     } catch (borderError) {
+        //         // Fallback: try with just solid border if specific style fails
+        //         console.warn('Border style failed, falling back to solid:', borderError);
+        //         try {
+        //             pptSlide.addShape(pptx.shapes.RECTANGLE, {
+        //                 x: x,
+        //                 y: y,
+        //                 w: w,
+        //                 h: h,
+        //                 fill: { transparency: 100 },
+        //                 line: {
+        //                     color: borderColor.replace('#', ''),
+        //                     width: borderWidth * 72,
+        //                     dashType: 'solid' // Fallback to solid
+        //                 },
+        //                 rotate: rotation
+        //             });
+        //             console.log('✅ Border added with solid fallback');
+        //         } catch (fallbackError) {
+        //             console.error('❌ Border completely failed:', fallbackError);
+        //         }
+        //     }
+        // }
 
     } catch (error) {
         console.error(`❌ Failed to add image (${src}) to slide:`, error);
@@ -496,409 +477,6 @@ function getSlideDimensions(pptSlide) {
     }
 }
 
-// Add function to handle background images
-async function addBackgroundImageToSlide(pptx, pptSlide, bgElement) {
-    // Extract the background image URL from the style
-    const style = bgElement.style || {};
-    const backgroundImageStyle = style.backgroundImage || "";
-    const urlMatch = backgroundImageStyle.match(/url\(['"]?([^'"]+)['"]?\)/);
-
-    if (!urlMatch) {
-        console.warn("No background image found in element");
-        return;
-    }
-
-    const src = urlMatch[1];
-
-    // Get slide dimensions for proper scaling
-    const slideDimensions = getSlideDimensions(pptSlide);
-
-    // Get the opacity value
-    const opacityStr = style.opacity || "1";
-    const opacity = parseFloat(opacityStr);
-
-    // Convert to PowerPoint transparency percentage (0-100)
-    const transparencyPercentage = Math.round((1 - opacity) * 100);
-
-    // Get background positioning and sizing
-    const backgroundSize = style.backgroundSize || "cover";
-    const backgroundPosition = style.backgroundPosition || "0px 0px";
-    const backgroundRepeat = style.backgroundRepeat || "no-repeat";
-
-    // Store background image data for XML generation
-    const bgImageData = {
-        type: 'background',
-        src: src,
-        x: 0,
-        y: 0,
-        w: slideDimensions.widthInches,
-        h: slideDimensions.heightInches,
-        transparency: transparencyPercentage,
-        backgroundSize: backgroundSize,
-        backgroundPosition: backgroundPosition,
-        backgroundRepeat: backgroundRepeat,
-        zIndex: -1
-    };
-
-    // Process the background as a full slide image
-    try {
-        let base64Data = null;
-
-        // Handle different types of image paths
-        if (src.includes("uploads")) {
-            try {
-                // Try to find the image file
-                const imageName = path.basename(src);
-                let imagePath = null;
-
-                // Look in several possible locations
-                const possiblePaths = [
-                    src,
-                    path.join("uploads", imageName),
-                    path.join(__dirname, "..", "uploads", imageName),
-                    path.join(__dirname, "..", src)
-                ];
-
-                for (const tryPath of possiblePaths) {
-                    try {
-                        if (fs.existsSync(tryPath)) {
-                            imagePath = tryPath;
-                            break;
-                        }
-                    } catch (e) {
-                        // Ignore errors and try next path
-                    }
-                }
-
-                if (!imagePath) {
-                    throw new Error(`Background image file not found: ${src}`);
-                }
-
-                const imageData = fs.readFileSync(imagePath);
-                const mimeType = getMimeType(imagePath);
-                base64Data = `data:${mimeType};base64,${imageData.toString("base64")}`;
-            } catch (localError) {
-                console.error(`Error processing local background image (${src}):`, localError);
-                throw localError;
-            }
-        } else if (src.startsWith("http")) {
-            // Handle remote images
-            try {
-                const response = await axios.get(src, { responseType: "arraybuffer" });
-                const mimeType = response.headers["content-type"] || "image/png";
-                base64Data = `data:${mimeType};base64,${Buffer.from(response.data).toString("base64")}`;
-            } catch (remoteError) {
-                console.error(`Error fetching remote background image (${src}):`, remoteError);
-                throw remoteError;
-            }
-        } else if (src.startsWith("data:image/")) {
-            // Already a data URL
-            base64Data = src;
-        } else {
-            throw new Error(`Unsupported background image source format: ${src}`);
-        }
-
-        if (!base64Data) {
-            throw new Error("Failed to create background image data");
-        }
-
-        // Store the base64 data
-        bgImageData.base64Data = base64Data;
-
-        // Add the background image to slide with transparency
-        pptSlide.addImage({
-            data: base64Data,
-            x: 0,
-            y: 0,
-            w: '100%',
-            h: '100%',
-            sizing: backgroundSize === "100% 100%" ? 'stretch' : 'cover',
-            transparency: transparencyPercentage,
-            zIndex: -1
-        });
-
-        if (!pptSlide.backgroundImages) pptSlide.backgroundImages = [];
-        pptSlide.backgroundImages.push(bgImageData);
-
-    } catch (error) {
-        console.error(`Failed to add background image (${src}) to slide:`, error);
-    }
-}
-
-
-// Function to generate image XML for PPTX
-function generateImageXml(image, imageId, slideDimensions) {
-    if (image.type === 'error') {
-        // Generate error placeholder XML
-        return generateErrorPlaceholderXml(image, imageId);
-    }
-    const x = Math.round((image.x || 0) * 914400); // Convert inches to EMU
-    const y = Math.round((image.y || 0) * 914400);
-    const w = Math.round((image.w || 1) * 914400);
-    const h = Math.round((image.h || 1) * 914400);
-    const rotation = image.rotation ? Math.round(image.rotation * 60000) : 0; // Convert degrees to 1/60000th
-    const flipH = image.flipH ? '1' : '0';
-    // Handle transparency
-    const transparencyXml = image.transparency > 0 ?
-        `<a:alpha val="${100 - image.transparency}000"/>` : '';
-
-    // Handle srcRect / fillRect cropping
-    // srcRectL, srcRectR, srcRectT, srcRectB can be positive (crop) or negative (zoom/fill)
-    let fillRectXml = '<a:fillRect/>';
-
-    const hasL = image.srcRectL && image.srcRectL !== '' && image.srcRectL !== '0';
-    const hasR = image.srcRectR && image.srcRectR !== '' && image.srcRectR !== '0';
-    const hasT = image.srcRectT && image.srcRectT !== '' && image.srcRectT !== '0';
-    const hasB = image.srcRectB && image.srcRectB !== '' && image.srcRectB !== '0';
-
-    if (hasL || hasR || hasT || hasB) {
-        const attrs = [];
-        if (hasL) attrs.push(`l="${image.srcRectL}"`);
-        if (hasR) attrs.push(`r="${image.srcRectR}"`);
-        if (hasT) attrs.push(`t="${image.srcRectT}"`);
-        if (hasB) attrs.push(`b="${image.srcRectB}"`);
-
-        fillRectXml = `<a:fillRect ${attrs.join(' ')}/>`;
-    }
-
-    // Handle border
-    let borderXml = '';
-    if (image.borderWidth > 0) {
-        const borderWidthEmu = Math.round(image.borderWidth * 914400);
-        const borderColor = (image.borderColor || '#000000').replace('#', '');
-        borderXml = `
-            <a:ln w="${borderWidthEmu}">
-                <a:solidFill>
-                    <a:srgbClr val="${borderColor}"/>
-                </a:solidFill>
-            </a:ln>`;
-        // Handle shadow and glow effects
-        let effectsXml = '';
-        if (image.shadowEffects && (image.shadowEffects.hasGlow || image.shadowEffects.hasShadow)) {
-            effectsXml = '<a:effectLst>';
-
-            // Add glow effect
-            if (image.shadowEffects.hasGlow && image.shadowEffects.glow) {
-                const glow = image.shadowEffects.glow;
-                const glowRadius = Math.round(glow.blur * 12700);
-                const glowAlpha = Math.round(glow.alpha * 100000);
-                const colorHex = ((glow.r << 16) | (glow.g << 8) | glow.b).toString(16).padStart(6, '0').toUpperCase();
-
-                effectsXml += `
-            <a:glow rad="${glowRadius}">
-                <a:srgbClr val="${colorHex}">
-                    <a:alpha val="${glowAlpha}"/>
-                </a:srgbClr>
-            </a:glow>`;
-            }
-
-            // Add outer shadow effect
-            if (image.shadowEffects.hasShadow && image.shadowEffects.shadow) {
-                const shadow = image.shadowEffects.shadow;
-               const blurRad = Math.round(shadow.blur * 12700);
-const shadowAlpha = Math.round(shadow.alpha * 100000);
-const colorHex = ((shadow.r << 16) | (shadow.g << 8) | shadow.b).toString(16).padStart(6, '0').toUpperCase();
-
-// Convert cartesian offsets to polar (dist + dir)
-const dist = Math.round(Math.sqrt(shadow.offsetX * shadow.offsetX + shadow.offsetY * shadow.offsetY) * 914400 / 72);
-let angle = Math.atan2(shadow.offsetY, shadow.offsetX) * (180 / Math.PI);
-if (angle < 0) angle += 360;
-const dir = Math.round(angle * 60000);
-
-// Scale factors (default 100% = 100000)
-const sx = shadow.scaleX ? Math.round(shadow.scaleX * 1000) : 100000;
-const sy = shadow.scaleY ? Math.round(shadow.scaleY * 1000) : 100000;
-
-effectsXml += `
-    <a:outerShdw blurRad="${blurRad}" dist="${dist}" dir="${dir}" sx="${sx}" sy="${sy}" algn="br" rotWithShape="0">
-        <a:prstClr val="black">
-            <a:alpha val="${shadowAlpha}"/>
-        </a:prstClr>
-    </a:outerShdw>`;
-            }
-
-            effectsXml += '</a:effectLst>';
-        }
-    } else {
-        borderXml = '<a:ln><a:noFill/></a:ln>';
-    }
-    const imageXml = `
-        <p:pic>
-            <p:nvPicPr>
-                <p:cNvPr id="${imageId}" name="Image ${imageId}"/>
-                <p:cNvPicPr/>
-                <p:nvPr/>
-            </p:nvPicPr>
-            <p:blipFill>
-                <a:blip r:embed="rId${imageId}">
-                    ${transparencyXml}
-                </a:blip>
-                <a:stretch>
-                    ${fillRectXml}
-                </a:stretch>
-            </p:blipFill>
-            <p:spPr>
-                <a:xfrm${rotation !== 0 ? ` rot="${rotation}"` : ''}${flipH === '1' ? ` flipH="${flipH}"` : ''}>
-                    <a:off x="${x}" y="${y}"/>
-                    <a:ext cx="${w}" cy="${h}"/>
-                </a:xfrm>
-                <a:prstGeom prst="rect">
-                    <a:avLst/>
-                </a:prstGeom>
-                <a:noFill/>
-                ${borderXml}
-                ${effectsXml}
-            </p:spPr>
-        </p:pic>`;
-    return imageXml;
-}
-
-// Function to generate error placeholder XML
-function generateErrorPlaceholderXml(errorData, shapeId) {
-    const x = Math.round((errorData.x || 0) * 914400);
-    const y = Math.round((errorData.y || 0) * 914400);
-    const w = Math.round((errorData.w || 1) * 914400);
-    const h = Math.round((errorData.h || 1) * 914400);
-    const errorXml = `
-        <p:sp>
-            <p:nvSpPr>
-                <p:cNvPr id="${shapeId}" name="Error ${shapeId}"/>
-                <p:cNvSpPr/>
-                <p:nvPr/>
-            </p:nvSpPr>
-            <p:spPr>
-                <a:xfrm>
-                    <a:off x="${x}" y="${y}"/>
-                    <a:ext cx="${w}" cy="${h}"/>
-                </a:xfrm>
-                <a:prstGeom prst="rect">
-                    <a:avLst/>
-                </a:prstGeom>
-                <a:solidFill>
-                    <a:srgbClr val="EEEEEE"/>
-                </a:solidFill>
-                <a:ln w="12700">
-                    <a:solidFill>
-                        <a:srgbClr val="FF0000"/>
-                    </a:solidFill>
-                </a:ln>
-            </p:spPr>
-            <p:txBody>
-                <a:bodyPr wrap="square" rtlCol="0"/>
-                <a:lstStyle/>
-                <a:p>
-                    <a:r>
-                        <a:rPr lang="en-US" sz="1200">
-                            <a:solidFill>
-                                <a:srgbClr val="000000"/>
-                            </a:solidFill>
-                        </a:rPr>
-                        <a:t>Image Error: ${escapeXml(errorData.error?.substring(0, 50) || 'Unknown error')}</a:t>
-                    </a:r>
-                </a:p>
-            </p:txBody>
-        </p:sp>`;
-    return errorXml;
-}
-
-// Function to generate all images XML for a slide
-function generateImagesXml(images) {
-    let imagesXml = '';
-    images.forEach((image, index) => {
-        const imageId = index + 200; // Start image IDs from 200
-        imagesXml += generateImageXml(image, imageId);
-    });
-    return imagesXml;
-}
-
-// Function to generate background images XML
-function generateBackgroundImagesXml(backgroundImages) {
-    let bgImagesXml = '';
-    backgroundImages.forEach((bgImage, index) => {
-        const imageId = index + 300; // Start background image IDs from 300
-        // Background images are treated as regular images but with full slide dimensions
-        bgImagesXml += generateImageXml(bgImage, imageId);
-    });
-    return bgImagesXml;
-}
-
-// Function to create slide XML with images
-function createSlideXmlWithImages(slideData, slideDimensions) {
-    const { width, height } = slideDimensions;
-    const slideId = slideData.slideId || 1;
-    const widthEmu = Math.round(width * 914400);
-    const heightEmu = Math.round(height * 914400);
-    const backgroundImagesXml = generateBackgroundImagesXml(slideData.backgroundImages || []);
-    const imagesXml = generateImagesXml(slideData.images || []);
-    const slideXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
-    <p:cSld>
-        <p:spTree>
-            <p:nvGrpSpPr>
-                <p:cNvPr id="1" name=""/>
-                <p:cNvGrpSpPr/>
-                <p:nvPr/>
-            </p:nvGrpSpPr>
-            <p:grpSpPr>
-                <a:xfrm>
-                    <a:off x="0" y="0"/>
-                    <a:ext cx="${widthEmu}" cy="${heightEmu}"/>
-                    <a:chOff x="0" y="0"/>
-                    <a:chExt cx="${widthEmu}" cy="${heightEmu}"/>
-                </a:xfrm>
-            </p:grpSpPr>
-            ${backgroundImagesXml}
-            ${imagesXml}
-        </p:spTree>
-    </p:cSld>
-    <p:clrMapOvr>
-        <a:masterClrMapping/>
-    </p:clrMapOvr>
-</p:sld>`;
-    return slideXml;
-}
-
-// Function to generate image relationships for PPTX
-function generateImageRelationships(images, backgroundImages) {
-    let relationships = '';
-    let rIdCounter = 1;
-    // Add background image relationships
-    backgroundImages.forEach((bgImage, index) => {
-        const imageId = index + 300;
-        relationships += `<Relationship Id="rId${imageId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${imageId}.${getImageExtension(bgImage.src)}"/>`;
-        rIdCounter++;
-    });
-    // Add regular image relationships
-    images.forEach((image, index) => {
-        if (image.type !== 'error') {
-            const imageId = index + 200;
-            relationships += `<Relationship Id="rId${imageId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${imageId}.${getImageExtension(image.src)}"/>`;
-            rIdCounter++;
-        }
-    });
-    return relationships;
-}
-
-// Helper function to get image file extension
-function getImageExtension(src) {
-    if (src.includes('data:image/')) {
-        const match = src.match(/data:image\/([^;]+)/);
-        return match ? match[1] : 'png';
-    }
-    const ext = path.extname(src).toLowerCase().replace('.', '');
-    return ext || 'png';
-}
-
-// Helper function to escape XML special characters
-function escapeXml(text) {
-    return text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&apos;');
-}
-
 function getMimeType(filePath) {
     const ext = path.extname(filePath).toLowerCase();
     switch (ext) {
@@ -916,52 +494,6 @@ function getMimeType(filePath) {
         default:
             return "image/jpeg"; // Default fallback
     }
-}
-// Helper function to parse box-shadow into glow and shadow effects
-function parseBoxShadowEffects(boxShadowString) {
-    const shadows = boxShadowString.split(/,(?![^(]*\))/);
-
-    let glowShadows = [];
-    let offsetShadow = null;
-
-    shadows.forEach(shadow => {
-        const parts = shadow.trim().match(/([-\d.]+)px\s+([-\d.]+)px\s+([-\d.]+)px\s+rgba?\(([^)]+)\)/);
-        if (parts) {
-            const offsetX = parseFloat(parts[1]);
-            const offsetY = parseFloat(parts[2]);
-            const blur = parseFloat(parts[3]);
-            const colorParts = parts[4].split(',').map(s => s.trim());
-
-            if (offsetX === 0 && offsetY === 0) {
-                // It's a glow
-                glowShadows.push({
-                    blur,
-                    r: parseInt(colorParts[0]),
-                    g: parseInt(colorParts[1]),
-                    b: parseInt(colorParts[2]),
-                    alpha: colorParts[3] ? parseFloat(colorParts[3]) : 1
-                });
-            } else {
-                // It's an outer shadow
-                offsetShadow = {
-                    offsetX,
-                    offsetY,
-                    blur,
-                    r: parseInt(colorParts[0]),
-                    g: parseInt(colorParts[1]),
-                    b: parseInt(colorParts[2]),
-                    alpha: colorParts[3] ? parseFloat(colorParts[3]) : 1
-                };
-            }
-        }
-    });
-
-    return {
-        hasGlow: glowShadows.length > 0,
-        glow: glowShadows.length > 0 ? glowShadows[0] : null,
-        hasShadow: offsetShadow !== null,
-        shadow: offsetShadow
-    };
 }
 
 // Complete box-shadow to PPTX converter - all functions in one
@@ -1145,30 +677,23 @@ function convertBoxShadowToPptxFormat(boxShadowString) {
     visibleShadows.sort((a, b) => score(b) - score(a));
     const best = visibleShadows[0];
 
-   // Spread in CSS creates thickness — in PPT this maps to higher blur + offset
-const spreadBoost = best.spread || 0;
-const effectiveBlur = best.blur + spreadBoost * 0.8;
-const effectiveOffset = best.offset + spreadBoost * 0.5;
+    // Spread in CSS creates thickness — in PPT this maps to higher blur + offset
+    const spreadBoost = best.spread || 0;
+    const effectiveBlur = best.blur + spreadBoost * 0.8;
+    const effectiveOffset = best.offset + spreadBoost * 0.5;
 
-return {
-    type: best.type,
-    opacity: String(Math.min(1, best.opacity * 1.5)),
-    blur: String(Math.round(effectiveBlur)),
-    color: best.colorHex,
-    offset: String(Math.round(effectiveOffset)),
-    angle: String(Math.round(best.angle))
-};
+    return {
+        type: best.type,
+        opacity: String(Math.min(1, best.opacity * 1.5)),
+        blur: String(Math.round(effectiveBlur)),
+        color: best.colorHex,
+        offset: String(Math.round(effectiveOffset)),
+        angle: String(Math.round(best.angle))
+    };
 }
 
 module.exports = {
     addImageToSlide,
-    addBackgroundImageToSlide,
     getSlideDimensions,
-    generateImageXml,
-    generateImagesXml,
-    generateBackgroundImagesXml,
-    createSlideXmlWithImages,
-    generateImageRelationships,
     getMimeType,
-    getImageExtension
 };

@@ -8,7 +8,7 @@ function getEMUDivisor() {
 
 function getDashArray(dashType, strokeWidth) {
     const baseSize = Math.max(2, strokeWidth);
-    
+
     switch (dashType) {
         case "solid":
             return "";
@@ -42,9 +42,9 @@ function getDashArray(dashType, strokeWidth) {
  */
 function generateArrowMarker(endType, strokeColor, strokeWidth, x, y, rotation = 0) {
     if (!endType || endType === "none") return "";
-    
+
     const markerSize = Math.max(10, strokeWidth * 4);
-    
+
     switch (endType) {
         case "triangle":
         case "arrow":
@@ -62,7 +62,7 @@ function generateArrowMarker(endType, strokeColor, strokeWidth, x, y, rotation =
                 transform: translate(-50%, -50%) rotate(${rotation}deg);
                 transform-origin: center;
             "></div>`;
-        
+
         case "oval":
         case "circle":
         case "dot":
@@ -78,7 +78,7 @@ function generateArrowMarker(endType, strokeColor, strokeWidth, x, y, rotation =
                 background: ${strokeColor};
                 transform: translate(-50%, -50%);
             "></div>`;
-        
+
         case "diamond":
             return `<div style="
                 position: absolute;
@@ -89,7 +89,7 @@ function generateArrowMarker(endType, strokeColor, strokeWidth, x, y, rotation =
                 background: ${strokeColor};
                 transform: translate(-50%, -50%) rotate(45deg);
             "></div>`;
-        
+
         default:
             return "";
     }
@@ -101,7 +101,7 @@ function generateArrowMarker(endType, strokeColor, strokeWidth, x, y, rotation =
 function extractLineEnds(lineNode) {
     const headEnd = lineNode?.["a:headEnd"]?.[0]?.["$"];
     const tailEnd = lineNode?.["a:tailEnd"]?.[0]?.["$"];
-    
+
     return {
         headType: headEnd?.type || "none",
         headSize: headEnd?.w || "med",
@@ -117,124 +117,124 @@ function calculateConnectorPath(shapeType, width, height, adj1Pct, adj2Pct = 0.5
     const segments = [];
     let startPoint = { x: 0, y: 0 };
     let endPoint = { x: width, y: height };
-    
+
     switch (shapeType) {
         case "bentConnector2":
-            segments.push({ 
-                type: 'horizontal', 
-                x1: 0, y1: 0, 
-                x2: width, y2: 0 
+            segments.push({
+                type: 'horizontal',
+                x1: 0, y1: 0,
+                x2: width, y2: 0
             });
-            segments.push({ 
-                type: 'vertical', 
-                x1: width, y1: 0, 
-                x2: width, y2: height 
+            segments.push({
+                type: 'vertical',
+                x1: width, y1: 0,
+                x2: width, y2: height
             });
             startPoint = { x: 0, y: 0 };
             endPoint = { x: width, y: height };
             break;
-            
+
         case "bentConnector3":
             const bendX = width * adj1Pct;
-            segments.push({ 
-                type: 'horizontal', 
-                x1: 0, y1: 0, 
-                x2: bendX, y2: 0 
+            segments.push({
+                type: 'horizontal',
+                x1: 0, y1: 0,
+                x2: bendX, y2: 0
             });
-            segments.push({ 
-                type: 'vertical', 
-                x1: bendX, y1: 0, 
-                x2: bendX, y2: height 
+            segments.push({
+                type: 'vertical',
+                x1: bendX, y1: 0,
+                x2: bendX, y2: height
             });
-            segments.push({ 
-                type: 'horizontal', 
-                x1: bendX, y1: height, 
-                x2: width, y2: height 
+            segments.push({
+                type: 'horizontal',
+                x1: bendX, y1: height,
+                x2: width, y2: height
             });
             startPoint = { x: 0, y: 0 };
             endPoint = { x: width, y: height };
             break;
-            
+
         case "bentConnector4":
             const b4_bend1X = width * adj1Pct;
             const b4_midY = height * adj2Pct;
-            
+
             // 5 segments creating 4 bends: H → V → H → V → H
-            segments.push({ 
-                type: 'horizontal', 
-                x1: 0, y1: 0, 
-                x2: b4_bend1X, y2: 0 
+            segments.push({
+                type: 'horizontal',
+                x1: 0, y1: 0,
+                x2: b4_bend1X, y2: 0
             });
-            segments.push({ 
-                type: 'vertical', 
-                x1: b4_bend1X, y1: 0, 
-                x2: b4_bend1X, y2: b4_midY 
+            segments.push({
+                type: 'vertical',
+                x1: b4_bend1X, y1: 0,
+                x2: b4_bend1X, y2: b4_midY
             });
-            segments.push({ 
-                type: 'horizontal', 
-                x1: b4_bend1X, y1: b4_midY, 
-                x2: width, y2: b4_midY 
+            segments.push({
+                type: 'horizontal',
+                x1: b4_bend1X, y1: b4_midY,
+                x2: width, y2: b4_midY
             });
-            segments.push({ 
-                type: 'vertical', 
-                x1: width, y1: b4_midY, 
-                x2: width, y2: height 
+            segments.push({
+                type: 'vertical',
+                x1: width, y1: b4_midY,
+                x2: width, y2: height
             });
             startPoint = { x: 0, y: 0 };
             endPoint = { x: width, y: height };
             break;
-            
+
         case "bentConnector5":
-            segments.push({ 
-                type: 'horizontal', 
-                x1: 0, y1: 0, 
-                x2: width * 0.25, y2: 0 
+            segments.push({
+                type: 'horizontal',
+                x1: 0, y1: 0,
+                x2: width * 0.25, y2: 0
             });
-            segments.push({ 
-                type: 'vertical', 
-                x1: width * 0.25, y1: 0, 
-                x2: width * 0.25, y2: height * 0.33 
+            segments.push({
+                type: 'vertical',
+                x1: width * 0.25, y1: 0,
+                x2: width * 0.25, y2: height * 0.33
             });
-            segments.push({ 
-                type: 'horizontal', 
-                x1: width * 0.25, y1: height * 0.33, 
-                x2: width * 0.5, y2: height * 0.33 
+            segments.push({
+                type: 'horizontal',
+                x1: width * 0.25, y1: height * 0.33,
+                x2: width * 0.5, y2: height * 0.33
             });
-            segments.push({ 
-                type: 'vertical', 
-                x1: width * 0.5, y1: height * 0.33, 
-                x2: width * 0.5, y2: height * 0.67 
+            segments.push({
+                type: 'vertical',
+                x1: width * 0.5, y1: height * 0.33,
+                x2: width * 0.5, y2: height * 0.67
             });
-            segments.push({ 
-                type: 'horizontal', 
-                x1: width * 0.5, y1: height * 0.67, 
-                x2: width * 0.75, y2: height * 0.67 
+            segments.push({
+                type: 'horizontal',
+                x1: width * 0.5, y1: height * 0.67,
+                x2: width * 0.75, y2: height * 0.67
             });
-            segments.push({ 
-                type: 'vertical', 
-                x1: width * 0.75, y1: height * 0.67, 
-                x2: width * 0.75, y2: height 
+            segments.push({
+                type: 'vertical',
+                x1: width * 0.75, y1: height * 0.67,
+                x2: width * 0.75, y2: height
             });
-            segments.push({ 
-                type: 'horizontal', 
-                x1: width * 0.75, y1: height, 
-                x2: width, y2: height 
+            segments.push({
+                type: 'horizontal',
+                x1: width * 0.75, y1: height,
+                x2: width, y2: height
             });
             startPoint = { x: 0, y: 0 };
             endPoint = { x: width, y: height };
             break;
-            
+
         default:
-            segments.push({ 
-                type: 'diagonal', 
-                x1: 0, y1: 0, 
-                x2: width, y2: height 
+            segments.push({
+                type: 'diagonal',
+                x1: 0, y1: 0,
+                x2: width, y2: height
             });
             startPoint = { x: 0, y: 0 };
             endPoint = { x: width, y: height };
             break;
     }
-    
+
     return { segments, startPoint, endPoint };
 }
 
@@ -245,7 +245,7 @@ function getArrowRotation(segment, isStart) {
     // Calculate the direction angle of the segment
     const dx = segment.x2 - segment.x1;
     const dy = segment.y2 - segment.y1;
-    
+
     const segmentAngle = Math.atan2(dy, dx) * 180 / Math.PI;
     if (isStart) {
         return segmentAngle + 180;
@@ -276,14 +276,11 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
     const shapeType = shapeNode?.["p:spPr"]?.[0]?.["a:prstGeom"]?.[0]?.["$"]?.prst || "unknown";
     const line = shapeNode?.["p:spPr"]?.[0]?.["a:ln"]?.[0];
 
-    console.log(`Connector ${shapeName}: type=${shapeType}, pos=`, position);
-
     // Extract line properties
     let strokeColor = "#000000";
     let strokeWidth = 2;
     let strokeDashArray = "";
     if (line) {
-        console.log("pppppppl,mnjhjbnm,jlsadiusa98d79sad8sa8");
         // Extract stroke width
         if (line["$"]?.w) {
             strokeWidth = Math.max(1, parseInt(line["$"].w, 10) / getEMUDivisor());
@@ -292,7 +289,6 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
         // Extract stroke color
         const solidFill = line?.["a:solidFill"];
         if (solidFill && solidFill.length > 0) {
-            console.log("line==============");
             if (solidFill[0]["a:srgbClr"]) {
                 strokeColor = `#${solidFill[0]["a:srgbClr"][0]["$"].val}`;
             } else if (solidFill[0]["a:schemeClr"]) {
@@ -304,11 +300,10 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
                 }
             }
         } else {
-            console.log("line==============else");
             const lnRef = shapeNode?.["p:style"]?.[0]?.["a:lnRef"]?.[0];
             if (lnRef?.["a:schemeClr"]) {
                 strokeColor = resolveColor(lnRef["a:schemeClr"][0]["$"].val, clrMap, themeXML);
-                
+
                 // Apply lumMod if present
                 const lumMod = lnRef["a:schemeClr"][0]["a:lumMod"]?.[0]?.["$"]?.val;
                 if (lumMod) {
@@ -318,17 +313,15 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
                 strokeColor = `#${lnRef["a:srgbClr"][0]["$"].val}`;
             }
         }
-        console.log("strokeColor0====",strokeColor);
         const dashType = line?.["a:prstDash"]?.[0]?.["$"]?.val || "solid";
         strokeDashArray = getDashArray(dashType, strokeWidth);
     }
     // If no color was found from line, check style reference (for connectors without line object or without solidFill)
     if (strokeColor === "#000000") {
-        console.log("Checking style reference for color");
         const lnRef = shapeNode?.["p:style"]?.[0]?.["a:lnRef"]?.[0];
         if (lnRef?.["a:schemeClr"]) {
             strokeColor = resolveColor(lnRef["a:schemeClr"][0]["$"].val, clrMap, themeXML);
-            
+
             // Apply lumMod if present
             const lumMod = lnRef["a:schemeClr"][0]["a:lumMod"]?.[0]?.["$"]?.val;
             if (lumMod) {
@@ -344,7 +337,6 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
     // Handle straight connectors (straightConnector1, line)
 
     if (shapeType === "straightConnector1" || shapeType === "line") {
-        console.log("Processing straight connector");
         const shapeColors = shapeFillColor.getShapeFillColor(shapeNode, themeXML, masterXML);
         const lineOpacity = shapeColors.strokeOpacity || 1.0;
         const finalStrokeColor = shapeColors.strokeColor && shapeColors.strokeColor !== "transparent" && shapeColors.strokeColor !== "none" ? shapeColors.strokeColor : strokeColor;
@@ -376,12 +368,12 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
             startX = position.x + position.width;
             startY = position.y + position.height;
         }
-        
+
         const isLineReversed = (flipH && !flipV) || (!flipH && flipV);
-        
+
         let arrowTypeAtPosition0;     // Arrow at start of rendered line
         let arrowTypeAtPositionEnd;   // Arrow at end of rendered line
-        
+
         if (isLineReversed) {
             arrowTypeAtPosition0 = lineEnds.tailType;
             arrowTypeAtPositionEnd = lineEnds.headType;
@@ -389,7 +381,7 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
             arrowTypeAtPosition0 = lineEnds.headType;
             arrowTypeAtPositionEnd = lineEnds.tailType;
         }
-        
+
         // Generate markers
         const startMarker = generateArrowMarker(arrowTypeAtPosition0, finalStrokeColor, strokeWidth, 0, strokeWidth / 2, 180);
         const endMarker = generateArrowMarker(arrowTypeAtPositionEnd, finalStrokeColor, strokeWidth, lineLength, strokeWidth / 2, 0);
@@ -458,7 +450,6 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
 
     // Check if this is a curved connector
     const isCurvedConnector = shapeType.includes("curvedConnector");
-    console.log("isCurvedConnector========",isCurvedConnector);
     if (isCurvedConnector) {
         // Handle curved connectors using smooth HTML curves
         const width = Math.max(1, position.width);
@@ -466,7 +457,7 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
 
         const avLst = shapeNode?.["p:spPr"]?.[0]?.["a:prstGeom"]?.[0]?.["a:avLst"]?.[0];
         let adj1 = 50000;
-        
+
         if (avLst?.["a:gd"]) {
             const gdList = Array.isArray(avLst["a:gd"]) ? avLst["a:gd"] : [avLst["a:gd"]];
             for (const gd of gdList) {
@@ -483,7 +474,7 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
         let rotation = xfrm?.["$"]?.rot ? parseInt(xfrm["$"].rot, 10) / 60000 : 0;
         const flipH = xfrm?.["$"]?.flipH === "1";
         const flipV = xfrm?.["$"]?.flipV === "1";
-        
+
         // Generate smooth curved HTML
         // const curveData = generateCurvedHTML(shapeType, width, height, strokeColor, strokeWidth, adj1Pct);
         const curveData = generateCurvedHTML(shapeType, width, height, strokeColor, strokeWidth, adj1Pct, flipH, flipV);
@@ -496,11 +487,11 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
             rotation = -rotation; // Vertical flip only: negate rotation
         }
         // If both flipH and flipV are true, rotation stays the same (180° flip = no rotation change)
-    
+
         // Generate markers at curve endpoints with proper angles
-        const tailMarker = generateArrowMarker(lineEnds.tailType, strokeColor, strokeWidth, 
+        const tailMarker = generateArrowMarker(lineEnds.tailType, strokeColor, strokeWidth,
             curveData.startPoint.x, curveData.startPoint.y, curveData.startAngle);
-        const headMarker = generateArrowMarker(lineEnds.headType, strokeColor, strokeWidth, 
+        const headMarker = generateArrowMarker(lineEnds.headType, strokeColor, strokeWidth,
             curveData.endPoint.x, curveData.endPoint.y, curveData.endAngle);
 
         let transform = '';
@@ -535,7 +526,6 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
             flipV: flipV
         });
 
-        console.log(`Curved connector ${shapeName}: rendered with smooth CSS`);
 
         return `<div class="shape connector curved-connector"
             data-shape-type="${shapeType}"
@@ -560,7 +550,7 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
             </div>
         </div>`;
     }
-    
+
     // Handle bent connectors using HTML/CSS
     const width = Math.max(1, position.width);
     const height = Math.max(1, position.height);
@@ -578,7 +568,7 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
                 adj1 = parseInt(fmla.replace("val ", ""), 10) || 50000;
             }
             else if (name === "adj2" && fmla.includes("val")) {
-                adj2 = parseInt(fmla.replace("val ", ""), 10) || 50000;    
+                adj2 = parseInt(fmla.replace("val ", ""), 10) || 50000;
             }
         }
     }
@@ -626,10 +616,10 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
     // Generate markers at actual path endpoints
     const firstSegment = segments[0];
     const lastSegment = segments[segments.length - 1];
-    
+
     const tailRotation = getArrowRotation(firstSegment, true);
     const headRotation = getArrowRotation(lastSegment, false);
-    
+
     const tailMarker = generateArrowMarker(lineEnds.tailType, strokeColor, strokeWidth, startPoint.x, startPoint.y, tailRotation);
     const headMarker = generateArrowMarker(lineEnds.headType, strokeColor, strokeWidth, endPoint.x, endPoint.y, headRotation);
 
@@ -681,7 +671,7 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
         flipH: flipH,
         flipV: flipV
     });
-    
+
     return `<div class="shape connector"
         data-shape-type="${shapeType}"
         id="${shapeType}"
@@ -726,10 +716,10 @@ function getShapePosition(shapeNode, masterXML = null) {
     const flipV = xfrm?.["$"]?.flipV === "1" || xfrm?.["$"]?.flipV === true;
 
     const isTextBox = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvSpPr"]?.[0]?.["$"]?.txBox === "1";
-    
+
     // Use the existing divisor from getEMUDivisor() - DON'T CHANGE IT
     const divisor = getEMUDivisor();
-    
+
     const width = Math.round((xfrm?.["a:ext"]?.[0]?.["$"]?.cx || 100) / divisor);
     const height = Math.round((xfrm?.["a:ext"]?.[0]?.["$"]?.cy || 100) / divisor);
 
@@ -805,18 +795,18 @@ function generateCurvedHTML(shapeType, width, height, strokeColor, strokeWidth, 
     let endPoint = { x: width, y: height };
     let startAngle = 0;
     let endAngle = 0;
-    
+
     // High-resolution curve rendering
     const numPoints = 150; // More points for smoother curves
     const points = [];
-    
+
     // PowerPoint's curved connectors use specific Bezier curve formulas
     switch (shapeType) {
         case "curvedConnector2": {
             // Quadratic Bezier: control point at (width, 0)
             const controlX = width;
             const controlY = 0;
-            
+
             for (let i = 0; i <= numPoints; i++) {
                 const t = i / numPoints;
                 // Quadratic Bezier formula: B(t) = (1-t)²P0 + 2(1-t)tP1 + t²P2
@@ -824,67 +814,67 @@ function generateCurvedHTML(shapeType, width, height, strokeColor, strokeWidth, 
                 const y = (1 - t) * (1 - t) * 0 + 2 * (1 - t) * t * controlY + t * t * height;
                 points.push({ x, y });
             }
-            
+
             startPoint = { x: 0, y: 0 };
             endPoint = { x: width, y: height };
             break;
         }
-            
+
         case "curvedConnector3": {
             // Cubic Bezier S-curve
             const cp1x = width * adj1Pct;
             const cp1y = 0;
             const cp2x = width * adj1Pct;
             const cp2y = height;
-            
+
             for (let i = 0; i <= numPoints; i++) {
                 const t = i / numPoints;
                 // Cubic Bezier formula: B(t) = (1-t)³P0 + 3(1-t)²tP1 + 3(1-t)t²P2 + t³P3
-                const x = Math.pow(1 - t, 3) * 0 + 
-                         3 * Math.pow(1 - t, 2) * t * cp1x + 
-                         3 * (1 - t) * Math.pow(t, 2) * cp2x + 
-                         Math.pow(t, 3) * width;
-                const y = Math.pow(1 - t, 3) * 0 + 
-                         3 * Math.pow(1 - t, 2) * t * cp1y + 
-                         3 * (1 - t) * Math.pow(t, 2) * cp2y + 
-                         Math.pow(t, 3) * height;
+                const x = Math.pow(1 - t, 3) * 0 +
+                    3 * Math.pow(1 - t, 2) * t * cp1x +
+                    3 * (1 - t) * Math.pow(t, 2) * cp2x +
+                    Math.pow(t, 3) * width;
+                const y = Math.pow(1 - t, 3) * 0 +
+                    3 * Math.pow(1 - t, 2) * t * cp1y +
+                    3 * (1 - t) * Math.pow(t, 2) * cp2y +
+                    Math.pow(t, 3) * height;
                 points.push({ x, y });
             }
-            
+
             startPoint = { x: 0, y: 0 };
             endPoint = { x: width, y: height };
             break;
         }
-            
+
         case "curvedConnector4": {
             // Cubic Bezier with adjusted control points
             const cp1x = width * adj1Pct;
             const cp1y = 0;
             const cp2x = width * (1 - adj1Pct);
             const cp2y = height;
-            
+
             for (let i = 0; i <= numPoints; i++) {
                 const t = i / numPoints;
-                const x = Math.pow(1 - t, 3) * 0 + 
-                         3 * Math.pow(1 - t, 2) * t * cp1x + 
-                         3 * (1 - t) * Math.pow(t, 2) * cp2x + 
-                         Math.pow(t, 3) * width;
-                const y = Math.pow(1 - t, 3) * 0 + 
-                         3 * Math.pow(1 - t, 2) * t * cp1y + 
-                         3 * (1 - t) * Math.pow(t, 2) * cp2y + 
-                         Math.pow(t, 3) * height;
+                const x = Math.pow(1 - t, 3) * 0 +
+                    3 * Math.pow(1 - t, 2) * t * cp1x +
+                    3 * (1 - t) * Math.pow(t, 2) * cp2x +
+                    Math.pow(t, 3) * width;
+                const y = Math.pow(1 - t, 3) * 0 +
+                    3 * Math.pow(1 - t, 2) * t * cp1y +
+                    3 * (1 - t) * Math.pow(t, 2) * cp2y +
+                    Math.pow(t, 3) * height;
                 points.push({ x, y });
             }
-            
+
             startPoint = { x: 0, y: 0 };
             endPoint = { x: width, y: height };
             break;
         }
-            
+
         case "curvedConnector5": {
             // Complex multi-segment Bezier curve
             const halfPoints = Math.floor(numPoints / 2);
-            
+
             // First segment: (0,0) to (width/2, height/2)
             const cp1x = width * 0.25;
             const cp1y = 0;
@@ -892,44 +882,44 @@ function generateCurvedHTML(shapeType, width, height, strokeColor, strokeWidth, 
             const cp2y = height * 0.25;
             const midX = width * 0.5;
             const midY = height * 0.5;
-            
+
             for (let i = 0; i <= halfPoints; i++) {
                 const t = i / halfPoints;
-                const x = Math.pow(1 - t, 3) * 0 + 
-                         3 * Math.pow(1 - t, 2) * t * cp1x + 
-                         3 * (1 - t) * Math.pow(t, 2) * cp2x + 
-                         Math.pow(t, 3) * midX;
-                const y = Math.pow(1 - t, 3) * 0 + 
-                         3 * Math.pow(1 - t, 2) * t * cp1y + 
-                         3 * (1 - t) * Math.pow(t, 2) * cp2y + 
-                         Math.pow(t, 3) * midY;
+                const x = Math.pow(1 - t, 3) * 0 +
+                    3 * Math.pow(1 - t, 2) * t * cp1x +
+                    3 * (1 - t) * Math.pow(t, 2) * cp2x +
+                    Math.pow(t, 3) * midX;
+                const y = Math.pow(1 - t, 3) * 0 +
+                    3 * Math.pow(1 - t, 2) * t * cp1y +
+                    3 * (1 - t) * Math.pow(t, 2) * cp2y +
+                    Math.pow(t, 3) * midY;
                 points.push({ x, y });
             }
-            
+
             // Second segment: (width/2, height/2) to (width, height)
             const cp3x = width * 0.5;
             const cp3y = height * 0.75;
             const cp4x = width * 0.75;
             const cp4y = height;
-            
+
             for (let i = 1; i <= halfPoints; i++) {
                 const t = i / halfPoints;
-                const x = Math.pow(1 - t, 3) * midX + 
-                         3 * Math.pow(1 - t, 2) * t * cp3x + 
-                         3 * (1 - t) * Math.pow(t, 2) * cp4x + 
-                         Math.pow(t, 3) * width;
-                const y = Math.pow(1 - t, 3) * midY + 
-                         3 * Math.pow(1 - t, 2) * t * cp3y + 
-                         3 * (1 - t) * Math.pow(t, 2) * cp4y + 
-                         Math.pow(t, 3) * height;
+                const x = Math.pow(1 - t, 3) * midX +
+                    3 * Math.pow(1 - t, 2) * t * cp3x +
+                    3 * (1 - t) * Math.pow(t, 2) * cp4x +
+                    Math.pow(t, 3) * width;
+                const y = Math.pow(1 - t, 3) * midY +
+                    3 * Math.pow(1 - t, 2) * t * cp3y +
+                    3 * (1 - t) * Math.pow(t, 2) * cp4y +
+                    Math.pow(t, 3) * height;
                 points.push({ x, y });
             }
-            
+
             startPoint = { x: 0, y: 0 };
             endPoint = { x: width, y: height };
             break;
         }
-            
+
         default: {
             // Fallback to straight line
             points.push({ x: 0, y: 0 });
@@ -939,17 +929,17 @@ function generateCurvedHTML(shapeType, width, height, strokeColor, strokeWidth, 
             break;
         }
     }
-    
+
     // Render curve using overlapping line segments
     for (let i = 0; i < points.length - 1; i++) {
         const p1 = points[i];
         const p2 = points[i + 1];
-        
+
         const dx = p2.x - p1.x;
         const dy = p2.y - p1.y;
         const length = Math.sqrt(dx * dx + dy * dy);
         const angle = Math.atan2(dy, dx) * 180 / Math.PI;
-        
+
         // Create smooth segments with slight overlap
         curveHTML += `<div style="
             position: absolute;
@@ -963,18 +953,18 @@ function generateCurvedHTML(shapeType, width, height, strokeColor, strokeWidth, 
             border-radius: ${strokeWidth / 4}px;
         "></div>`;
     }
-    
+
     // Calculate start and end tangent angles from first/last few points
     if (points.length > 5) {
         const startDx = points[5].x - points[0].x;
         const startDy = points[5].y - points[0].y;
         startAngle = Math.atan2(startDy, startDx) * 180 / Math.PI + 180;
-        
+
         const endDx = points[points.length - 1].x - points[points.length - 6].x;
         const endDy = points[points.length - 1].y - points[points.length - 6].y;
         endAngle = Math.atan2(endDy, endDx) * 180 / Math.PI;
     }
-    
+
     return {
         html: curveHTML,
         startPoint: startPoint,

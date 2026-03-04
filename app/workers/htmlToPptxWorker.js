@@ -54,6 +54,8 @@ try {
 parentPort.on("message", async (taskData) => {
     const taskId = generateUniqueTaskId();
     const startTime = Date.now();
+    let tempFileCreated = false;
+    let processingPaths = { tempFiles: [], directories: [] };
 
     try {
         const { html, outputFilePath, originalFolderName, userId, sessionId } = taskData;
@@ -67,16 +69,13 @@ parentPort.on("message", async (taskData) => {
             throw new Error('Invalid HTML content - must contain slides with class="sli-slide"');
         }
 
-        // ============================================================================
-        // CRITICAL FIX FOR RACE CONDITION:
-        // Append unique taskId to folder name to ensure task isolation
-        // This prevents concurrent workers from using the same directory
-        // ============================================================================
-        const taskSpecificFolderName = originalFolderName
-            ? `${originalFolderName}_${taskId}`
-            : `${path.basename(outputFilePath, '.pptx')}_${taskId}`;
+        // CRITICAL: Keep originalFolderName unchanged - it's used to locate extracted PPTX files
+        // For concurrent editing protection, ensure outputFilePath is unique per user/session
+        const actualFolderName = originalFolderName || path.basename(outputFilePath, '.pptx');
 
-        // Ensure output directory exists
+        console.log(`[${taskId}] Starting conversion - user:${userId || 'unknown'}, session:${sessionId || 'unknown'}, folder:${actualFolderName}`);
+
+        // Ensure output directory
         const outputDir = path.dirname(outputFilePath);
         try {
             await fs.promises.access(outputDir, fs.constants.F_OK);
@@ -88,14 +87,13 @@ parentPort.on("message", async (taskData) => {
         const slideMatches = html.match(/class="sli-slide"/g);
         const slideCount = slideMatches ? slideMatches.length : 0;
 
-        // ============================================================================
-        // Pass task-specific folder name to ensure each conversion works in isolation
-        // ============================================================================
+        // Convert - Pass outputFilePath directly (original behavior)
         const conversionResultString = await htmlToPptx.convertHTMLToPPTX(
             html,
             outputFilePath,
-            taskSpecificFolderName  // ← CRITICAL: Unique folder per task
+            actualFolderName
         );
+        tempFileCreated = true;
 
         let conversionResult;
         try {
@@ -110,7 +108,18 @@ parentPort.on("message", async (taskData) => {
 
         const finalFilePath = conversionResult.fileName || outputFilePath;
 
-        // Verify file exists and is valid
+        // Collect paths from result for reference
+        if (conversionResult.debugInfo) {
+            if (conversionResult.debugInfo.slideXmlsDir) processingPaths.directories.push(conversionResult.debugInfo.slideXmlsDir);
+            if (conversionResult.debugInfo.extractedPptxDir) processingPaths.directories.push(conversionResult.debugInfo.extractedPptxDir);
+        }
+        if (conversionResult.conversionInfo) {
+            if (conversionResult.conversionInfo.sourceFolder) processingPaths.directories.push(conversionResult.conversionInfo.sourceFolder);
+            if (conversionResult.conversionInfo.originalZipPath) processingPaths.tempFiles.push(conversionResult.conversionInfo.originalZipPath);
+            if (conversionResult.conversionInfo.tempSlideXmlsDir) processingPaths.directories.push(conversionResult.conversionInfo.tempSlideXmlsDir);
+        }
+
+        // Verify file
         let fileStats;
         try {
             fileStats = await fs.promises.stat(finalFilePath);
@@ -120,6 +129,7 @@ parentPort.on("message", async (taskData) => {
         if (fileStats.size === 0) throw new Error('Generated PPTX file is empty');
 
         const processingTime = Date.now() - startTime;
+        console.log(`[${taskId}] Conversion successful in ${processingTime}ms`);
 
         parentPort.postMessage({
             success: true,
@@ -137,10 +147,14 @@ parentPort.on("message", async (taskData) => {
             timestamp: new Date().toISOString(),
             processingDetails: {
                 uniqueTaskId: taskId,
-                originalFolderName: originalFolderName || null,
-                taskIsolatedFolderName: taskSpecificFolderName,
-                raceConditionPrevented: true,
-                concurrentOperationSafe: true
+                directoryProcessingFixed: true,
+                slideXmlsExtracted: !!conversionResult.debugInfo?.slideXmlsDir,
+                pptxExtracted: !!conversionResult.debugInfo?.extractedPptxDir,
+                structureModified: !!conversionResult.conversionInfo?.sourceFolder,
+                zipConverted: !!conversionResult.conversionInfo?.originalZipPath,
+                finalFileSize: fileStats.size,
+                compressionRatio: conversionResult.conversionInfo?.sizeKB || 'unknown',
+                originalFolderSimulated: actualFolderName
             }
         });
 
@@ -157,13 +171,18 @@ parentPort.on("message", async (taskData) => {
             workerId,
             threadId,
             taskId,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            processingDetails: {
+                uniqueTaskId: taskId,
+                directoryProcessingAttempted: true,
+                errorDuringProcessing: true
+            }
         });
     } finally {
         try {
             if (global.gc) global.gc();
         } catch (e) {
-            console.warn(`[${taskId}] Worker ${workerId} GC warning:`, e.message);
+            console.warn(`[${taskId}] Worker ${workerId} cleanup error:`, e.message);
         }
     }
 });

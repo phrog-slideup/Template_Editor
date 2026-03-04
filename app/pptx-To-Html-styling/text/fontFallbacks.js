@@ -43,7 +43,6 @@ function loadWebFont(fontFamily) {
             link.href = WEB_FONTS_CONFIG[cleanFontName];
             document.head.appendChild(link);
             loadedFonts.add(cleanFontName);
-            console.log(`✓ Loaded web font: ${cleanFontName}`);
         }
     }
 }
@@ -57,7 +56,6 @@ function getFontFallbackStack(fontFamily) {
     if (!fontFamily) return 'Arial, sans-serif';
     
     const cleanFont = fontFamily.replace(/['"]/g, '').trim();
-    // console.log("typeof document",typeof document);
     // Try to load web font if available
     if (typeof document !== 'undefined') {
         loadWebFont(cleanFont);

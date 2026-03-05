@@ -137,6 +137,20 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         // NEW STEP 6.5: Fix chart XML bugs before replacing files
         const chartFixResult = await fixChartXmlBugs(slideXmlsDir);
 
+        // // NEW STEP 6.5A: Fix chart styling (white borders, spacing, colors, grid lines)
+        // console.log('🎨 Step 6.5A: Fixing chart styling...');
+        // const chartStylingResult = await fixChartStyling(slideXmlsDir);
+        // if (chartStylingResult.success && chartStylingResult.chartsFixed > 0) {
+        //     console.log(`   ✅ Fixed styling in ${chartStylingResult.chartsFixed} charts`);
+        // } else if (chartStylingResult.success) {
+        //     console.log('   ℹ️  No chart styling issues found');
+        // } else {
+        //     console.log('   ⚠️  Chart styling fix had issues:', chartStylingResult.error);
+        // }
+
+        // // NEW STEP 6.6: Comprehensive chart XML fix for Syncfusion
+        // console.log('🔧 Step 6.6: Comprehensive chart XML fix...');
+        // const comprehensiveChartResult = await comprehensiveChartXmlFix(slideXmlsDir);
 
         // ========================================
         // 🎨 STEP 6.5: INJECT TEXT GRADIENTS HERE
@@ -799,9 +813,22 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                 const spaceBefore = Math.max(0, marginTop - textBoxMarginTop);
                 const spaceAfter = Math.max(0, marginBottom - textBoxMarginBottom);
 
+                let lineSpacing = null;
+                const rawStyle = pElement.getAttribute('style') || '';
+                const lhMatch = rawStyle.match(/line-height\s*:\s*([0-9.]+)(px|pt)?/i);
+                if (lhMatch) {
+                    const lhValue = parseFloat(lhMatch[1]);
+                    const lhUnit = (lhMatch[2] || 'px').toLowerCase();
+                    // Convert to pt (72 DPI: px == pt; if already pt, keep as-is)
+                    lineSpacing = lhUnit === 'pt' ? lhValue : lhValue; // px = pt at 72 DPI
+                } else if (style.lineHeight && style.lineHeight !== 'normal') {
+                    lineSpacing = parseFloat(style.lineHeight) || null;
+                }
+
                 return {
                     spaceBefore: Math.round(spaceBefore),
-                    spaceAfter: Math.round(spaceAfter)
+                    spaceAfter: Math.round(spaceAfter),
+                    lineSpacing
                 };
             };
             // ✅ FIX: Process text with BR tags properly
@@ -817,6 +844,10 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                         const children = Array.from(p.childNodes);
                         let paragraphTextRuns = [];
                         let isFirstRunInParagraph = true;
+
+                        const rawPStyle = p.getAttribute('style') || '';
+                        const pAlignMatch = rawPStyle.match(/text-align\s*:\s*([a-z]+)/i);
+                        const pAlign = pAlignMatch ? pAlignMatch[1].toLowerCase() : null;
 
                         children.forEach((node) => {
                             // Handle BR tags
@@ -837,19 +868,30 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                                         bold: spanStyle.fontWeight === 'bold' || parseInt(spanStyle.fontWeight) >= 700,
                                         italic: spanStyle.fontStyle === 'italic',
                                         underline: spanStyle.textDecoration?.includes('underline'),
+                                        strike: spanStyle.textDecoration?.includes('line-through'),
                                         fontSize: parseFloat(spanStyle.fontSize) || textOptions.fontSize,
                                         color: node.getAttribute('originaltxtcolor') || textOptions.color,
                                         fontFace: spanStyle.fontFamily?.replace(/['"]/g, '') || textOptions.fontFace
                                     };
 
                                     // ✅ CRITICAL: Apply paragraph spacing to FIRST span only
-                                    if (isFirstRunInParagraph && pIndex > 0) {
-                                        // Only apply spacing for paragraphs after the first
-                                        if (paragraphSpacing.spaceBefore > 0) {
-                                            spanOptions.paraSpaceBefore = paragraphSpacing.spaceBefore;
+                                    if (isFirstRunInParagraph) {
+                                        // line-height applies to every paragraph
+                                        if (paragraphSpacing.lineSpacing) {
+                                            spanOptions.lineSpacing = paragraphSpacing.lineSpacing;
                                         }
-                                        if (paragraphSpacing.spaceAfter > 0) {
-                                            spanOptions.paraSpaceAfter = paragraphSpacing.spaceAfter;
+                                        // per-paragraph text-align (overrides the text-box-level align)
+                                        if (pAlign) {
+                                            spanOptions.align = pAlign;
+                                        }
+                                        if (pIndex > 0) {
+                                            // spaceBefore/After only for paragraphs after the first
+                                            if (paragraphSpacing.spaceBefore > 0) {
+                                                spanOptions.paraSpaceBefore = paragraphSpacing.spaceBefore;
+                                            }
+                                            if (paragraphSpacing.spaceAfter > 0) {
+                                                spanOptions.paraSpaceAfter = paragraphSpacing.spaceAfter;
+                                            }
                                         }
                                         isFirstRunInParagraph = false;
                                     }
@@ -873,12 +915,20 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                                     };
 
                                     // ✅ CRITICAL: Apply paragraph spacing to FIRST run only
-                                    if (isFirstRunInParagraph && pIndex > 0) {
-                                        if (paragraphSpacing.spaceBefore > 0) {
-                                            textNodeOptions.paraSpaceBefore = paragraphSpacing.spaceBefore;
+                                    if (isFirstRunInParagraph) {
+                                        if (paragraphSpacing.lineSpacing) {
+                                            textNodeOptions.lineSpacing = paragraphSpacing.lineSpacing;
                                         }
-                                        if (paragraphSpacing.spaceAfter > 0) {
-                                            textNodeOptions.paraSpaceAfter = paragraphSpacing.spaceAfter;
+                                        if (pAlign) {
+                                            textNodeOptions.align = pAlign;
+                                        }
+                                        if (pIndex > 0) {
+                                            if (paragraphSpacing.spaceBefore > 0) {
+                                                textNodeOptions.paraSpaceBefore = paragraphSpacing.spaceBefore;
+                                            }
+                                            if (paragraphSpacing.spaceAfter > 0) {
+                                                textNodeOptions.paraSpaceAfter = paragraphSpacing.spaceAfter;
+                                            }
                                         }
                                         isFirstRunInParagraph = false;
                                     }
@@ -939,26 +989,43 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
             const lumMod = spanElement?.getAttribute('originallummod');
             const lumOff = spanElement?.getAttribute('originallumoff');
 
-            // Handle text positioning and alignment
-            const justifyContent = element.style.justifyContent || 'flex-start';
-            const alignItems = element.style.alignItems || 'flex-start';
-            const textAlign = textElement?.style.textAlign || 'left';
+            const getCSSProp = (el, cssProp) => {
+                if (!el) return '';
+                const camel = cssProp.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+                const fromStyle = el.style && el.style[camel];
+                if (fromStyle) return fromStyle;
+                const raw = (el.getAttribute && el.getAttribute('style')) || '';
+                const m = raw.match(new RegExp('(?:^|;)\\s*' + cssProp + '\\s*:\\s*([^;]+)', 'i'));
+                return m ? m[1].trim() : '';
+            };
 
-            // Setting horizontal alignment
+            const innerJustifyContent = getCSSProp(textElement, 'justify-content');
+            const outerAlignItems = getCSSProp(element, 'align-items');
+            const textAlign = getCSSProp(textElement, 'text-align') ||
+                getCSSProp(textElement && textElement.querySelector('p'), 'text-align') ||
+                'left';
+
+            // Setting horizontal alignment — driven by text-align only
             let align = 'left';
-            if (textAlign === 'center' || justifyContent === 'center') {
+            if (textAlign === 'center') {
                 align = 'center';
-            } else if (textAlign === 'right' || justifyContent === 'flex-end') {
+            } else if (textAlign === 'right') {
                 align = 'right';
             } else if (textAlign === 'justify') {
                 align = 'justify';
             }
 
-            // Vertical alignment
+            // Vertical alignment — driven by justify-content on the inner flex-column container
             let valign = 'top';
-            if (alignItems === 'center') {
+            if (innerJustifyContent === 'center') {
                 valign = 'middle';
-            } else if (alignItems === 'flex-end') {
+            } else if (innerJustifyContent === 'flex-end' || innerJustifyContent === 'end') {
+                valign = 'bottom';
+            } else if (innerJustifyContent === 'flex-start' || innerJustifyContent === 'start') {
+                valign = 'top';
+            } else if (outerAlignItems === 'center') {
+                valign = 'middle';
+            } else if (outerAlignItems === 'flex-end' || outerAlignItems === 'end') {
                 valign = 'bottom';
             }
 

@@ -1036,7 +1036,9 @@ function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight,
     if (runRPrNode?.['$']?.u === "sng" || runRPrNode?.['$']?.u === "1") {
         textDecorations.push("underline");
     }
-    if (runRPrNode?.['$']?.strike === "1") {
+
+    const strikeValue = runRPrNode?.['$']?.strike;
+    if (strikeValue === "sngStrike" || strikeValue === "dblStrike" || strikeValue === "1") {
         textDecorations.push("line-through");
     }
 

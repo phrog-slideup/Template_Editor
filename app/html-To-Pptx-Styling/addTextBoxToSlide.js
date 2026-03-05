@@ -273,7 +273,7 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
         const hasMinHeight = p.style.minHeight && parseFloat(p.style.minHeight) > 0;
         const textContent = p.textContent || p.innerText || '';
         const isEmptyParagraph = isBreakOnlyParagraph || (textContent.replace(/\u00A0/g, '').replace(/\s/g, '') === '' && hasMinHeight);
-       
+
         if (isEmptyParagraph) {
             if (processedParagraphs.length > 0) {
                 const lastParagraph = processedParagraphs[processedParagraphs.length - 1];
@@ -297,7 +297,7 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
                     }]);
                 }
             }
-                } else {
+        } else {
             // Process non-empty paragraphs
             const paragraphText = processSpansInParagraphWithLineSpacing(p);
 
@@ -406,7 +406,7 @@ function processSpansInParagraphWithLineSpacing(paragraph) {
 
                 // FIXED: Extract line spacing from span
                 const spanOptions = extractSpanFormattingWithLineSpacing(span, defaultAlign, originalTxtColor, originalLumMod, originalLumOff);
-                
+
                 // Rakesh Notes::: ADD PARAGRAPH SPACING HERE: this if condiotion are added for spacing
                 if (paragraphSpacing.spaceBefore > 0) {
                     spanOptions.paraSpaceBefore = paragraphSpacing.spaceBefore;
@@ -434,13 +434,13 @@ function processSpansInParagraphWithLineSpacing(paragraph) {
         const cleanText = paragraphText.replace(/\u00A0/g, '').trim();
         if (cleanText || paragraphText.includes('\n')) {
             const paragraphOptions = extractParagraphFormattingWithLineSpacing(paragraph, defaultAlign);
-    // ADD PARAGRAPH SPACING HERE:
-    if (paragraphSpacing.spaceBefore > 0) {
-        paragraphOptions.paraSpaceBefore = paragraphSpacing.spaceBefore;
-    }
-    if (paragraphSpacing.spaceAfter > 0) {
-        paragraphOptions.paraSpaceAfter = paragraphSpacing.spaceAfter;
-    }
+            // ADD PARAGRAPH SPACING HERE:
+            if (paragraphSpacing.spaceBefore > 0) {
+                paragraphOptions.paraSpaceBefore = paragraphSpacing.spaceBefore;
+            }
+            if (paragraphSpacing.spaceAfter > 0) {
+                paragraphOptions.paraSpaceAfter = paragraphSpacing.spaceAfter;
+            }
             textRuns.push({
                 text: paragraphText,
                 options: paragraphOptions
@@ -455,13 +455,13 @@ function processSpansInParagraphWithLineSpacing(paragraph) {
 // Extract paragraph spacing from HTML
 function extractParagraphSpacing(pElement) {
     const style = pElement.style;
-    
+
     const marginTop = parseFloat(style.marginTop) || 0;
     const marginBottom = parseFloat(style.marginBottom) || 0;
-    
+
     // Convert pixels to points (PowerPoint uses points)
     const pxToPoints = (px, dpi = 72) => Math.round(px * (72 / dpi));
-    
+
     return {
         spaceBefore: pxToPoints(marginTop),
         spaceAfter: pxToPoints(marginBottom)
@@ -515,6 +515,11 @@ function extractParagraphFormattingWithLineSpacing(paragraph, defaultAlign = "le
         isUnderlined = true;
     }
 
+    let isStrikethrough = false;
+    if (style.textDecoration && style.textDecoration.includes('line-through')) {
+        isStrikethrough = true;
+    }
+
     const options = {
         fontFace: fontFamily,
         fontSize: fontSizePt,
@@ -522,7 +527,8 @@ function extractParagraphFormattingWithLineSpacing(paragraph, defaultAlign = "le
         align: defaultAlign,
         bold: isBold,
         italic: isItalic,
-        underline: isUnderlined
+        underline: isUnderlined,
+        strike: isStrikethrough
     };
 
     // Extract line spacing from paragraph
@@ -552,41 +558,41 @@ function extractSpanFormattingWithLineSpacing(span, defaultAlign = "left", origi
 
     // 🆕 NEW: Check for gradient data in span attributes
     const hasGradient = span.getAttribute('data-has-gradient') === 'true';
-    
+
     if (hasGradient) {
         const gradientType = span.getAttribute('data-gradient-type');
         const gradientStops = span.getAttribute('data-gradient-stops');
-        
+
         console.log(`🎨 Found gradient text: type=${gradientType}`);
-        
+
         if (gradientType && gradientStops) {
             try {
                 const stops = JSON.parse(gradientStops);
-                
+
                 // Use first stop color as fallback
                 finalColor = stops[0]?.color || '#000000';
-                
+
                 // Build options with gradient metadata
                 gradientOptions = {
                     _hasGradient: true,
                     _gradientType: gradientType,
                     _gradientStops: stops
                 };
-                
+
                 if (gradientType === 'linear') {
                     const angle = parseInt(span.getAttribute('data-gradient-angle')) || 90;
                     gradientOptions._gradientAngle = angle;
                     console.log(`   📐 Linear gradient angle: ${angle}°`);
-                    
+
                 } else if (gradientType === 'radial') {
                     gradientOptions._gradientPath = span.getAttribute('data-gradient-path') || 'circle';
                     gradientOptions._gradientCenterX = parseFloat(span.getAttribute('data-gradient-center-x')) || 50;
                     gradientOptions._gradientCenterY = parseFloat(span.getAttribute('data-gradient-center-y')) || 50;
                     console.log(`   🎯 Radial gradient center: (${gradientOptions._gradientCenterX}, ${gradientOptions._gradientCenterY})`);
                 }
-                
+
                 console.log(`   ✅ Gradient has ${stops.length} color stops`);
-                
+
             } catch (parseError) {
                 console.warn('⚠️ Failed to parse gradient data:', parseError);
                 finalColor = '#000000';
@@ -737,26 +743,32 @@ function extractSpanFormattingWithLineSpacing(span, defaultAlign = "left", origi
         isUnderlined = true;
     }
 
+    let isStrikethrough = false;
+    if (style.textDecoration && style.textDecoration.includes('line-through')) {
+        isStrikethrough = true;
+    }
+
     const options = {
         fontSize: fontSizePt,
         color: finalColor,
         align: defaultAlign,
         bold: isBold,
         italic: isItalic,
-        underline: isUnderlined
+        underline: isUnderlined,
+        strike: isStrikethrough
     };
 
     // ✅ Add gradient options if present
     if (hasGradient && gradientOptions) {
         Object.assign(options, gradientOptions);
-        
+
         // 🆕 REGISTER GRADIENT BY TEXT CONTENT
         // ✅ FIXED PATH: Go up one directory, then into template-engine
         const { registerTextGradient } = require('../template-engine/pptxgen-text-gradient-patch');
-        
+
         // Get the actual text from the span
         const spanText = span.textContent || span.innerText || '';
-        
+
         if (spanText.trim()) {
             const gradientData = {
                 type: gradientOptions._gradientType,
@@ -766,12 +778,12 @@ function extractSpanFormattingWithLineSpacing(span, defaultAlign = "left", origi
                 centerX: gradientOptions._gradientCenterX,
                 centerY: gradientOptions._gradientCenterY
             };
-            
+
             registerTextGradient(spanText.trim(), gradientData);
             console.log(`   🎨 Registered gradient for: "${spanText.trim().substring(0, 30)}..."`);
         }
     }
-    
+
     // 🔹 NEW: pick up original EA / CS / SYM from HTML attributes
     const originalEa = span.getAttribute('originalea');
     const originalCs = span.getAttribute('origincs');
@@ -821,8 +833,6 @@ function extractSpanFormattingWithLineSpacing(span, defaultAlign = "left", origi
 
     return options;
 }
-
-
 
 
 // FIXED: Improved line height extraction function
@@ -1002,6 +1012,11 @@ function extractSpanFormattingWithoutLineSpacing(span, defaultAlign = "left") {
         isUnderlined = true;
     }
 
+    let isStrikethrough = false;
+    if (style.textDecoration && style.textDecoration.includes('line-through')) {
+        isStrikethrough = true;
+    }
+
     const options = {
         fontFace: fontFamily,
         fontSize: fontSizePt,
@@ -1009,7 +1024,8 @@ function extractSpanFormattingWithoutLineSpacing(span, defaultAlign = "left") {
         align: defaultAlign,
         bold: isBold,
         italic: isItalic,
-        underline: isUnderlined
+        underline: isUnderlined,
+        strike: isStrikethrough
     };
 
     // Add superscript/subscript properties
@@ -1056,6 +1072,11 @@ function extractParagraphFormattingWithoutLineSpacing(paragraph, defaultAlign = 
         isUnderlined = true;
     }
 
+    let isStrikethrough = false;
+    if (style.textDecoration && style.textDecoration.includes('line-through')) {
+        isStrikethrough = true;
+    }
+
     return {
         fontFace: fontFamily,
         fontSize: fontSizePt,
@@ -1063,7 +1084,8 @@ function extractParagraphFormattingWithoutLineSpacing(paragraph, defaultAlign = 
         align: defaultAlign,
         bold: isBold,
         italic: isItalic,
-        underline: isUnderlined
+        underline: isUnderlined,
+        strike: isStrikethrough
     };
 }
 
@@ -1527,6 +1549,11 @@ function extractSpanFormattingFromListWithLineSpacing(span, globalLineSpacing = 
             isUnderlined = true;
         }
 
+        let isStrikethrough = false;
+        if (style.textDecoration && style.textDecoration.includes('line-through')) {
+            isStrikethrough = true;
+        }
+
         const textAlign = style.textAlign || "left";
         const validAlignments = ["left", "center", "right", "justify"];
         const finalAlign = validAlignments.includes(textAlign) ? textAlign : "left";
@@ -1538,7 +1565,8 @@ function extractSpanFormattingFromListWithLineSpacing(span, globalLineSpacing = 
             align: finalAlign,
             bold: isBold,
             italic: isItalic,
-            underline: isUnderlined
+            underline: isUnderlined,
+            strike: isStrikethrough
         };
 
         // Add superscript/subscript

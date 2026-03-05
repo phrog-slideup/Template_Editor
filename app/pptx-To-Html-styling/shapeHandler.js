@@ -22,7 +22,7 @@ const freeFormShape = require("./free_Form_Shape/generateFreeForm.js");
 
 // Define the directory to save images using config
 const imageSavePath = path.resolve(__dirname, "../uploads/");
- 
+
 if (!fs.existsSync(imageSavePath)) {
     fs.mkdirSync(imageSavePath, { recursive: true });
 }
@@ -90,14 +90,14 @@ class ShapeHandler {
 
         // Process connectors
         if (lineShapeTag && lineShapeTag.length > 0) {
-            
+
             for (const cxnSpNode of lineShapeTag) {
                 try {
                     const connectorHtml = await getLineConnectorHandler.convertConnectorToHTML(cxnSpNode, this.nodes, this.themeXML, this.clrMap, this.masterXML, this.layoutXML);
-                    
+
                     if (typeof connectorHtml === 'string' && connectorHtml.trim()) {
                         allHtmlElements.push(connectorHtml);
-                        
+
                     } else {
                         console.warn('Empty connector:', cxnSpNode?.["p:nvCxnSpPr"]?.[0]?.["p:cNvPr"]?.[0]?.["$"]?.name);
                     }
@@ -146,7 +146,7 @@ class ShapeHandler {
 
                 const chartZIndex = this.getZIndexForShape(chartShapeName);
 
-               
+
 
                 let chartHandler = null;
 
@@ -1675,10 +1675,10 @@ class ShapeHandler {
         if (isCtrTitlePlaceholder && !isTextBoxCheck) {
             const slideWidth = 960; // Standard slide width
             const slideHeight = 540; // Standard slide height
-            
+
             // Horizontally center
             adjustedLeft = (slideWidth - position.width) / 2;
-            
+
             // Vertically center
             adjustedTop = (slideHeight - effectiveHeight) / 2;
         }
@@ -2285,6 +2285,11 @@ class ShapeHandler {
 
         const shapeName = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvPr"]?.[0]?.["$"]?.name;
 
+        const phElement = shapeNode?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0];
+        if (phElement?.["$"]?.hasCustomPrompt === "1") {
+            return true;
+        }
+
         if (masterXML && shapeName) {
             const masterShapes = masterXML?.["p:sldMaster"]?.[0]?.["p:cSld"]?.[0]?.["p:spTree"]?.[0]?.["p:sp"] || [];
 
@@ -2294,20 +2299,6 @@ class ShapeHandler {
             });
 
             if (masterShape) {
-                return true;
-            }
-        }
-
-        if (shapeName) {
-            const masterPlaceholderNames = [
-                'Title Placeholder 1',
-                'Text Placeholder 2',
-                'Date Placeholder 3',
-                'Footer Placeholder 4',
-                'Slide Number Placeholder 5'
-            ];
-
-            if (masterPlaceholderNames.includes(shapeName)) {
                 return true;
             }
         }
@@ -3211,7 +3202,7 @@ class ShapeHandler {
             if (!textBody) return null;
 
             const paragraphs = textBody["a:p"] || [];
-            
+
             for (const p of paragraphs) {
                 const pPr = p["a:pPr"]?.[0];
                 if (pPr) {

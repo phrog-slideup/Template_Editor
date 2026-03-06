@@ -42,48 +42,43 @@ async function fixChartStyling(slideXmlsDir) {
                 const originalXml = chartXml;
                 let modified = false;
 
-                console.log(`   🔧 Processing ${chartFile}...`);
-
                 // ============================================
                 // FIX #1: REMOVE ALL BORDERS FROM BARS (ANY COLOR)
                 // ============================================
                 // This handles FFFFFF, F9F9F9, or any other border color
                 // Pattern matches any <a:ln> with <a:solidFill> inside <c:ser> sections
-                
+
                 // Pattern 1: Full border structure within series
                 const borderPatternInSeries = /(<c:ser>[\s\S]*?<c:spPr>[\s\S]*?)<a:ln w="\d+" cap="flat">\s*<a:solidFill>\s*<a:srgbClr val="[A-Fa-f0-9]{6}" \/>\s*<\/a:solidFill>\s*<a:prstDash val="solid" \/>\s*<a:round \/>\s*<\/a:ln>/g;
-                
+
                 if (chartXml.match(borderPatternInSeries)) {
                     chartXml = chartXml.replace(
                         borderPatternInSeries,
                         '$1<a:ln cap="flat">\n                        <a:noFill />\n                        <a:round />\n                    </a:ln>'
                     );
-                    console.log('      ✅ Removed borders from bars (full pattern)');
                     modified = true;
                 }
 
                 // Pattern 2: Simpler pattern for any border in series
                 // This catches variations where formatting might differ
                 const simpleBorderPattern = /(<c:ser>[\s\S]*?<a:solidFill>\s*<a:srgbClr val="[A-Fa-f0-9]{6}" \/>\s*<\/a:solidFill>\s*)<a:ln w="\d+" cap="flat">\s*<a:solidFill>\s*<a:srgbClr val="[A-Fa-f0-9]{6}" \/>\s*<\/a:solidFill>\s*<a:prstDash val="solid" \/>\s*<a:round \/>\s*<\/a:ln>/g;
-                
+
                 if (chartXml.match(simpleBorderPattern)) {
                     chartXml = chartXml.replace(
                         simpleBorderPattern,
                         '$1<a:ln cap="flat">\n                        <a:noFill />\n                        <a:round />\n                    </a:ln>'
                     );
-                    console.log('      ✅ Removed borders from bars (simple pattern)');
                     modified = true;
                 }
 
                 // Pattern 3: Direct replacement for any white/light borders (F9F9F9, FFFFFF, etc.)
                 const lightBorderPattern = /<a:ln w="\d+" cap="flat">\s*<a:solidFill>\s*<a:srgbClr val="F[0-9A-Fa-f]{5}" \/>\s*<\/a:solidFill>\s*<a:prstDash val="solid" \/>\s*<a:round \/>\s*<\/a:ln>/g;
-                
+
                 if (chartXml.match(lightBorderPattern)) {
                     chartXml = chartXml.replace(
                         lightBorderPattern,
                         '<a:ln cap="flat">\n                        <a:noFill />\n                        <a:round />\n                    </a:ln>'
                     );
-                    console.log('      ✅ Removed light-colored borders from bars');
                     modified = true;
                 }
 
@@ -94,7 +89,6 @@ async function fixChartStyling(slideXmlsDir) {
                 const gapWidthPattern = /<c:gapWidth val="150" \/>/g;
                 if (chartXml.match(gapWidthPattern)) {
                     chartXml = chartXml.replace(gapWidthPattern, '<c:gapWidth val="219" />');
-                    console.log('      ✅ Fixed bar gap width (150 → 219)');
                     modified = true;
                 }
 
@@ -105,7 +99,6 @@ async function fixChartStyling(slideXmlsDir) {
                 const overlapPattern = /<c:overlap val="0" \/>/g;
                 if (chartXml.match(overlapPattern)) {
                     chartXml = chartXml.replace(overlapPattern, '<c:overlap val="-27" />');
-                    console.log('      ✅ Fixed bar overlap (0 → -27)');
                     modified = true;
                 }
 
@@ -114,7 +107,7 @@ async function fixChartStyling(slideXmlsDir) {
                 // ============================================
                 // Change grid line color from EEEEEE, 888888, or any dark color to D9D9D9
                 // This is in the majorGridlines section
-                
+
                 // Pattern 1: Fix 888888 (dark gray)
                 const gridColor888Pattern = /<c:majorGridlines>\s*<c:spPr>\s*<a:ln w="\d+" cap="flat">\s*<a:solidFill>\s*<a:srgbClr val="888888" \/>/g;
                 if (chartXml.match(gridColor888Pattern)) {
@@ -122,10 +115,9 @@ async function fixChartStyling(slideXmlsDir) {
                         /<c:majorGridlines>([\s\S]*?)<a:srgbClr val="888888" \/>/g,
                         '<c:majorGridlines>$1<a:srgbClr val="D9D9D9" />'
                     );
-                    console.log('      ✅ Fixed grid line color (888888 → D9D9D9)');
                     modified = true;
                 }
-                
+
                 // Pattern 2: Fix EEEEEE (light gray)
                 const gridColorEEEPattern = /<c:majorGridlines>\s*<c:spPr>\s*<a:ln w="\d+" cap="flat">\s*<a:solidFill>\s*<a:srgbClr val="EEEEEE" \/>/g;
                 if (chartXml.match(gridColorEEEPattern)) {
@@ -133,10 +125,9 @@ async function fixChartStyling(slideXmlsDir) {
                         /<c:majorGridlines>([\s\S]*?)<a:srgbClr val="EEEEEE" \/>/g,
                         '<c:majorGridlines>$1<a:srgbClr val="D9D9D9" />'
                     );
-                    console.log('      ✅ Fixed grid line color (EEEEEE → D9D9D9)');
                     modified = true;
                 }
-                
+
                 // Pattern 3: Generic fix for any grid color that's not D9D9D9
                 const gridColorGenericPattern = /<c:majorGridlines>\s*<c:spPr>\s*<a:ln w="\d+" cap="flat">\s*<a:solidFill>\s*<a:srgbClr val="(?!D9D9D9)([A-Fa-f0-9]{6})" \/>/g;
                 if (chartXml.match(gridColorGenericPattern)) {
@@ -144,7 +135,6 @@ async function fixChartStyling(slideXmlsDir) {
                         gridColorGenericPattern,
                         '<c:majorGridlines>\n                    <c:spPr>\n                        <a:ln w="9525" cap="flat">\n                            <a:solidFill>\n                                <a:srgbClr val="D9D9D9" />'
                     );
-                    console.log('      ✅ Fixed grid line color (other → D9D9D9)');
                     modified = true;
                 }
 
@@ -155,7 +145,6 @@ async function fixChartStyling(slideXmlsDir) {
                         /(<c:majorGridlines>\s*<c:spPr>\s*<a:ln w=")12700"/g,
                         '$19525"'
                     );
-                    console.log('      ✅ Fixed grid line width (12700 → 9525)');
                     modified = true;
                 }
 
@@ -169,7 +158,6 @@ async function fixChartStyling(slideXmlsDir) {
                         axisColorPattern888,
                         '<a:srgbClr val="D9D9D9" />'
                     );
-                    console.log('      ✅ Fixed axis line colors (888888 → D9D9D9)');
                     modified = true;
                 }
 
@@ -190,7 +178,6 @@ async function fixChartStyling(slideXmlsDir) {
                         tickMarkOutPattern,
                         '<c:majorTickMark val="none" />'
                     );
-                    console.log('      ✅ Removed tick marks (out → none)');
                     modified = true;
                 }
 
@@ -204,7 +191,6 @@ async function fixChartStyling(slideXmlsDir) {
                         legendPosPattern,
                         '<c:legendPos val="b" />'
                     );
-                    console.log('      ✅ Fixed legend position (r → b)');
                     modified = true;
                 }
 
@@ -218,7 +204,6 @@ async function fixChartStyling(slideXmlsDir) {
                         roundedCornersPattern,
                         '<c:roundedCorners val="0" />'
                     );
-                    console.log('      ✅ Fixed rounded corners (1 → 0 for Syncfusion)');
                     modified = true;
                 }
 
@@ -237,10 +222,7 @@ async function fixChartStyling(slideXmlsDir) {
                 // Write fixed XML back if modified
                 if (modified && chartXml !== originalXml) {
                     await fsPromises.writeFile(chartPath, chartXml, 'utf8');
-                    console.log(`   ✅ Fixed chart styling in ${chartFile}`);
                     fixedCount++;
-                } else {
-                    console.log(`   ✓ No styling issues found in ${chartFile}`);
                 }
 
             } catch (error) {

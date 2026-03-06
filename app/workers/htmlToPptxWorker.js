@@ -73,7 +73,7 @@ parentPort.on("message", async (taskData) => {
         // For concurrent editing protection, ensure outputFilePath is unique per user/session
         const actualFolderName = originalFolderName || path.basename(outputFilePath, '.pptx');
 
-        console.log(`[${taskId}] Starting conversion - user:${userId || 'unknown'}, session:${sessionId || 'unknown'}, folder:${actualFolderName}`);
+        // console.log(`[${taskId}] Starting conversion - user:${userId || 'unknown'}, session:${sessionId || 'unknown'}, folder:${actualFolderName}`);
 
         // Ensure output directory
         const outputDir = path.dirname(outputFilePath);
@@ -129,7 +129,7 @@ parentPort.on("message", async (taskData) => {
         if (fileStats.size === 0) throw new Error('Generated PPTX file is empty');
 
         const processingTime = Date.now() - startTime;
-        console.log(`[${taskId}] Conversion successful in ${processingTime}ms`);
+        // console.log(`[${taskId}] Conversion successful in ${processingTime}ms`);
 
         parentPort.postMessage({
             success: true,

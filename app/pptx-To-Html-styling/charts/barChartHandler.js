@@ -414,8 +414,6 @@ class BarChartHandler {
 
                 if (detection.preferInteger) {
                     step = detection.suggestedStep;
-                } else {
-                    // console.log("🎯 Smart detection: Keeping decimal step", step, `(${detection.reason})`);
                 }
             }
         }
@@ -431,8 +429,6 @@ class BarChartHandler {
             min = Math.floor(min / step) * step;
             max = Math.ceil(max / step) * step;
 
-        } else {
-            // console.log("✅ Using exact min/max from PPTX:", { min, max });
         }
 
         const span = max - min || step;

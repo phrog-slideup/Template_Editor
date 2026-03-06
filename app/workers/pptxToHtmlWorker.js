@@ -97,7 +97,7 @@ parentPort.on("message", async (taskData) => {
             throw new Error('fileBuffer must be a Buffer or Uint8Array');
         }
 
-        console.log(`[${taskId}] Starting PPTX to HTML conversion for user:${userId || 'unknown'}, session:${sessionId || 'unknown'}, file:${path.basename(filePath)}`);
+        // console.log(`[${taskId}] Starting PPTX to HTML conversion for user:${userId || 'unknown'}, session:${sessionId || 'unknown'}, file:${path.basename(filePath)}`);
 
         // Create parser with task isolation
         const parser = new pptxParser(fileBuffer);
@@ -116,7 +116,7 @@ parentPort.on("message", async (taskData) => {
 
         const processingTime = Date.now() - startTime;
 
-        console.log(`[${taskId}] Conversion successful in ${processingTime}ms, ${slides.length} slides`);
+        // console.log(`[${taskId}] Conversion successful in ${processingTime}ms, ${slides.length} slides`);
 
         parentPort.postMessage({
             success: true,

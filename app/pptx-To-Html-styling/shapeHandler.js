@@ -93,7 +93,8 @@ class ShapeHandler {
 
             for (const cxnSpNode of lineShapeTag) {
                 try {
-                    const connectorHtml = await getLineConnectorHandler.convertConnectorToHTML(cxnSpNode, this.nodes, this.themeXML, this.clrMap, this.masterXML, this.layoutXML);
+                    
+                    const connectorHtml = await getLineConnectorHandler.convertConnectorToHTML(cxnSpNode, this.nodes, this.themeXML, masterXML, this.clrMap, this.layoutXML);
 
                     if (typeof connectorHtml === 'string' && connectorHtml.trim()) {
                         allHtmlElements.push(connectorHtml);
@@ -266,7 +267,7 @@ class ShapeHandler {
         };
     }
 
-    async convertShapeToHTML(shapeNode, themeXML) {
+    async convertShapeToHTML(shapeNode, themeXML, masterXML) {
         // Add this helper function at the top
         const sanitizeShapeName = (name) => {
             if (!name) return '';
@@ -314,32 +315,32 @@ class ShapeHandler {
 
                 if (imageInfo) {
                     return `<div class="shape image-container${placeholderClass}"
-        data-shape-type="image"
-        data-name="${shapeName}"
-        srcRectL="${imageInfo.cropping && imageInfo.cropping.leftRaw ? imageInfo.cropping.leftRaw : ''}"
-        srcRectR="${imageInfo.cropping && imageInfo.cropping.rightRaw ? imageInfo.cropping.rightRaw : ''}"
-        srcRectT="${imageInfo.cropping && imageInfo.cropping.topRaw ? imageInfo.cropping.topRaw : ''}"
-        srcRectB="${imageInfo.cropping && imageInfo.cropping.bottomRaw ? imageInfo.cropping.bottomRaw : ''}"
-        style="position:absolute;
-        left:${position.x}px;
-        top:${position.y}px;
-        height:${position.height}px;
-        width:${position.width}px;
-        ${shapeStyle}
-        ${boxShadowCSS}
-        ${containerCroppingStyles}
-        transform: ${imgcss.transform} rotate(${rotation}deg);
-        z-index:${zIndex};">
+                                        data-shape-type="image"
+                                        data-name="${shapeName}"
+                                        srcRectL="${imageInfo.cropping && imageInfo.cropping.leftRaw ? imageInfo.cropping.leftRaw : ''}"
+                                        srcRectR="${imageInfo.cropping && imageInfo.cropping.rightRaw ? imageInfo.cropping.rightRaw : ''}"
+                                        srcRectT="${imageInfo.cropping && imageInfo.cropping.topRaw ? imageInfo.cropping.topRaw : ''}"
+                                        srcRectB="${imageInfo.cropping && imageInfo.cropping.bottomRaw ? imageInfo.cropping.bottomRaw : ''}"
+                                        style="position:absolute;
+                                        left:${position.x}px;
+                                        top:${position.y}px;
+                                        height:${position.height}px;
+                                        width:${position.width}px;
+                                        ${shapeStyle}
+                                        ${boxShadowCSS}
+                                        ${containerCroppingStyles}
+                                        transform: ${imgcss.transform} rotate(${rotation}deg);
+                                        z-index:${zIndex};">
                             
-                            <img src="${imageInfo.src}" alt="Img"
-                                style="${imageCroppingStyles}
-                                transform: ${imgcss.flipH} ${imgcss.flipV} rotate(${rotation}deg);
-                                opacity:${imgcss.opacity};
-                                z-index:${zIndex};
-                                object-fit: cover;
-                                ${boxShadowCSS}
-                                ${combinedFilter}" />
-                        </div>`;
+                                            <img src="${imageInfo.src}" alt="Img"
+                                                style="${imageCroppingStyles}
+                                                transform: ${imgcss.flipH} ${imgcss.flipV} rotate(${rotation}deg);
+                                                opacity:${imgcss.opacity};
+                                                z-index:${zIndex};
+                                                object-fit: cover;
+                                                ${boxShadowCSS}
+                                                ${combinedFilter}" />
+                            </div>`;
                 }
                 // Rest of your shape rendering code...
             }
@@ -351,7 +352,9 @@ class ShapeHandler {
         let shapeInfo = '';
         // Ensure get ShapeFillColor is correctly called once
 
-        const fillProps = shapeFillColor.getShapeFillColor(shapeNode, themeXML, this.masterXML) ? shapeFillColor.getShapeFillColor(shapeNode, themeXML, this.masterXML) : { fillColor: "gray", opacity: 1 };
+        const masterXMLToUse = this.masterXML || masterXML;
+
+        const fillProps = shapeFillColor.getShapeFillColor(shapeNode, themeXML, masterXMLToUse) ? shapeFillColor.getShapeFillColor(shapeNode, themeXML, masterXMLToUse) : { fillColor: "gray", opacity: 1 };
         const shadowStyle = this.getShadowStyle(shapeNode);
 
         const fillColor = fillProps?.fillColor || "gray";
@@ -396,12 +399,12 @@ class ShapeHandler {
                 if (solidFill['a:srgbClr']) {
                     strokeColor = `#${solidFill['a:srgbClr'][0].$.val}`; // RGB Hex
                 } else if (solidFill['a:schemeClr']) {
-                    strokeColor = colorHelper.resolveThemeColorHelper(solidFill['a:schemeClr'][0].$.val, themeXML, this.masterXML);
+                    strokeColor = colorHelper.resolveThemeColorHelper(solidFill['a:schemeClr'][0].$.val, themeXML, masterXMLToUse);
                 }
             }
         }
 
-        const txBoxBorder = this.extractStrokePropertiesForBorder(outline, themeXML, this.masterXML);
+        const txBoxBorder = this.extractStrokePropertiesForBorder(outline, themeXML, masterXMLToUse);
 
         let borderBoxStyle = "";
         if (txBoxBorder.width > 0) {
@@ -559,7 +562,7 @@ class ShapeHandler {
                 }
 
                 // Get line color / opacity
-                const shapeColorsForLine = this.getShapeFillColor(shapeNode, themeXML, this.masterXML);
+                const shapeColorsForLine = this.getShapeFillColor(shapeNode, themeXML, masterXMLToUse);
                 const lineOpacity2 = shapeColorsForLine.strokeOpacity || 1.0;
 
                 let finalStrokeColor2 = '#000000';
@@ -2753,7 +2756,6 @@ class ShapeHandler {
                 // }
 
                 if (schmClr) {
-
 
                     fillColor = colorHelper.resolveThemeColorHelper(schmClr, themeXML, masterXML);
                 }

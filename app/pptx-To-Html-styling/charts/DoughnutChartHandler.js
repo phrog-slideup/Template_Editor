@@ -271,13 +271,6 @@ class DoughnutChartHandler {
         let currentAngle = 0;
         let stops = [];
 
-        // console.log("=== Doughnut Chart Rendering ===");
-        // console.log("First Slice Angle:", firstSliceAng);
-        // console.log("Values:", values);
-        // console.log("Colors:", colors);
-        // console.log("Total:", total);
-        // console.log("Border Angle:", borderAngle.toFixed(2) + "°");
-
         for (let i = 0; i < values.length; i++) {
             const value = values[i];
             const sliceDegrees = (value / total) * 360;

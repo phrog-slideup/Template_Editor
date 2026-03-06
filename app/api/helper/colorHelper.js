@@ -3,7 +3,6 @@ function resolveThemeColorHelper(colorKey, themeXML, masterXML) {
     const clrMapNode = masterXML?.["p:sldMaster"]?.["p:clrMap"]?.[0];
 
     // Log clrMapNode to check its structure
-    // console.log("clrMapNode:", clrMapNode);
 
     let mappedColorKey = colorKey;
 

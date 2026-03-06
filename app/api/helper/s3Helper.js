@@ -86,7 +86,7 @@ function parseS3Url(s3Url) {
             throw new Error('Could not extract bucket name and key from S3 URL');
         }
 
-        console.log(`Parsed S3 URL - Bucket: ${bucketName}, Key: ${key}, Region: ${region || 'default'}`);
+        // console.log(`Parsed S3 URL - Bucket: ${bucketName}, Key: ${key}, Region: ${region || 'default'}`);
         
         return {
             bucketName,
@@ -103,9 +103,9 @@ function parseS3Url(s3Url) {
 async function downloadPPTXFromS3(bucketName, key) {
     try {
         console.log(`🔍 Starting download from S3:`);
-        console.log(`   📁 Bucket: ${bucketName}`);
-        console.log(`   🔑 Key: ${key}`);
-        console.log(`   🌍 Region: ${getValidAWSRegion()}`);
+        // console.log(`   📁 Bucket: ${bucketName}`);
+        // console.log(`   🔑 Key: ${key}`);
+        // console.log(`   🌍 Region: ${getValidAWSRegion()}`);
         
         // Validate inputs
         if (!bucketName || typeof bucketName !== 'string') {
@@ -176,7 +176,7 @@ async function downloadPPTXFromS3Url(s3Url) {
 
 async function createPresignedDownloadUrl(bucketName, key, expiresIn = 3600) {
     try {
-        console.log(`Creating presigned download URL for: ${bucketName}/${key}`);
+        // console.log(`Creating presigned download URL for: ${bucketName}/${key}`);
         
         const command = new GetObjectCommand({
             Bucket: bucketName,
@@ -187,8 +187,8 @@ async function createPresignedDownloadUrl(bucketName, key, expiresIn = 3600) {
             expiresIn, // URL expires in seconds
         });
 
-        console.log(`✅ Presigned URL created successfully (expires in ${expiresIn} seconds)`);
-        console.log(`🔗 Presigned Download URL: ${signedUrl}`);
+        // console.log(`✅ Presigned URL created successfully (expires in ${expiresIn} seconds)`);
+        // console.log(`🔗 Presigned Download URL: ${signedUrl}`);
         return signedUrl;
     } catch (error) {
         console.error(`Error creating presigned URL for ${bucketName}/${key}:`, error);
@@ -205,7 +205,7 @@ async function createPresignedPPTXDownloadUrl(bucketName, key, options = {}) {
     } = options;
 
     try {
-        console.log(`Creating presigned PPTX download URL for: ${bucketName}/${key}`);
+        // console.log(`Creating presigned PPTX download URL for: ${bucketName}/${key}`);
         
         const commandParams = {
             Bucket: bucketName,
@@ -225,10 +225,10 @@ async function createPresignedPPTXDownloadUrl(bucketName, key, options = {}) {
         const signedUrl = await getSignedUrl(s3Client, command, { expiresIn });
 
         console.log(`✅ Presigned PPTX download URL created successfully`);
-        console.log(`🔗 PPTX Download URL: ${signedUrl}`);
-        console.log(`📁 Bucket: ${bucketName}`);
-        console.log(`🔑 Key: ${key}`);
-        console.log(`⏰ Expires in: ${expiresIn} seconds`);
+        // console.log(`🔗 PPTX Download URL: ${signedUrl}`);
+        // console.log(`📁 Bucket: ${bucketName}`);
+        // console.log(`🔑 Key: ${key}`);
+        // console.log(`⏰ Expires in: ${expiresIn} seconds`);
         if (downloadFilename) {
             console.log(`📄 Download as: ${downloadFilename}`);
         }

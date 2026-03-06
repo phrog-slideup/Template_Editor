@@ -17,21 +17,16 @@ async function getLayoutBackgroundColor(layoutXML, themeXML, relationshipsXML, m
             return { backgroundCSS: "" };
         }
 
-        // console.log("Checking layout background...");
-
         const layoutCsld = layoutXML?.["p:sldLayout"]?.["p:cSld"]?.[0];
         const layoutBgPr = layoutCsld?.["p:bg"]?.[0]?.["p:bgPr"]?.[0];
 
         if (!layoutBgPr) {
-            console.log("No layout background properties found");
 
             const masterBgPr = masterXML?.["p:sldMaster"]?.["p:cSld"]?.[0]?.["p:bg"]?.[0]?.["p:bgPr"]?.[0];
             if (masterBgPr) {
-                console.log("Found master background properties, trying to resolve...");
                 const masterBgResult = await processLayoutSolidFill(masterBgPr["a:solidFill"]?.[0], themeXML, masterXML);
 
                 if (masterBgResult) {
-                    console.log("Master background result found: ", masterBgResult);
                     return masterBgResult;
                 }
             }
@@ -44,8 +39,6 @@ async function getLayoutBackgroundColor(layoutXML, themeXML, relationshipsXML, m
         if (layoutSolidFill) {
             const solidFillResult = await processLayoutSolidFill(layoutSolidFill, themeXML, masterXML);
 
-            console.log("solidFillResult ==========>>>> ", solidFillResult);
-
             if (solidFillResult) {
                 return solidFillResult;
             }
@@ -55,8 +48,6 @@ async function getLayoutBackgroundColor(layoutXML, themeXML, relationshipsXML, m
         const layoutGradFill = layoutBgPr?.["a:gradFill"]?.[0];
         if (layoutGradFill) {
             const gradientResult = await processLayoutGradientFill(layoutGradFill, themeXML, masterXML);
-
-            console.log("gradientResult ==========>>>> ", gradientResult);
 
             if (gradientResult) {
                 return gradientResult;
@@ -68,8 +59,6 @@ async function getLayoutBackgroundColor(layoutXML, themeXML, relationshipsXML, m
         if (layoutPattFill) {
             const patternResult = await processLayoutPatternFill(layoutPattFill, themeXML, masterXML);
 
-            console.log("patternResult ==========>>>> ", patternResult);
-
             if (patternResult) {
                 return patternResult;
             }
@@ -78,11 +67,8 @@ async function getLayoutBackgroundColor(layoutXML, themeXML, relationshipsXML, m
         // Check for layout picture or texture fill
         const layoutPictureTextureFill = layoutBgPr?.["a:blipFill"]?.[0];
 
-        // console.log("layoutPictureTextureFill ==========----##########-----111111------- >>>>>>>>>>>>>> ", layoutPictureTextureFill);
-
         if (layoutPictureTextureFill) {
             const pictureResult = await processLayoutPictureFill(layoutPictureTextureFill, relationshipsXML, extractor);
-            console.log("pictureResult ==========>>>> ", pictureResult);
 
             if (pictureResult) {
                 return pictureResult;
@@ -93,7 +79,6 @@ async function getLayoutBackgroundColor(layoutXML, themeXML, relationshipsXML, m
         const layoutBgRef = layoutCsld?.["p:bg"]?.[0]?.["p:bgRef"]?.[0];
         if (layoutBgRef) {
             const bgRefResult = await processLayoutBackgroundReference(layoutBgRef, masterXML, themeXML);
-            console.log("bgRefResult ==========>>>> ", bgRefResult);
 
             if (bgRefResult) {
                 return bgRefResult;
@@ -118,11 +103,9 @@ async function processLayoutSolidFill(layoutSolidFill, themeXML, masterXML) {
             const alpha = layoutSolidFill["a:srgbClr"][0]["a:alpha"][0]["$"]?.val;
             if (alpha) {
                 transparency = 100 - (parseInt(alpha, 10) / 1000);
-                console.log(`Found layout solid fill alpha: ${alpha}, calculated transparency: ${transparency}%`);
             }
 
             const color = `#${layoutSolidFill["a:srgbClr"][0]["$"]?.val}`;
-            console.log(`Layout solid fill with alpha: ${color}, transparency: ${transparency}%`);
 
             return {
                 backgroundCSS: color,
@@ -133,7 +116,6 @@ async function processLayoutSolidFill(layoutSolidFill, themeXML, masterXML) {
         // Check for direct RGB color without alpha
         else if (layoutSolidFill?.["a:srgbClr"]) {
             const color = `#${layoutSolidFill["a:srgbClr"][0]["$"]?.val}`;
-            console.log(`Found layout solid fill: ${color}`);
 
             return {
                 backgroundCSS: color,
@@ -152,7 +134,6 @@ async function processLayoutSolidFill(layoutSolidFill, themeXML, masterXML) {
                 const alpha = layoutSchemeClr["a:alpha"][0]["$"]?.val;
                 if (alpha) {
                     transparency = 100 - (parseInt(alpha, 10) / 1000);
-                    console.log(`Found layout scheme color alpha: ${alpha}, calculated transparency: ${transparency}%`);
                 }
             }
 
@@ -161,12 +142,8 @@ async function processLayoutSolidFill(layoutSolidFill, themeXML, masterXML) {
 
             const baseColor = colorHelper.resolveThemeColorHelper(schemeClrVal, themeXML, masterXML);
 
-            console.log(`schemeClrVal =========>>>> ${schemeClrVal}, Found layout scheme color: ${baseColor}, transparency: ${transparency}%`);
-
             if (baseColor) {
                 const finalColor = applyLuminanceModifier(baseColor, lumMod, lumOff);
-                console.log(`Layout scheme color: ${finalColor}, transparency: ${transparency}%`);
-
                 return {
                     backgroundCSS: finalColor,
                     transparency: transparency,
@@ -212,7 +189,6 @@ async function processLayoutGradientFill(layoutGradFill, themeXML, masterXML) {
         }
 
         if (gradientCSS) {
-            console.log(`Found layout gradient fill: ${gradientCSS}`);
             return {
                 backgroundCSS: gradientCSS,
                 transparency: transparency,
@@ -232,7 +208,6 @@ async function processLayoutPatternFill(layoutPattFill, themeXML, masterXML) {
         const patternCSS = getPatternFillCSS(layoutPattFill, themeXML, masterXML);
 
         if (patternCSS) {
-            console.log(`Found layout pattern fill: ${patternCSS}`);
             return {
                 backgroundCSS: patternCSS,
                 source: 'layout-pattern-fill'
@@ -265,8 +240,6 @@ async function processLayoutPictureFill(layoutPictureTextureFill, relationshipsX
         const leftInset = parseInt(leftInsetEMU, 10) / 12700;
         const rightInset = parseInt(rightInsetEMU, 10) / 12700;
 
-        console.log(`Layout background insets: top=${topInset}px, bottom=${bottomInset}px, left=${leftInset}px, right=${rightInset}px`);
-
         // Get rotation info if available
         const rotWithShape = layoutPictureTextureFill?.["$"]?.rotWithShape === "1";
 
@@ -284,7 +257,6 @@ async function processLayoutPictureFill(layoutPictureTextureFill, relationshipsX
         const pictureTextureCSS = await getPictureTextureFillCSS(layoutPictureTextureFill, relationshipsXML, extractor);
 
         if (pictureTextureCSS) {
-            console.log(`Found layout picture fill: ${pictureTextureCSS}`);
             return {
                 backgroundCSS: pictureTextureCSS,
                 transparency: transparency,
@@ -316,7 +288,6 @@ async function processLayoutBackgroundReference(layoutBgRef, masterXML, themeXML
             const baseColor = colorHelper.resolveThemeColorHelper(schemeClrVal, themeXML, masterXML);
 
             if (baseColor) {
-                console.log(`Layout background reference to scheme color: ${baseColor}`);
                 return {
                     backgroundCSS: baseColor,
                     transparency: 0,
@@ -328,7 +299,6 @@ async function processLayoutBackgroundReference(layoutBgRef, masterXML, themeXML
         // If no scheme color, try to get from master based on index
         if (bgRefIndex && masterXML) {
             // This would need implementation based on your master structure
-            console.log(`Layout references master background index: ${bgRefIndex}`);
         }
 
         return null;
@@ -544,20 +514,16 @@ async function getPictureTextureFillCSS(blipFill, relationshipsXML, extractor) {
             const alternativePath1 = `ppt/${targetPath}`;
             const alternativePath2 = targetPath.replace(/^\.\.\//, "");
 
-            console.log("Trying alternative path 1:", alternativePath1);
             const altFile1 = extractor.files[alternativePath1];
 
             if (altFile1) {
-                console.log("Found layout image at alternative path 1");
                 const imageBuffer = await altFile1.async("nodebuffer");
                 return await saveAndReturnImageUrl(imageBuffer, targetPath, 'layout');
             }
 
-            console.log("Trying alternative path 2:", alternativePath2);
             const altFile2 = extractor.files[alternativePath2];
 
             if (altFile2) {
-                console.log("Found layout image at alternative path 2");
                 const imageBuffer = await altFile2.async("nodebuffer");
                 return await saveAndReturnImageUrl(imageBuffer, targetPath, 'layout');
             }
@@ -597,9 +563,6 @@ async function saveAndReturnImageUrl(imageBuffer, originalPath, prefix = 'layout
 
     // Generate the URL for the saved image
     const imageUrl = `/uploads/${uniqueFileName}`;
-
-    console.log(`Layout image saved to: ${filePath}`);
-    console.log(`Layout image URL: ${imageUrl}`);
 
     return `url('${imageUrl}')`;
 }

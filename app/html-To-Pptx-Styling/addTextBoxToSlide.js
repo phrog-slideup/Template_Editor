@@ -563,8 +563,6 @@ function extractSpanFormattingWithLineSpacing(span, defaultAlign = "left", origi
         const gradientType = span.getAttribute('data-gradient-type');
         const gradientStops = span.getAttribute('data-gradient-stops');
 
-        console.log(`🎨 Found gradient text: type=${gradientType}`);
-
         if (gradientType && gradientStops) {
             try {
                 const stops = JSON.parse(gradientStops);
@@ -588,10 +586,7 @@ function extractSpanFormattingWithLineSpacing(span, defaultAlign = "left", origi
                     gradientOptions._gradientPath = span.getAttribute('data-gradient-path') || 'circle';
                     gradientOptions._gradientCenterX = parseFloat(span.getAttribute('data-gradient-center-x')) || 50;
                     gradientOptions._gradientCenterY = parseFloat(span.getAttribute('data-gradient-center-y')) || 50;
-                    console.log(`   🎯 Radial gradient center: (${gradientOptions._gradientCenterX}, ${gradientOptions._gradientCenterY})`);
                 }
-
-                console.log(`   ✅ Gradient has ${stops.length} color stops`);
 
             } catch (parseError) {
                 console.warn('⚠️ Failed to parse gradient data:', parseError);
@@ -695,8 +690,6 @@ function extractSpanFormattingWithLineSpacing(span, defaultAlign = "left", origi
                     if ((originalLumMod && !isNaN(parseInt(originalLumMod))) ||
                         (originalLumOff && !isNaN(parseInt(originalLumOff)))) {
 
-                        console.log("Color name with luminance modifications, treating as scheme color");
-
                         let schemeColorVal = 'tx1'; // Default
                         if (originalTxtColor.toLowerCase() === 'black') {
                             schemeColorVal = 'tx1';
@@ -780,7 +773,6 @@ function extractSpanFormattingWithLineSpacing(span, defaultAlign = "left", origi
             };
 
             registerTextGradient(spanText.trim(), gradientData);
-            console.log(`   🎨 Registered gradient for: "${spanText.trim().substring(0, 30)}..."`);
         }
     }
 

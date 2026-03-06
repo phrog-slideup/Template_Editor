@@ -244,10 +244,6 @@ class TwoDAreaChartHandler {
             
             const parsed = parseFloat(v);
             
-            if (idx < 5) { // Log first 5 values for debugging
-               // console.log(`  📍 Value ${idx}: "${v}" → ${parsed} ${isNaN(parsed) ? '❌ INVALID' : '✅'}`);
-            }
-            
             values.push(isNaN(parsed) ? 0 : parsed);
         }
 
@@ -402,10 +398,6 @@ class TwoDAreaChartHandler {
         const majorUnitNode = axisNode.majorUnit?.[0] || axisNode["c:majorUnit"]?.[0];
         const majorUnit = majorUnitNode?.["$"]?.val ? parseFloat(majorUnitNode["$"].val) : undefined;
         
-        if (majorUnit) {
-           // console.log(`  📏 ${type} axis MAJOR UNIT from XML: ${majorUnit}`);
-        }
-
         const minorUnitNode = axisNode.minorUnit?.[0] || axisNode["c:minorUnit"]?.[0];
         const minorUnit = minorUnitNode?.["$"]?.val ? parseFloat(minorUnitNode["$"].val) : undefined;
 

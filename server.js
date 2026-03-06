@@ -197,7 +197,7 @@ async function initializeServer() {
     app.use(express.static(path.join(__dirname, "app/views")));
     app.use("/uploads", express.static(path.join(__dirname, "app/uploads")));
 
-    console.log(`Serving static files from: ${path.join(__dirname, "uploads")}`);
+    // console.log(`Serving static files from: ${path.join(__dirname, "uploads")}`);
 
     // Serve the frontend page (YOUR EXISTING CODE - UNCHANGED)
     app.get("/", (req, res) => {
@@ -284,13 +284,13 @@ async function initializeServer() {
     // Start the server (YOUR EXISTING CODE - UNCHANGED)
     const PORT = 3006;
     const server = app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+      // console.log(`Server running on port ${PORT}`);
       console.log(`📊 PPTX Worker pool: ${pptxWorkerPool.getStats().activeWorkers} workers`);
       console.log(`🎯 HTML Worker pool: ${htmlWorkerPool.getStats().activeWorkers} workers`);
-      console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
-      console.log(`📈 Worker stats: http://localhost:${PORT}/api/worker-stats`);
+      // console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
+      // console.log(`📈 Worker stats: http://localhost:${PORT}/api/worker-stats`);
       console.log(`🌐 Frontend: http://localhost:${PORT}`);
-      console.log(`📋 API Routes: http://localhost:${PORT}/api/slides/`);
+      // console.log(`📋 API Routes: http://localhost:${PORT}/api/slides/`);
     });
 
     // Handle server shutdown

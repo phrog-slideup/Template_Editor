@@ -108,16 +108,12 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         }
 
         // STEP 3: Write initial PPTX file
-        console.log('💾 Step 3: Writing initial PPTX file...');
-
         await pptx.writeFile({ fileName: outputFilePath });
 
         // STEP 5: Final cleanup
         await fixPptxFile(outputFilePath);
 
         // STEP 6: Extract and process slideX.xml files with unique directory
-        console.log('📜 Step 6: Extracting and processing slideX.xml files...');
-
         // FIXED: Create unique directory path BEFORE calling extractAndProcessSlideXMLs
         const uniqueDirName = `slide_xmls_${originalFolderName}_${Date.now()}`;
         const slideXmlsDir = path.join(path.dirname(outputFilePath), uniqueDirName);
@@ -155,32 +151,19 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         // ========================================
         // 🎨 STEP 6.5: INJECT TEXT GRADIENTS HERE
         // ========================================
-        console.log('🎨 Step 6.5: Injecting text gradients into slide XML...');
         const gradientResult = await injectTextGradientsIntoSlideXML(slideXmlsDir);
 
-        if (gradientResult.success && gradientResult.slidesProcessed > 0) {
-            console.log(`   ✅ Successfully processed ${gradientResult.slidesProcessed} slide(s) with gradients`);
-        } else if (gradientResult.success) {
-            console.log('   ℹ️  No text gradients found to inject');
-        } else {
-            console.log('   ⚠️  Gradient injection encountered issues:', gradientResult.error);
-        }
-
         // NEW STEP 6.7: Fix chart relationships
-        console.log('🔗 Step 6.7: Fixing chart relationships...');
         const chartRelsResult = await fixChartRelationships(slideXmlsDir);
 
         // NEW STEP 6.8: Validate embedded Excel files
-        console.log('📊 Step 6.8: Validating embedded Excel...');
         const excelValidation = await validateEmbeddedExcel(slideXmlsDir);
 
         // NEW STEP 6.9: Clean slide XML for Syncfusion compatibility
-        console.log('🧹 Step 6.9: Cleaning slides for Syncfusion compatibility...');
         const slideCleanResult = await cleanSlideXmlForSyncfusion(slideXmlsDir);
 
 
         // NEW STEP 6.10: Fix table cell alignment in merged cells
-        console.log('🔧 Step 6.10: Fixing table cell alignment...');
         const alignmentFixResult = await fixTableCellAlignment(slideXmlsDir);
 
         const fileFolderName = originalFolderName; // e.g., 'Agenda'
@@ -194,7 +177,6 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         await replaceSlideImages(fileFolderName, slideXmlsDir);
 
         // NEW STEP 7.5: Normalize chart references
-        console.log('🔄 Step 7.5: Normalizing chart references...');
         await normalizeChartReferences(fileFolderName, slideXmlsDir);
 
 
@@ -204,7 +186,6 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         const zipFileOutput = path.join(filesDir, `${fileFolderName}.zip`);
 
         // STEP 8: Convert zip to final PPTX file
-        console.log('🔄 Step 8: Converting zip to final PPTX...');
         const conversionResult = await convertZipToPptxFile(sourceFilePath, zipFileOutput, fileFolderName);
 
 
@@ -1499,8 +1480,6 @@ async function comprehensiveChartXmlFix(slideXmlsDir) {
                 if (chartContent !== originalContent) {
                     await fsPromises.writeFile(chartPath, chartContent, 'utf8');
                     fixedCount++;
-                } else {
-                    console.log(`   ✓ No fixes needed for ${chartFile}`);
                 }
 
             } catch (error) {

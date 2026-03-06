@@ -25,9 +25,9 @@ class PPTXParser {
     try {
       await this.load();
       Object.keys(this.zip.files).forEach((filename) => {
-        if (this.options.logFiles) {
-          console.log(`File in archive: ${filename}`); // Log every file extracted
-        }
+        // if (this.options.logFiles) {
+        //   console.log(`File in archive: ${filename}`); // Log every file extracted
+        // }
         this.files[filename] = this.zip.files[filename];
       });
 

@@ -197,8 +197,19 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
 
     // In the addTextBoxToSlide function, use the following logic to detect vertical alignment
     const verticalAlign = detectVerticalAlign(style, parentStyle);
+    // 03/09/2026rakesh In the addTextBoxToSlide function, use the following logic to detect vertical alignment
+    const vertValue = textBox.getAttribute('data-vert') || '';
 
+    // Map to PptxGenJS vert values
+    const pptxVertMap = {
+        'wordArtVert': 'wordArtVert',
+        'vert270': 'vert270',
+        'vert': 'vert',
+        'eaVert': 'eaVert'
+    };
+    const pptxVert = pptxVertMap[vertValue] || null;
     // Text box options with margin support
+
     const textBoxOptions = {
         x: x,
         y: y,
@@ -257,9 +268,6 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
 
     paragraphs.forEach((p, index) => {
 
-        // console.log(`\n=== Processing paragraph ${index} ===`);
-        // console.log("HTML:", p.innerHTML);
-        // console.log("Text:", p.textContent);
         const paragraphHTML = p.innerHTML.trim();
 
         const isBreakOnlyParagraph = paragraphHTML === '<br>' ||
@@ -341,8 +349,6 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
 
             textBoxOptions.name = "Sample Title";
             const flattenedText = processedParagraphs.flat();
-            // console.log("textBoxOptions===",textBoxOptions);
-            // console.log("flattenedText=======",flattenedText);
             pptSlide.addText(flattenedText, textBoxOptions);
         } catch (error) {
             console.error("Error adding text to slide:", error);
@@ -369,7 +375,7 @@ function processSpansInParagraphWithLineSpacing(paragraph) {
 
     // Rakesh Notes::: i have added this line
     const paragraphSpacing = extractParagraphSpacing(paragraph);
-    console.log("Paragraph spacing:", paragraphSpacing); // DEBUG
+    // console.log("Paragraph spacing:", paragraphSpacing); // DEBUG
     const spans = paragraph.querySelectorAll('span.span-txt, span');
 
     if (spans.length > 0) {
@@ -553,7 +559,7 @@ function extractSpanFormattingWithLineSpacing(span, defaultAlign = "left", origi
 
     let fontSizePx = superSubInfo.baseFontSize; // Use base font size, not reduced
     const fontSizePt = fontSizePx;
-    let finalColor;
+    let finalColor = rgbToHex(style.color || '#000000'); // safe fallback — always overwritten below
     let gradientOptions = null; // Declare outside to avoid scope issues
 
     // 🆕 NEW: Check for gradient data in span attributes
@@ -580,7 +586,6 @@ function extractSpanFormattingWithLineSpacing(span, defaultAlign = "left", origi
                 if (gradientType === 'linear') {
                     const angle = parseInt(span.getAttribute('data-gradient-angle')) || 90;
                     gradientOptions._gradientAngle = angle;
-                    console.log(`   📐 Linear gradient angle: ${angle}°`);
 
                 } else if (gradientType === 'radial') {
                     gradientOptions._gradientPath = span.getAttribute('data-gradient-path') || 'circle';
@@ -679,7 +684,7 @@ function extractSpanFormattingWithLineSpacing(span, defaultAlign = "left", origi
                     }
                 } else {
                     // Pure hex color without luminance modifications
-                    finalColor = '#' + originalTxtColor;
+                    finalColor = '#' + originalTxtColor.replace(/^#/, '');
                 }
             }
             // Check if it's a color name (like "black")
@@ -739,6 +744,16 @@ function extractSpanFormattingWithLineSpacing(span, defaultAlign = "left", origi
     let isStrikethrough = false;
     if (style.textDecoration && style.textDecoration.includes('line-through')) {
         isStrikethrough = true;
+    }
+
+    if (
+        finalColor == null ||
+        (typeof finalColor === 'string' && (
+            !finalColor.trim() ||
+            finalColor.toLowerCase() === 'undefined'
+        ))
+    ) {
+        finalColor = rgbToHex(style.color || '#000000');
     }
 
     const options = {

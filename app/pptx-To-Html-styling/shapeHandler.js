@@ -19,6 +19,7 @@ const getShapeBorderCSS = require("./shapes_Properties/shapeBorderHandler.js");
 const shapeFillColor = require("./shapes_Properties/getShapeFillColor.js");
 const getLineConnectorHandler = require("./lines_Connectors/linesConnectorHandler.js");
 const freeFormShape = require("./free_Form_Shape/generateFreeForm.js");
+const { getShapeShadowStyle } = require("./shapes_Properties/getShapeShadowStyle.js");
 
 // Define the directory to save images using config
 const imageSavePath = path.resolve(__dirname, "../uploads/");
@@ -93,8 +94,8 @@ class ShapeHandler {
 
             for (const cxnSpNode of lineShapeTag) {
                 try {
-                    
-                    const connectorHtml = await getLineConnectorHandler.convertConnectorToHTML(cxnSpNode, this.nodes, this.themeXML, masterXML, this.clrMap, this.layoutXML);
+
+                    const connectorHtml = await getLineConnectorHandler.convertConnectorToHTML(cxnSpNode, this.themeXML, masterXML, this.clrMap, this.layoutXML, this.nodes);
 
                     if (typeof connectorHtml === 'string' && connectorHtml.trim()) {
                         allHtmlElements.push(connectorHtml);
@@ -478,6 +479,7 @@ class ShapeHandler {
                     txtPhIdx="${txtPhIdx}"
                     txtPhSz="${txtPhSz}"
                     data-name="${shapeName}"
+                    data-vert="${shapeInfo.verticalText || ''}"
                     id="${uniqueId}"
                     style="
                         color:${shapeInfo.fontColor};
@@ -1703,6 +1705,7 @@ class ShapeHandler {
                 border-radius: ${borderRadius};
                 ${shapeBorder}
                 ${shapeBorderCSS}
+                ${shadowStyle}
                 display: ${hidden ? "none" : "flex"};
                 transform: ${transformString};                    
                 box-sizing: border-box;
@@ -2682,16 +2685,41 @@ class ShapeHandler {
     }
 
     // Rakesh Notes::: here above is the original function i have change it 
+    // 10/03/2026Rakesh start 
     getTransformString(position, isTextBox = false) {
         const transforms = [];
+        const rot = position.rotation || 0;
 
-        if (!isTextBox) {
+        if (isTextBox) {
+            const fH = position.flipH === true || position.flipH === "1" || position.flipH === 1;
+            const fV = position.flipV === true || position.flipV === "1" || position.flipV === 1;
+
+            let effectiveRot;
+
+            if (fH && fV) {
+                effectiveRot = rot + 180;   // both flips → +180°
+            } else if (fH) {
+                effectiveRot = rot;          // ✅ flipH only → use rot as-is (ignore flipH)
+            } else if (fV) {
+                effectiveRot = rot + 180;   // flipV only → +180°
+            } else {
+                effectiveRot = rot;          // no flip → unchanged
+            }
+
+            // Normalize to 0–360
+            effectiveRot = ((effectiveRot % 360) + 360) % 360;
+
+            const noTransformNeeded = !fH && !fV && effectiveRot === 0;
+            if (!noTransformNeeded) {
+                transforms.push(`rotate(${effectiveRot}deg)`);
+            }
+
+        } else {
+            if (position.rotation && position.rotation !== 0) {
+                transforms.push(`rotate(${position.rotation}deg)`);
+            }
             if (position.flipH) transforms.push('scaleX(-1)');
             if (position.flipV) transforms.push('scaleY(-1)');
-        }
-
-        if (position.rotation && position.rotation !== 0) {
-            transforms.push(`rotate(${position.rotation}deg)`);
         }
 
         return transforms.length ? transforms.join(' ') : 'none';
@@ -3110,41 +3138,46 @@ class ShapeHandler {
     }
 
     getShadowStyle(shapeNode) {
-        const shadowNode = shapeNode?.["p:spPr"]?.[0]?.["a:effectLst"]?.[0]?.["a:outerShdw"]?.[0];
-
-        if (!shadowNode) return "";
-
-        const dist = parseInt(shadowNode["$"].dist, 10) / this.getEMUDivisor(); // Convert EMU to pixels, distance will be used as border width
-        const dir = parseInt(shadowNode["$"].dir, 10) / 60000; // Convert 60000ths of a degree to degrees
-
-        // Extract color and alpha
-        const colorNode = shadowNode["a:prstClr"]?.[0];
-        let color = "#000000"; // Default black
-        let alpha = 1; // Default fully opaque
-
-        if (colorNode) {
-            if (colorNode["a:srgbClr"]) {
-                color = `#${colorNode["a:srgbClr"][0]["$"].val}`;
-            } else if (colorNode["a:schemeClr"]) {
-                // Handle scheme color mapping
-                color = this.resolveColor(colorNode["a:schemeClr"][0]["$"].val);
-            }
-
-            const alphaVal = colorNode["a:alpha"]?.[0]?.["$"]?.val;
-            if (alphaVal) {
-                alpha = parseInt(alphaVal, 10) / 100000; // Convert to CSS alpha range
-            }
-        }
-
-        // Convert color to RGB for border color
-        const rgbColor = this.hexToRGB(color);
-
-        // Determine border placement based on direction
-        const borderPlacement = this.calculateBorderPlacement(dir);
-        // return `border: ${borderPlacement}px solid rgba(${rgbColor}, ${alpha});`;
-
-        return `border: 2px solid rgba(${rgbColor}, ${alpha});`;
+        return getShapeShadowStyle(shapeNode, this.themeXML, this.masterXML, this.clrMap);
     }
+
+
+    // getShadowStyle(shapeNode) {
+    //     const shadowNode = shapeNode?.["p:spPr"]?.[0]?.["a:effectLst"]?.[0]?.["a:outerShdw"]?.[0];
+
+    //     if (!shadowNode) return "";
+
+    //     const dist = parseInt(shadowNode["$"].dist, 10) / this.getEMUDivisor(); // Convert EMU to pixels, distance will be used as border width
+    //     const dir = parseInt(shadowNode["$"].dir, 10) / 60000; // Convert 60000ths of a degree to degrees
+
+    //     // Extract color and alpha
+    //     const colorNode = shadowNode["a:prstClr"]?.[0];
+    //     let color = "#000000"; // Default black
+    //     let alpha = 1; // Default fully opaque
+
+    //     if (colorNode) {
+    //         if (colorNode["a:srgbClr"]) {
+    //             color = `#${colorNode["a:srgbClr"][0]["$"].val}`;
+    //         } else if (colorNode["a:schemeClr"]) {
+    //             // Handle scheme color mapping
+    //             color = this.resolveColor(colorNode["a:schemeClr"][0]["$"].val);
+    //         }
+
+    //         const alphaVal = colorNode["a:alpha"]?.[0]?.["$"]?.val;
+    //         if (alphaVal) {
+    //             alpha = parseInt(alphaVal, 10) / 100000; // Convert to CSS alpha range
+    //         }
+    //     }
+
+    //     // Convert color to RGB for border color
+    //     const rgbColor = this.hexToRGB(color);
+
+    //     // Determine border placement based on direction
+    //     const borderPlacement = this.calculateBorderPlacement(dir);
+    //     // return `border: ${borderPlacement}px solid rgba(${rgbColor}, ${alpha});`;
+
+    //     return `border: 2px solid rgba(${rgbColor}, ${alpha});`;
+    // }
 
     calculateBorderPlacement(directionDegrees) {
         if (directionDegrees >= 45 && directionDegrees < 135) {

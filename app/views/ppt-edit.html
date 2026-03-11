@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap"
+    rel="stylesheet">
+
+  <title>PPTX File List</title>
+  <style>
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 1000;
+    }
+
+    .modal-content {
+      background: white;
+      margin: 5% auto;
+      padding: 20px;
+      width: 90%;
+      max-height: 85vh;
+      overflow: auto;
+      position: relative;
+    }
+
+    .close {
+      position: absolute;
+      right: 10px;
+      top: 10px;
+      font-size: 24px;
+      cursor: pointer;
+    }
+
+    #pptxList {
+      list-style: none;
+      padding: 0;
+    }
+
+    #pptxList li {
+      margin: 10px 0;
+    }
+
+    #pptxList a {
+      text-decoration: none;
+      color: #2c5282;
+    }
+
+    #pptxList a:hover {
+      text-decoration: underline;
+    }
+
+    .button-container {
+      margin-top: 20px;
+      display: flex;
+      gap: 10px;
+    }
+
+    .action-button {
+      padding: 10px 20px;
+      background-color: #007BFF;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+
+    #pptContent[contenteditable="true"] {
+      border: 1px solid #ccc;
+      padding: 10px;
+      min-height: 100px;
+    }
+
+    .loader {
+      display: none;
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #3498db;
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      animation: spin 2s linear infinite;
+      margin-left: 10px;
+    }
+
+    @keyframes spin {
+      0% {
+        transform: rotate(0deg);
+      }
+
+      100% {
+        transform: rotate(360deg);
+      }
+    }
+
+    .status {
+      margin-top: 10px;
+      color: #666;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Available PPTX Files</h1>
+  <ul id="pptxList"></ul>
+
+  <div id="pptModal" class="modal">
+    <div class="modal-content">
+      <span class="close">&times;</span>
+      <div id="pptContent" contenteditable="true"></div>
+      <div class="button-container">
+        <button id="convertToPptx" class="action-button">Convert to PPTX</button>
+        <button id="downloadHtml" class="action-button">Download HTML File</button>
+        <button id="saveChanges" class="action-button">Save Changes</button>
+        <div class="loader" id="loader"></div>
+      </div>
+      <div class="status" id="statusMessage"></div>
+    </div>
+  </div>
+
+  <script>
+    const pptFileList = [
+
+      `============================ Slide =================================================`,
+
+      'http://localhost:3006/mohawk/TEXT-Issue/Global_Presentation_v4nv_38_.pptx',
+
+      'http://localhost:3006/mohawk/NFS-140-Gold.pptx',
+      'http://localhost:3006/mohawk/State_Local_Government_Presentation_Template_v12.2MP_1_1_29.pptx',
+
+      'http://localhost:3006/mohawk/M-Force-Ultra.pptx',
+      'http://localhost:3006/mohawk/M-Force-Ultra-converted.pptx',
+      'http://localhost:3006/mohawk/ccccc_10_7072_1772087164.pptx',
+      'http://localhost:3006/mohawk/Color-Pulse-Longweave.pptx',
+      'http://localhost:3006/mohawk/Personal-Studio.pptx',
+      `============================ Chart Slide =================================================`,
+
+      'http://localhost:3006/CHART/Bar-Chart-Handler-title.pptx',
+      'http://localhost:3006/CHART/Bar-Chart-Handler.pptx',
+      'http://localhost:3006/CHART/Column_Chart.pptx',
+      'http://localhost:3006/CHART/Line_Chart.pptx',
+
+      `============================ Slide =================================================`,
+
+      'http://localhost:3006/Slide_issues/split_presentations_123.pptx',
+      'http://localhost:3006/Slide_issues/alttext.pptx',
+
+      'http://localhost:3006/CHART/dw_160_6846_1770900624.pptx',
+      'http://localhost:3006/CHART/Three_Item_content_List.pptx',
+      'http://localhost:3006/SUL_IMG_1.1.20.pptx',
+      'http://localhost:3006/Shape-Color/SUL_SHP_1.1.2.pptx',
+      'http://localhost:3006/Shape-Color/SUL_SHP_1.1.6.pptx',
+      'http://localhost:3006/Shape-Color/SUL_SHP_1.1.34.pptx',
+      'http://localhost:3006/Shape-Color/SUL_SHP_1.1.35.pptx',
+      'http://localhost:3006/Shape-Color/SUL_SHP_1.1.36.pptx',
+      'http://localhost:3006/Shape-Color/SUL_SHP_1.1.43.pptx',
+
+
+      `============================ Gradient Slide =================================================`,
+
+      'http://localhost:3006/Gradient/Radial-gradient-color-stops.pptx',
+      'http://localhost:3006/Gradient/Linear-Gradient-color.pptx',
+      'http://localhost:3006/Gradient/path-Gradient-color.pptx',
+      'http://localhost:3006/Gradient/border-Enable.pptx',
+
+
+      `============================ Slide =================================================`,
+
+
+    ]
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const listContainer = document.getElementById("pptxList");
+      const modal = document.getElementById("pptModal");
+      const content = document.getElementById("pptContent");
+      const close = document.querySelector(".close");
+      const convertToPptxButton = document.getElementById("convertToPptx");
+      const downloadHtmlButton = document.getElementById("downloadHtml");
+      const saveChangesButton = document.getElementById("saveChanges");
+      const loader = document.getElementById("loader");
+      const statusMessage = document.getElementById("statusMessage");
+
+      let currentHtmlSlides = ""; // Store the current HTML content
+      let currentFileName = ""; // Store the current file name
+
+      // Show loading indicator
+      function showLoading(message = "Processing...") {
+        loader.style.display = "inline-block";
+        statusMessage.textContent = message;
+        convertToPptxButton.disabled = true;
+        downloadHtmlButton.disabled = true;
+        saveChangesButton.disabled = true;
+      }
+
+      // Hide loading indicator
+      function hideLoading() {
+        loader.style.display = "none";
+        statusMessage.textContent = "";
+        convertToPptxButton.disabled = false;
+        downloadHtmlButton.disabled = false;
+        saveChangesButton.disabled = false;
+      }
+
+      // Show status message
+      function showStatus(message, isError = false) {
+        statusMessage.textContent = message;
+        statusMessage.style.color = isError ? "#d32f2f" : "#2e7d32";
+        setTimeout(() => {
+          statusMessage.textContent = "";
+          statusMessage.style.color = "#666";
+        }, 5000);
+      }
+
+      // Populate the file list
+      pptFileList.forEach((fileUrl) => {
+        const fileName = fileUrl.split("/").pop().replace(/-/g, " ").replace(".pptx", "");
+        const listItem = document.createElement("li");
+        const link = document.createElement("a");
+        link.textContent = fileName;
+        link.href = "#";
+
+        link.onclick = async (e) => {
+          e.preventDefault();
+          currentFileName = fileUrl.split("/").pop();
+
+          showLoading("Loading presentation...");
+
+          try {
+            const response = await fetch('/api/slides/upload', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ filePath: fileUrl }),
+            });
+
+            if (!response.ok) {
+              const errorText = await response.text();
+              throw new Error(`Failed to fetch PPT content: ${response.status} ${errorText}`);
+            }
+
+            const json = await response.json();
+            currentHtmlSlides = json.slides.join('\n');
+            content.innerHTML = currentHtmlSlides;
+            modal.style.display = 'block';
+            showStatus("Presentation loaded successfully");
+          } catch (error) {
+            console.error('Error loading PPT:', error);
+            showStatus(`Failed to load presentation: ${error.message}`, true);
+          } finally {
+            hideLoading();
+          }
+        };
+
+        listItem.appendChild(link);
+        listContainer.appendChild(listItem);
+      });
+
+      // Close modal when clicking X or outside
+      close.onclick = () => modal.style.display = "none";
+      window.onclick = (e) => {
+        if (e.target === modal) modal.style.display = "none";
+      };
+
+      // Function to save slides
+      async function saveSlides() {
+        const updatedSlides = document.getElementById("pptContent").innerHTML;
+
+        try {
+          showLoading("Saving changes...");
+
+          // Send the exact format expected by the server
+          const saveResponse = await fetch("/api/slides/saveSlides", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              updatedSlides: [updatedSlides],  // Send as array, matching original format
+              fileName: currentFileName
+            }),
+          });
+
+          console.log("Save response:", saveResponse);
+          if (!saveResponse.ok) {
+            const errorData = await saveResponse.json();
+            throw new Error(`Server returned ${saveResponse.status}: ${errorData.error || JSON.stringify(errorData)}`);
+          }
+
+          // Update the currentHtmlSlides variable to reflect changes
+          currentHtmlSlides = updatedSlides;
+          showStatus("Slides saved successfully");
+          return true;
+        } catch (error) {
+          console.error("Error saving slides:", error);
+          showStatus(`Failed to save slides: ${error.message}`, true);
+          return false;
+        } finally {
+          hideLoading();
+        }
+      }
+
+      // Save changes button
+      saveChangesButton.onclick = saveSlides;
+
+      // Convert to PPTX after saving slides
+      convertToPptxButton.onclick = async () => {
+        if (await saveSlides()) {
+          try {
+            showLoading("Converting to PPTX...");
+
+            const response = await fetch('/api/slides/convertToPPTX', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                html: currentHtmlSlides,
+                fileName: currentFileName.replace(".pptx", "-converted.pptx")
+              }),
+            });
+
+            if (!response.ok) {
+              const errorText = await response.text();
+              throw new Error(`Server returned ${response.status}: ${errorText}`);
+            }
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = currentFileName.replace(".pptx", "-converted.pptx");
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+
+            showStatus("PPTX downloaded successfully");
+          } catch (error) {
+            console.error('Error converting to PPTX:', error);
+            showStatus(`Failed to convert HTML to PPTX: ${error.message}`, true);
+          } finally {
+            hideLoading();
+          }
+        }
+      };
+
+      // Download HTML File after saving changes
+      downloadHtmlButton.onclick = async () => {
+        if (await saveSlides()) {
+          try {
+            showLoading("Preparing HTML download...");
+
+            const response = await fetch(`/api/slides/downloadHTML?fileName=${encodeURIComponent(currentFileName.replace(".pptx", ".html"))}`);
+
+            if (!response.ok) {
+              const errorText = await response.text();
+              throw new Error(`Server returned ${response.status}: ${errorText}`);
+            }
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = currentFileName.replace(".pptx", ".html");
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+
+            showStatus("HTML file downloaded successfully");
+          } catch (error) {
+            console.error('Error downloading HTML:', error);
+            showStatus(`Failed to download HTML: ${error.message}`, true);
+          } finally {
+            hideLoading();
+          }
+        }
+      };
+    });
+  </script>
+</body>
+
+</html>

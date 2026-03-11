@@ -1,0 +1,2142 @@
+/* ============================================
+   PRESENTATION EDITOR - STYLES
+   PowerPoint-Style Interface
+   ============================================ */
+
+/* Reset & Base */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+    background: #1a1a1a;
+    color: #e0e0e0;
+    overflow: hidden;
+    height: 100vh;
+}
+
+/* ============================================
+   MAIN CONTAINER
+   ============================================ */
+.editor-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    background: #2e2e2e;
+    width: 96%;
+}
+
+/* ============================================
+   TOP BAR
+   ============================================ */
+.top-bar {
+    background: #3a3a3a;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    justify-content: space-between;
+    border-bottom: 1px solid #2a2a2a;
+}
+
+.top-bar-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.app-icon {
+    width: 24px;
+    height: 24px;
+    background: linear-gradient(135deg, #ff6c36 0%, #ff5722 100%);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+}
+
+.doc-title {
+    font-size: 14px;
+    color: #e0e0e0;
+    font-weight: 500;
+    outline: none;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.doc-title:hover {
+    background: #4a4a4a;
+}
+
+.doc-title:focus {
+    background: #3a3a3a;
+    border: 1px solid #ff6c36;
+}
+
+.top-bar-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.window-control {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    color: #e0e0e0;
+    font-size: 18px;
+    transition: all 0.2s;
+}
+
+.window-control:hover {
+    background: #4a4a4a;
+}
+
+.window-control.close:hover {
+    background: #e81123;
+    color: white;
+}
+
+/* ============================================
+   MENU BAR
+   ============================================ */
+.menu-bar {
+    background: #3a3a3a;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    border-bottom: 1px solid #2a2a2a;
+    gap: 2px;
+}
+
+/* Right-side controls in menu bar (Undo/Redo near Image Format) */
+.menu-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.menu-right .tool-btn {
+    height: 28px;
+    min-width: 28px;
+    padding: 0 4px;
+}
+
+.menu-item {
+    padding: 8px 16px;
+    cursor: pointer;
+    font-size: 13px;
+    border-radius: 6px;
+    transition: all 0.15s;
+    color: #e0e0e0;
+    font-weight: 500;
+    user-select: none;
+}
+
+.menu-item:hover {
+    background: #4a4a4a;
+}
+
+.menu-item.active {
+    background: linear-gradient(135deg, #ff6c36 0%, #ff5722 100%);
+    color: white;
+}
+
+/* ============================================
+   TOOLBAR CONTAINER
+   ============================================ */
+.toolbar-container {
+    background: #3a3a3a;
+    border-bottom: 1px solid #2a2a2a;
+}
+
+.toolbar {
+    padding: 8px 12px;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    overflow-x: auto;
+    min-height: 52px;
+}
+
+.toolbar.active {
+    display: flex;
+}
+
+.toolbar::-webkit-scrollbar {
+    height: 4px;
+}
+
+.toolbar::-webkit-scrollbar-track {
+    background: #2e2e2e;
+}
+
+.toolbar::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 2px;
+}
+
+/* ============================================
+   TOOLBAR GROUPS
+   ============================================ */
+.toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding-right: 12px;
+    border-right: 1px solid #4a4a4a;
+}
+
+.toolbar-group:last-child {
+    border-right: none;
+}
+
+/* ============================================
+   TOOL BUTTONS
+   ============================================ */
+.tool-btn {
+    min-width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: #e0e0e0;
+    cursor: pointer;
+    border-radius: 4px;
+    padding: 0 6px;
+    font-size: 16px;
+    font-weight: 600;
+    transition: all 0.15s;
+    position: relative;
+}
+
+.tool-btn:hover {
+    background: #4a4a4a;
+}
+
+.tool-btn:active {
+    background: #5a5a5a;
+}
+
+.tool-btn.active {
+    background: #ff6c36;
+    color: white;
+}
+
+.tool-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.tool-btn:disabled:hover {
+    background: transparent;
+}
+
+.tool-btn.large {
+    padding: 4px 12px;
+    gap: 6px;
+    height: 36px;
+    min-width: auto;
+}
+
+.tool-btn.large svg {
+    flex-shrink: 0;
+}
+
+.tool-btn.large span {
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.tool-btn strong,
+.tool-btn em,
+.tool-btn u,
+.tool-btn s {
+    font-size: 14px;
+    font-style: normal;
+}
+
+/* ============================================
+   DROPDOWNS (Font & Size)
+   ============================================ */
+.font-select,
+.font-size {
+    height: 32px;
+    background: #2e2e2e;
+    border: 1px solid #4a4a4a;
+    color: #e0e0e0;
+    border-radius: 4px;
+    padding: 0 8px;
+    font-size: 13px;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.2s;
+    appearance: auto;
+    -moz-appearance: auto;
+    -webkit-appearance: auto;
+}
+
+.font-select {
+    min-width: 140px;
+}
+
+.font-size {
+    min-width: 60px;
+    text-align: center;
+}
+
+.font-select:hover,
+.font-size:hover {
+    border-color: #6a6a6a;
+    background: #3a3a3a;
+}
+
+.font-select:focus,
+.font-size:focus {
+    border-color: #ff6c36;
+    background: #3a3a3a;
+}
+
+.font-select option,
+.font-size option {
+    background: #2e2e2e;
+    color: #e0e0e0;
+}
+
+/* Zoom Display in Toolbar */
+.zoom-display {
+    min-width: 50px;
+    padding: 4px 8px;
+    text-align: center;
+    font-size: 13px;
+    color: #e0e0e0;
+    font-weight: 500;
+    background: #3a3a3a;
+    border-radius: 4px;
+    border: 1px solid #4a4a4a;
+}
+
+/* ============================================
+   COLOR PICKERS
+   ============================================ */
+.color-picker-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.color-input {
+    position: absolute;
+    width: 32px;
+    height: 32px;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.color-label {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.15s;
+    gap: 2px;
+    padding: 4px;
+}
+
+.color-label:hover {
+    background: #4a4a4a;
+}
+
+.color-icon {
+    font-size: 16px;
+    font-weight: bold;
+    color: #e0e0e0;
+    line-height: 1;
+}
+
+.color-icon.highlight {
+    font-size: 14px;
+}
+
+.color-bar {
+    width: 24px;
+    height: 3px;
+    border-radius: 1px;
+}
+
+#textColorBar {
+    background: #000000;
+}
+
+#highlightColorBar {
+    background: #FFFF00;
+}
+
+/* ============================================
+   MAIN CONTENT AREA
+   ============================================ */
+.main-content {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* ============================================
+   LEFT SIDEBAR (Slides)
+   ============================================ */
+.left-sidebar {
+    width: 240px;
+    background: #2e2e2e;
+    border-right: 1px solid #2a2a2a;
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar-header {
+    height: 40px;
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid #2a2a2a;
+    padding: 0 8px;
+    gap: 4px;
+}
+
+.sidebar-tab {
+    padding: 6px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.15s;
+    color: #b0b0b0;
+    font-weight: 500;
+}
+
+.sidebar-tab:hover {
+    background: #3a3a3a;
+    color: #e0e0e0;
+}
+
+.sidebar-tab.active {
+    background: #3a3a3a;
+    color: #ff6c36;
+    border-bottom: 2px solid #ff6c36;
+}
+
+.slides-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 8px;
+}
+
+.slides-container::-webkit-scrollbar {
+    width: 6px;
+}
+
+.slides-container::-webkit-scrollbar-track {
+    background: #2e2e2e;
+}
+
+.slides-container::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 3px;
+}
+
+.slide-thumb {
+    background: #3a3a3a;
+    border-radius: 6px;
+    padding: 8px;
+    margin-bottom: 12px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: all 0.2s;
+    position: relative;
+}
+
+.slide-thumb:hover {
+    border-color: #4a4a4a;
+    background: #404040;
+}
+
+.slide-thumb.active {
+    border-color: #ff6c36;
+    background: #404040;
+}
+
+.slide-number {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    background: #2e2e2e;
+    color: #b0b0b0;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: 600;
+}
+
+.sli-preview {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: white;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.preview-content {
+    color: #999;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+/* Slide Delete Button */
+.slide-delete-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 20px;
+    height: 20px;
+    background: #e74c3c;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+    line-height: 1;
+    transition: all 0.2s;
+    z-index: 10;
+    padding: 0;
+}
+
+.slide-thumb:hover .slide-delete-btn {
+    display: flex;
+}
+
+.slide-delete-btn:hover {
+    background: #c0392b;
+    transform: scale(1.1);
+}
+
+.slide-delete-btn:active {
+    transform: scale(0.95);
+}
+
+/* ============================================
+   CANVAS AREA
+   ============================================ */
+.canvas-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: #252525;
+    position: relative;
+}
+
+.canvas {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+    overflow: auto;
+}
+
+.canvas::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.canvas::-webkit-scrollbar-track {
+    background: #1a1a1a;
+}
+
+.canvas::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 5px;
+}
+
+.slide-canvas {
+    width: 960px;
+    height: 540px;
+    background: white;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    position: relative;
+    transform-origin: center;
+    overflow: hidden; /* Clip text overflow at slide boundary — shapes never push down */
+}
+
+/* ============================================
+   TEXT ELEMENTS
+   ============================================ */
+.inserted .sli-txt-box {
+    min-height: 50px;
+    min-width: 100px;
+    resize: vertical; /* Allow resizing vertically */
+    overflow: hidden; /* Prevent overflow */
+    word-wrap: break-word;
+    white-space: pre-wrap; /* Ensure text wraps within the box */
+    box-sizing: border-box;
+    background-color: transparent;
+    border: 1px solid #ccc;
+    padding: 10px;
+}
+
+.sli-txt-box p {
+    margin: 0;
+    text-align: left;
+}
+
+.sli-txt-box:empty {
+    color: #999;
+    font-style: italic;
+}
+
+.sli-txt-box:focus {
+    outline: 2px solid #ff6c36;
+}
+
+
+
+
+/* .sli-txt-box:focus {
+    outline: none;
+    border-color: #ff6c36;
+}
+
+.sli-txt-box.hover {
+    border: 2px dashed rgba(255, 108, 54, 0.5);
+} */
+
+/* .sli-txt-box.selected {
+    outline: none;
+    border: 2px solid #ff6c36;
+    box-shadow: 0 0 0 1px rgba(255, 108, 54, 0.3);
+} */
+
+/* .sli-txt-box.dragable {
+    cursor: move !important;
+    opacity: 0.8;
+}
+
+.sli-txt-box[data-placeholder]:empty:before {
+    content: attr(data-placeholder);
+    color: #999;
+    pointer-events: none;
+} */
+
+.inserted .sli-txt-box p {
+    margin: 0;
+    line-height: 1.4;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    white-space: normal;
+    color: #404051;
+}
+
+
+
+.inserted .sli-txt-box span {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+
+/* Resize Handles */
+/* Orange circles at corners and edges for resizing */
+.resize-handle {
+    position: absolute;
+    background: #ff6c36;
+    border: 2px solid white;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: none;
+    z-index: 100;
+    clip-path: none !important;
+    pointer-events: auto;
+}
+
+.shape.selected .resize-handle, .custom-shape.selected .resize-handle,
+.shape.hover .resize-handle, .custom-shape.hover .resize-handle,
+.sli-slide .image-container.selected .resize-handle,
+.sli-slide .image-container.hover .resize-handle {
+    display: block;
+}
+
+.resize-handle.top-left {
+    top: -5px;
+    left: -5px;
+    cursor: nw-resize !important;
+}
+
+.resize-handle.top-right {
+    top: -5px;
+    right: -5px;
+    cursor: ne-resize !important;
+}
+
+.resize-handle.bottom-left {
+    bottom: -5px;
+    left: -5px;
+    cursor: sw-resize !important;
+}
+
+.resize-handle.bottom-right {
+    bottom: -5px;
+    right: -5px;
+    cursor: se-resize !important;
+}
+
+.resize-handle.top-center {
+    top: -5px;
+    left: 50%;
+    transform: translateX(-50%);
+    cursor: n-resize !important;
+}
+
+/* Larger invisible hit area so n-resize cursor shows reliably */
+.resize-handle.top-center::before {
+    content: '';
+    position: absolute;
+    top: -8px; left: -8px; right: -8px; bottom: -8px;
+    cursor: n-resize;
+}
+
+.resize-handle.bottom-center {
+    bottom: -5px;
+    left: 50%;
+    transform: translateX(-50%);
+    cursor: s-resize !important;
+}
+
+/* Larger invisible hit area so s-resize cursor shows reliably */
+.resize-handle.bottom-center::before {
+    content: '';
+    position: absolute;
+    top: -8px; left: -8px; right: -8px; bottom: -8px;
+    cursor: s-resize;
+}
+
+.resize-handle.left-center {
+    left: -5px;
+    top: 50%;
+    transform: translateY(-50%);
+    cursor: w-resize !important;
+}
+
+.resize-handle.right-center {
+    right: -5px;
+    top: 50%;
+    transform: translateY(-50%);
+    cursor: e-resize !important;
+}
+
+/* Delete Button */
+.delete-btn {
+    position: absolute;
+    top: -12px;
+    right: -12px;
+    width: 24px;
+    height: 24px;
+    background: #e81123;
+    color: white;
+    border: 2px solid white;
+    border-radius: 50%;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+    z-index: 101;
+    transition: all 0.2s;
+    clip-path: none !important;
+    pointer-events: auto;
+}
+
+
+.delete-btn:hover {
+    background: #c00d1f;
+    transform: scale(1.1);
+}
+
+/* Move Handle */
+/* Rotate Handle */
+.rotate-handle {
+    position: absolute;
+    top: -35px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 24px;
+    height: 24px;
+    background: #ff6c36;
+    color: white;
+    border-radius: 50%;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: grab;
+    font-size: 14px;
+    font-weight: bold;
+    border: 2px solid white;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    transition: all 0.2s;
+    z-index: 1002;
+    clip-path: none !important;
+    pointer-events: auto;
+}
+
+/* Show delete button for text, shapes, images */
+.sli-txt-box.selected .delete-btn,
+.sli-txt-box.hover .delete-btn,
+.shape.selected .delete-btn,
+.shape.hover .delete-btn,
+.custom-shape.selected .delete-btn,
+.custom-shape.hover .delete-btn,
+.sli-slide .image-container.selected .delete-btn,
+.sli-slide .image-container.hover .delete-btn,
+.insertable-element.selected .delete-btn,
+.insertable-element.hover .delete-btn {
+    display: flex;
+}
+
+/* Show rotate handle for text, shapes, images */
+.sli-txt-box.selected .rotate-handle,
+.sli-txt-box.hover .rotate-handle,
+.shape.selected .rotate-handle,
+.shape.hover .rotate-handle,
+.custom-shape.selected .rotate-handle,
+.custom-shape.hover .rotate-handle,
+.sli-slide .image-container.selected .rotate-handle,
+.sli-slide .image-container.hover .rotate-handle,
+.insertable-element.selected .rotate-handle,
+.insertable-element.hover .rotate-handle {
+    display: flex;
+}
+
+/* Ensure controls sit above image/chart */
+.sli-slide .image-container .resize-handle,
+.sli-slide .image-container .delete-btn,
+.sli-slide .image-container .rotate-handle {
+    z-index: 1100;
+}
+
+.rotate-handle:hover {
+    background: #e65a2a;
+    transform: translateX(-50%) scale(1.1);
+}
+
+.rotate-handle:active {
+    cursor: grabbing;
+}
+
+/* Ensure handles don't block text selection */
+.resize-handle,
+.delete-btn,
+.rotate-handle {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+}
+
+/* ============================================
+   ZOOM CONTROLS
+   ============================================ */
+.zoom-controls {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #3a3a3a;
+    padding: 6px 12px;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.zoom-btn {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: #e0e0e0;
+    font-size: 16px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.15s;
+}
+
+.zoom-btn:hover {
+    background: #4a4a4a;
+}
+
+.zoom-level {
+    min-width: 45px;
+    text-align: center;
+    font-size: 13px;
+    color: #e0e0e0;
+    font-weight: 500;
+}
+
+/* ============================================
+   STATUS BAR
+   ============================================ */
+.status-bar {
+    height: 28px;
+    background: #3a3a3a;
+    border-top: 1px solid #2a2a2a;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    font-size: 12px;
+    color: #b0b0b0;
+}
+
+.status-left,
+.status-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+@media (max-width: 1200px) {
+    .left-sidebar {
+        width: 200px;
+    }
+
+    .slide-canvas {
+        width: 800px;
+        height: 450px;
+    }
+}
+
+@media (max-width: 900px) {
+    .toolbar-group {
+        padding-right: 8px;
+    }
+
+    .tool-btn.large span {
+        display: none;
+    }
+
+    .font-select {
+        min-width: 100px;
+    }
+}
+
+/* ============================================
+   ANIMATIONS
+   ============================================ */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateY(-10px);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+/* ============================================
+   SELECTION STYLES
+   ============================================ */
+::selection {
+    background: #ff6c36;
+    color: white;
+}
+
+::-moz-selection {
+    background: #ff6c36;
+    color: white;
+}
+
+/* ============================================
+   UTILITY CLASSES
+   ============================================ */
+.hidden {
+    display: none !important;
+}
+
+.disabled {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+/* ============================================
+   SHAPE ELEMENTS
+   ============================================ */
+.shape, .custom-shape {
+    position: absolute;
+    /* cursor: move; */
+    /* transition: all 0.2s; — removed: caused grow/shrink flicker on click/select */
+    box-sizing: border-box;
+    overflow: visible !important;
+}
+
+.shape-inner {
+    pointer-events: none;
+}
+
+.shape:focus, .custom-shape:focus {
+    outline: none;
+    border-color: #ff6c36;
+}
+
+/* outline handled in authoritative block at end of file */
+
+/* Text boxes should float on top of other elements like Canva */
+.text-shape {
+    z-index: 1000 !important;
+    overflow: visible !important;
+    position: absolute;
+}
+
+/* Ensure text boxes stay on top when selected */
+.text-shape.selected {
+    z-index: 1001 !important;
+}
+
+/* Text box content should allow natural growth */
+.text-shape .sli-txt-box {
+    overflow: visible !important;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+
+
+/* outline handled in authoritative block at end of file */
+
+.shape.dragable, .custom-shape.dragable {
+    cursor: move !important;
+    opacity: 0.8;
+}
+
+
+.shape-group {
+    position: absolute;
+    cursor: move;
+    box-sizing: border-box;
+    overflow: visible;
+}
+
+/* SHOW handles on shapes inside groups when in edit mode */
+.shape-group[data-edit-mode="true"] .shape.selected .resize-handle {
+    display: block !important;
+}
+
+.shape-group[data-edit-mode="true"] .shape.selected .delete-btn,
+.shape-group[data-edit-mode="true"] .shape.selected .rotate-handle {
+    display: flex !important;
+}
+
+/* shape-group outline + group edit-mode outline → authoritative block at end of file */
+
+.shape-group:hover {
+    opacity: 0.95;
+}
+
+
+/* Show handles on selected groups */
+.shape-group.selected .resize-handle {
+    display: block;
+}
+
+.shape-group.selected .delete-btn,
+.shape-group.selected .rotate-handle {
+    display: flex;
+}
+
+/* ============================================
+   SHAPE FORMAT TOOLBAR STYLES
+   ============================================ */
+.toolbar-label {
+    font-size: 11px;
+    color: #b0b0b0;
+    font-weight: 600;
+    text-transform: uppercase;
+    margin-right: 8px;
+    white-space: nowrap;
+}
+
+.tool-select {
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid #4a4a4a;
+    background: #3a3a3a;
+    color: #e0e0e0;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 13px;
+    min-width: 100px;
+}
+
+.tool-select:hover {
+    border-color: #6a6a6a;
+    background: #4a4a4a;
+}
+
+.tool-select:focus {
+    border-color: #ff6c36;
+    outline: none;
+}
+
+.tool-input {
+    width: 70px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid #4a4a4a;
+    background: #3a3a3a;
+    color: #e0e0e0;
+    font-size: 13px;
+    text-align: center;
+    transition: all 0.2s;
+}
+
+.tool-input:hover {
+    border-color: #6a6a6a;
+}
+
+.tool-input:focus {
+    border-color: #ff6c36;
+    outline: none;
+}
+
+/* Remove spinner arrows from number inputs */
+.tool-input::-webkit-inner-spin-button,
+.tool-input::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.tool-input[type=number] {
+    -moz-appearance: textfield;
+}
+
+/* ============================================
+   INSERTABLE ELEMENTS (Universal)
+   ============================================ */
+.insertable-element {
+    position: relative;
+    transition: all 0.2s;
+}
+
+.insertable-element.selected {
+    outline: 2px solid #ff6c36;
+    outline-offset: 2px;
+}
+
+.insertable-element.hover {
+    outline: 2px dashed rgba(255, 108, 54, 0.5);
+    outline-offset: 2px;
+}
+
+.insertable-element.dragable {
+    opacity: 0.8;
+    cursor: move !important;
+}
+
+/* Ensure handles work on all insertable elements */
+.insertable-element .resize-handle,
+.insertable-element .delete-btn,
+.insertable-element .rotate-handle,
+.shape .resize-handle,
+.shape .delete-btn,
+.shape .rotate-handle {
+    display: none;
+}
+
+.insertable-element.selected .delete-btn,
+.insertable-element.selected .rotate-handle,
+.insertable-element.hover .delete-btn,
+.insertable-element.hover .rotate-handle,
+.shape.selected .delete-btn,
+.shape.selected .rotate-handle,
+.shape.hover .delete-btn,
+.shape.hover .rotate-handle {
+    display: flex;
+}
+
+.insertable-element.selected .resize-handle,
+.insertable-element.hover .resize-handle,
+.shape.selected .resize-handle, .custom-shape.selected .resize-handle,
+.shape.hover .resize-handle {
+    display: block;
+}
+
+/* ============================================
+   IMAGE FORMAT TAB - ADDITIONAL STYLES
+   ============================================ */
+
+/* Slider Styling */
+.tool-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 80px;
+    height: 6px;
+    border-radius: 3px;
+    background: #4a4a4a;
+    outline: none;
+    margin: 0 8px;
+}
+
+.tool-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #ff6c36 0%, #ff5722 100%);
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.tool-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #ff6c36 0%, #ff5722 100%);
+    cursor: pointer;
+    border: none;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.tool-slider:hover::-webkit-slider-thumb {
+    transform: scale(1.1);
+}
+
+.tool-slider:hover::-moz-range-thumb {
+    transform: scale(1.1);
+}
+
+.slider-value {
+    display: inline-block;
+    min-width: 45px;
+    color: #e0e0e0;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+/* Image Element Styling */
+.sli-slide .image-container {
+    position: absolute;
+    /* cursor: move; */
+    border: 2px solid transparent;
+    transition: border-color 0.2s;
+}
+
+.sli-slide .image-container.selected {
+    border-color: #ff6c36;
+    box-shadow: 0 0 0 1px #ff6c36;
+}
+
+.sli-slide .image-container img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
+/* Image Resize Handles */
+.sli-slide .image-container.selected::before,
+.sli-slide .image-container.selected::after {
+    content: '';
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    background: white;
+    border: 2px solid #ff6c36;
+    border-radius: 50%;
+}
+
+.sli-slide .image-container.selected::before {
+    top: -5px;
+    left: -5px;
+    cursor: nw-resize;
+}
+
+.sli-slide .image-container.selected::after {
+    bottom: -5px;
+    right: -5px;
+    cursor: se-resize;
+}
+
+/* Lock Aspect Ratio Checkbox */
+.toolbar-label input[type="checkbox"] {
+    margin-right: 6px;
+    cursor: pointer;
+    width: 16px;
+    height: 16px;
+    accent-color: #ff6c36;
+}
+
+/* Crop Mode Overlay */
+.crop-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+    display: none;
+}
+
+.crop-overlay.active {
+    display: block;
+}
+
+.crop-area {
+    position: absolute;
+    border: 2px dashed #ff6c36;
+    background: rgba(255, 108, 54, 0.1);
+    cursor: move;
+}
+
+.crop-handle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: white;
+    border: 2px solid #ff6c36;
+    border-radius: 50%;
+}
+
+.crop-handle.nw {
+    top: -5px;
+    left: -5px;
+    cursor: nw-resize;
+}
+
+.crop-handle.ne {
+    top: -5px;
+    right: -5px;
+    cursor: ne-resize;
+}
+
+.crop-handle.sw {
+    bottom: -5px;
+    left: -5px;
+    cursor: sw-resize;
+}
+
+.crop-handle.se {
+    bottom: -5px;
+    right: -5px;
+    cursor: se-resize;
+}
+
+.crop-handle.n {
+    top: -5px;
+    left: 50%;
+    transform: translateX(-50%);
+    cursor: n-resize;
+}
+
+.crop-handle.s {
+    bottom: -5px;
+    left: 50%;
+    transform: translateX(-50%);
+    cursor: s-resize;
+}
+
+.crop-handle.w {
+    top: 50%;
+    left: -5px;
+    transform: translateY(-50%);
+    cursor: w-resize;
+}
+
+.crop-handle.e {
+    top: 50%;
+    right: -5px;
+    transform: translateY(-50%);
+    cursor: e-resize;
+}
+
+
+/* Picture Style Preview */
+.frame-preview {
+    width: 60px;
+    height: 40px;
+    margin: 4px;
+    display: inline-block;
+    background: #2a2a2a;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+.frame-preview:hover {
+    transform: scale(1.05);
+}
+
+.frame-preview.selected {
+    outline: 2px solid #ff6c36;
+}
+
+/* Hyperlink Indicator */
+.sli-slide .image-container[data-href] {
+    position: relative;
+}
+
+.sli-slide .image-container[data-href]::before {
+    content: '🔗';
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    background: rgba(255, 108, 54, 0.9);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.sli-slide .image-container[data-href]:hover::before {
+    opacity: 1;
+}
+
+/* Alt Text Indicator */
+.sli-slide .image-container[aria-label]::after {
+    content: 'Alt';
+    position: absolute;
+    bottom: 5px;
+    left: 5px;
+    background: rgba(76, 175, 80, 0.9);
+    color: white;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: bold;
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.sli-slide .image-container[aria-label]:hover::after {
+    opacity: 1;
+}
+
+/* Effects Preview Icons */
+.effect-icon {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    text-align: center;
+    font-size: 16px;
+}
+
+/* Filter Adjustment Panels */
+.filter-panel {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background: #3a3a3a;
+    border: 1px solid #4a4a4a;
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    z-index: 1000;
+    display: none;
+    min-width: 250px;
+}
+
+.filter-panel.active {
+    display: block;
+}
+
+.filter-control {
+    margin-bottom: 12px;
+}
+
+.filter-control label {
+    display: block;
+    color: #b0b0b0;
+    font-size: 12px;
+    margin-bottom: 6px;
+}
+
+.filter-control input[type="range"] {
+    width: 100%;
+}
+
+/* Rotation Indicator */
+.sli-slide .image-container.rotating {
+    transition: transform 0.3s ease;
+}
+
+/* Loading Indicator for Image Change */
+.image-loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(58, 58, 58, 0.95);
+    padding: 20px;
+    border-radius: 8px;
+    color: #e0e0e0;
+    font-size: 14px;
+    z-index: 1001;
+}
+
+.image-loading::after {
+    content: '';
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    margin-left: 8px;
+    border: 2px solid #ff6c36;
+    border-radius: 50%;
+    border-top-color: transparent;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Responsive Adjustments */
+@media (max-width: 1200px) {
+    .tool-slider {
+        width: 80px;
+    }
+
+    .slider-value {
+        min-width: 40px;
+    }
+}
+
+/* Accessibility */
+.sli-slide .image-container:focus {
+    outline: 2px solid #ff6c36;
+    outline-offset: 2px;
+}
+
+/* Context Menu for Images */
+.image-context-menu {
+    position: absolute;
+    background: #3a3a3a;
+    border: 1px solid #4a4a4a;
+    border-radius: 8px;
+    padding: 8px 0;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    z-index: 1002;
+    display: none;
+    min-width: 180px;
+}
+
+.image-context-menu.active {
+    display: block;
+}
+
+.context-menu-item {
+    padding: 8px 16px;
+    color: #e0e0e0;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.context-menu-item:hover {
+    background: #4a4a4a;
+}
+
+.context-menu-item.separator {
+    height: 1px;
+    background: #4a4a4a;
+    margin: 4px 0;
+    padding: 0;
+    cursor: default;
+}
+
+.context-menu-item.separator:hover {
+    background: #4a4a4a;
+}
+
+/* ============================================
+   CROP OVERLAY - Enhanced Styles
+   ============================================ */
+.crop-overlay {
+    position: absolute;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 1000;
+    display: none;
+    pointer-events: all;
+}
+
+.crop-overlay.active {
+    display: block;
+}
+
+.crop-area {
+    position: absolute;
+    border: 2px dashed #ff6c36;
+    background: rgba(255, 108, 54, 0.1);
+    cursor: move;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+}
+
+.crop-handle {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    background: white;
+    border: 2px solid #ff6c36;
+    border-radius: 50%;
+    z-index: 10;
+}
+
+.crop-handle.nw {
+    top: -6px;
+    left: -6px;
+    cursor: nw-resize;
+}
+
+.crop-handle.ne {
+    top: -6px;
+    right: -6px;
+    cursor: ne-resize;
+}
+
+.crop-handle.sw {
+    bottom: -6px;
+    left: -6px;
+    cursor: sw-resize;
+}
+
+.crop-handle.se {
+    bottom: -6px;
+    right: -6px;
+    cursor: se-resize;
+}
+
+.crop-handle.n {
+    top: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+    cursor: n-resize;
+}
+
+.crop-handle.s {
+    bottom: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+    cursor: s-resize;
+}
+
+.crop-handle.w {
+    top: 50%;
+    left: -6px;
+    transform: translateY(-50%);
+    cursor: w-resize;
+}
+
+.crop-handle.e {
+    top: 50%;
+    right: -6px;
+    transform: translateY(-50%);
+    cursor: e-resize;
+}
+
+.crop-handle:hover {
+    background: #ff6c36;
+    transform: scale(1.2);
+}
+
+.crop-handle.n:hover,
+.crop-handle.s:hover {
+    transform: translateX(-50%) scale(1.2);
+}
+
+.crop-handle.w:hover,
+.crop-handle.e:hover {
+    transform: translateY(-50%) scale(1.2);
+}
+
+/* ====== Fix: allow selection on load (background/master should not block) ====== */
+.layout-background,
+.sli-master {
+    pointer-events: none;
+}
+
+/* outline handled in authoritative block at end of file */
+
+/* Prevent handles from being clipped */
+.shape.hover,
+.shape.selected,
+.custom-shape.hover,
+.custom-shape.selected,
+.sli-slide .image-container.hover,
+.sli-slide .image-container.selected {
+    overflow: visible;
+}
+
+
+
+/* outline handled in authoritative block at end of file */
+
+/* Handles often sit slightly outside the element; avoid clipping */
+.shape.hover,
+.shape.selected,
+.custom-shape.hover,
+.custom-shape.selected,
+.shape-group.hover,
+.shape-group.selected,
+.sli-slide .image-container.hover,
+.sli-slide .image-container.selected,
+.insertable-element.hover,
+.insertable-element.selected {
+    overflow: visible !important;
+}
+
+/* Make sure handles are above content */
+.resize-handle,
+.delete-btn,
+.rotate-handle {
+    z-index: 99999 !important;
+}
+
+/* If an image is inside an image-container, don't intercept handle clicks */
+.sli-slide .image-container img {
+    pointer-events: none;
+}
+
+/* Text edit cue (keep your existing rule, but ensure it wins) */
+.sli-txt-box[contenteditable="true"] {
+    cursor: text;
+    outline: none;
+}
+
+
+
+/* outline handled in authoritative block at end of file */
+
+
+
+/* Prevent parent containers from clipping handles/outlines */
+.main-content,
+.canvas,
+.slide-canvas .canvas-container,
+.slide-area,
+#canvas {
+    overflow: visible !important;
+}
+
+.sli-slide .image-container {
+    overflow: visible !important;
+}
+
+.img-toolbar-subcontent {
+    text-align: center;
+}
+
+/* clip-path handled in authoritative block at end of file */
+
+/* ============================================
+   POWERPOINT-STYLE DRAG FUNCTIONALITY
+   ============================================ */
+
+/* dragable state - shows element is being moved */
+.dragable {
+    opacity: 0.7;
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+}
+
+/* Ensure text boxes inside shapes remain editable */
+.sli-txt-box {
+    cursor: text !important;
+}
+
+/* Images inside image-containers should not block pointer events */
+.sli-slide .image-container > img,
+.sli-slide .image-container > svg {
+    pointer-events: none;
+}
+
+/* Image containers and shapes should allow cursor changes */
+.sli-slide .image-container,
+.shape, .custom-shape {
+    cursor: move;
+}
+
+/* Shapes with text will have cursor overridden by JS based on position */
+.shape:has(.sli-txt-box) {
+    cursor: default;
+}
+
+/* When a shape is selected, force wrapping inside its text box */
+.shape.selected .sli-txt-box{
+  overflow-wrap: break-word;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+/* (Optional) If your text is inside spans/paragraphs, apply there too */
+.shape.selected .sli-txt-box p,
+.shape.selected .sli-txt-box span{
+  overflow-wrap: break-word;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+/* ============================================
+   VIDEO ELEMENT STYLES
+   ============================================ */
+.video-element {
+    pointer-events: auto !important;
+}
+
+.video-element iframe {
+    pointer-events: none;
+}
+
+.video-element.selected iframe,
+.video-element.hover iframe {
+    pointer-events: none;
+}
+
+/* Allow video interaction on double-click */
+.video-element iframe[style*="pointer-events: auto"] {
+    pointer-events: auto !important;
+}
+
+/* ============================================
+   COMMENT ELEMENT STYLES
+   ============================================ */
+.comment-element {
+    pointer-events: auto !important;
+    display: flex;
+    flex-direction: column;
+}
+
+.comment-element * {
+    pointer-events: none;
+}
+
+.comment-header,
+.comment-body,
+.comment-footer {
+    width: 100%;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+.comment-body {
+    flex: 1;
+    min-height: 40px;
+}
+
+/* Ensure comment elements are draggable */
+.comment-element.hover,
+.comment-element.selected {
+    cursor: move;
+}
+
+/* ============================================
+   AUDIO ELEMENT STYLES
+   ============================================ */
+.audio-element {
+    pointer-events: auto !important;
+}
+
+.audio-element audio {
+    pointer-events: auto !important;
+}
+
+.audio-element * {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+
+/* ================================================================
+   AUTHORITATIVE SHAPE OUTLINE + HANDLE VISIBILITY
+   Single source of truth — all previous outline rules for .shape
+   have been neutralised above. DO NOT add outline rules elsewhere.
+   ================================================================ */
+
+/* 1. Strip clip-path from the WRAPPER at ALL times.
+      Handles sit -5px/-12px/-35px outside — clip-path hides them
+      regardless of overflow:visible.
+      Visual clipping (triangle, arrow shapes) must go on .shape-inner
+      or the child <svg>, not the wrapper.                           */
+.shape,
+.shape-group {
+    clip-path: none !important;
+    -webkit-clip-path: none !important;
+    overflow: visible !important;
+}
+
+/* 2. DEFAULT — no outline on plain uninteracted shapes             */
+.shape, .custom-shape {
+    outline: none;
+}
+
+/* 3. HOVER (JS adds .hover class via mouseover) — dashed border   */
+.shape.hover, .custom-shape.hover {
+    outline: 2px dashed #4a90e2 !important;
+    outline-offset: 1px !important;
+}
+
+/* 4. SELECTED — solid orange border                               */
+.shape.selected, .custom-shape.selected {
+    outline: 2px solid #ff6c36 !important;
+    outline-offset: 1px !important;
+}
+
+/* 5. SELECTED + HOVERED — keep selected style, don't revert       */
+.shape.selected.hover,
+.shape.selected:hover, .custom-shape.selected.hover, .custom-shape.selected:hover {
+    outline: 2px solid #ff6c36 !important;
+    outline-offset: 1px !important;
+}
+
+/* 6. Shapes inside groups — hide outlines unless group is in edit mode */
+.shape-group:not([data-edit-mode="true"]) .shape {
+    outline: none !important;
+}
+.shape-group:not([data-edit-mode="true"]) .shape.selected {
+    outline: none !important;
+}
+/* In edit mode, selected child shows outline */
+.shape-group[data-edit-mode="true"] .shape.selected {
+    outline: 2px solid #ff6c36 !important;
+    outline-offset: 1px !important;
+}
+
+/* 7. Shape group itself                                            */
+.shape-group.selected {
+    outline: 2px solid #ff6c36 !important;
+    outline-offset: 1px !important;
+}
+.shape-group.hover:not(.selected) {
+    outline: 2px dashed #4a90e2 !important;
+    outline-offset: 1px !important;
+}
+
+/* 8. Handle elements — always unclipped, always on top            */
+.shape .resize-handle,
+.shape .delete-btn,
+.shape .rotate-handle,
+.custom-shape .resize-handle,
+.custom-shape .delete-btn,
+.custom-shape .rotate-handle,
+.shape-group .resize-handle,
+.shape-group .delete-btn,
+.shape-group .rotate-handle {
+    clip-path: none !important;
+    -webkit-clip-path: none !important;
+    overflow: visible !important;
+    z-index: 999999 !important;
+}
+
+/* 9. Show handles on hover AND selected (force over display:none) */
+.shape.hover .resize-handle,
+.shape.selected .resize-handle,
+.custom-shape.hover .resize-handle,
+.custom-shape.selected .resize-handle {
+    display: block !important;
+}
+.shape.hover .delete-btn,
+.shape.hover .rotate-handle,
+.shape.selected .delete-btn,
+.shape.selected .rotate-handle,
+.custom-shape.hover .delete-btn,
+.custom-shape.hover .rotate-handle,
+.custom-shape.selected .delete-btn,
+.custom-shape.selected .rotate-handle {
+    display: flex !important;
+}
+
+/* 10. Parent containers must not clip protruding handles          */
+.canvas-container,
+#canvas {
+    overflow: visible !important;
+}
+
+/* sli-slide clips content at slide boundary (like PowerPoint/Canva)  */
+/* This prevents overflowing text from expanding the scroll container  */
+.sli-slide {
+    overflow: hidden;
+}
+
+.sli-content {
+    overflow: visible;
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+/* ================================================================ */
+
+/* ============================================
+   CANVA-STYLE 3-CLICK STATE MACHINE
+   (matches toolbar.js reference approach)
+   ============================================ */
+
+/* Default: all shapes are NOT text-selectable — drag mode only */
+.shape,
+.image-container,
+.shape-group,
+.custom-shape {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
+/* sli-txt-box: pointer-events off by default so parent receives events */
+.sli-txt-box {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    pointer-events: none;
+}
+
+/* Prevent slide-wide text selection */
+.sli-slide {
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+/* ── STATE 1: Shape selected (active-text-box) — move cursor, drag enabled ── */
+.shape.active-text-box {
+    border: 1px solid #534D89 !important;
+    cursor: move !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
+/* Keep text content visible and properly sized in drag mode (state 1) */
+.shape.active-text-box .sli-txt-box {
+    pointer-events: none;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    width: 100% !important;
+    /* min-height must NOT be 100% — it causes flex container to expand with text */
+    min-height: 0 !important;
+    box-sizing: border-box !important;
+}
+
+/* ── STATE 2: Text selected — show text cursor, text is highlighted ── */
+.shape.active-text-box.text-selected {
+    cursor: default !important;
+    user-select: text !important;
+    -webkit-user-select: text !important;
+}
+.shape.active-text-box.text-selected .sli-txt-box {
+    cursor: default !important;
+    user-select: text !important;
+    -webkit-user-select: text !important;
+    pointer-events: auto !important;
+}
+.shape.active-text-box.text-selected *:not(.resize-handle) {
+    cursor: default !important;
+}
+
+/* ── STATE 3: Editing mode — text cursor, full interaction ── */
+.shape.editing-mode,
+.shape.editing-mode .sli-txt-box,
+.shape.editing-mode .sli-txt-box * {
+    cursor: text !important;
+    caret-color: black !important;
+}
+.shape.editing-mode {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+}
+.shape.editing-mode .sli-txt-box {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+    pointer-events: auto !important;
+    /* CRITICAL: min-height:100% causes flex wrapper to grow with text content.
+       Keep at 0 — JS sets explicit px height to lock the wrapper during editing. */
+    min-height: 0 !important;
+    width: 100%;
+    /* overflow:visible lets text overflow the box without expanding the wrapper */
+    overflow: visible;
+}
+.shape.editing-mode *:not(.resize-handle) {
+    cursor: text !important;
+}
+
+/* Resize handles always have correct cursor regardless of parent state */
+.shape .resize-handle, .custom-shape .resize-handle,
+.shape.active-text-box .resize-handle,
+.shape.editing-mode .resize-handle,
+.shape.text-selected .resize-handle {
+    cursor: inherit !important;
+    pointer-events: auto !important;
+    z-index: 99999 !important;
+}
+
+/* Shape dragable */
+.shape.dragable, .custom-shape.dragable {
+    cursor: grabbing !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
+/* no-text-select on canvas during drag */
+#canvas.no-text-select,
+#canvas.no-text-select * {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
+/* Overlay editor (if used anywhere) */
+.sli-text-editor-overlay {
+    cursor: text !important;
+    user-select: text !important;
+    -webkit-user-select: text !important;
+}

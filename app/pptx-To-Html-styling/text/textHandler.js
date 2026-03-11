@@ -55,7 +55,9 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
     const allFontSizes = pptTextAllInfo.getAllFontSizesInShape(shapeNode);
     const shapeName = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvPr"]?.[0]?.["$"]?.name;
     const fontColor = pptTextAllInfo.getFontColor(shapeNode, themeXML, clrMap);
-    const outlineStyle = extractTextOutline(shapeNode, themeXML, clrMap);
+    const outlineStyle = extractTextOutline(shapeNode, themeXML, clrMap, masterXML);
+
+    console.log(" ---- <<<<<<<=-=>>>>>>>>> Extracted text information:", outlineStyle);
 
     let marginTop = 0;
     let marginRight = 0;
@@ -470,13 +472,17 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
                     } else {
                         effectiveMarginBottom = spaceAfter;
                     }
+                    // 03/09/2026rakesh
+                    const bodyPrAttrs = shapeNode?.["p:txBody"]?.[0]?.["a:bodyPr"]?.[0]?.["$"];
+                    const isWordArtVert = bodyPrAttrs?.vert === "wordArtVert";
+                    const wordArtVertStyle = isWordArtVert ? ' writing-mode: vertical-rl; text-orientation: upright;' : '';
 
-                    const paragraphStyle = `text-align: ${textAlign}; line-height: ${lineHeight}; margin-left: ${effectiveMarginLeft}px; margin-right: ${effectiveMarginRight}px; margin-top: ${effectiveMarginTop}px; margin-bottom: ${effectiveMarginBottom}px;${textIndent !== 0 ? ` text-indent: ${textIndent}px;` : ''}`;
+                    const paragraphStyle = `text-align: ${textAlign}; line-height: ${lineHeight}; margin-left: ${effectiveMarginLeft}px; margin-right: ${effectiveMarginRight}px; margin-top: ${effectiveMarginTop}px; margin-bottom: ${effectiveMarginBottom}px;${textIndent !== 0 ? ` text-indent: ${textIndent}px;` : ''}${wordArtVertStyle}`;
 
                     htmlContent.push(`<p style="${paragraphStyle}">${runTexts.join('')}</p>`);
                 }
                 else if (runTexts.length > 0 || lineBreaks.length > 0) {
-                    htmlContent.push(`<p style="text-align: ${textAlign}; line-height: ${lineHeight}; margin-left: ${marginLeft}px; margin-right: ${marginRight}px; margin-top: ${marginTop + spaceBefore}px; margin-bottom: ${marginBottom + spaceAfter}px; min-height: ${lineHeight};"><br/></p>`);
+                    htmlContent.push(`<p style="text-align: ${textAlign}; line-height: ${lineHeight}; margin-left: ${marginLeft}px; margin-right: ${marginRight}px; margin-top: ${marginTop + spaceBefore}px; margin-bottom: ${marginBottom + spaceAfter}px; min-height: ${lineHeight};${wordArtVertStyle}"><br/></p>`);
                 }
             }
         });
@@ -531,6 +537,13 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
 
     });
 
+    // 03/09/2026rakesh
+    const bodyPrAttrs = shapeNode?.["p:txBody"]?.[0]?.["a:bodyPr"]?.[0]?.["$"];
+    const isWordArtVert = bodyPrAttrs?.vert === "wordArtVert";
+    const isVertEaVert = bodyPrAttrs?.vert === "eaVert";
+    const isVert270 = bodyPrAttrs?.vert === "vert270";
+    const isVert = bodyPrAttrs?.vert === "vert";
+
     return {
         position: position,
         text: text || " ",
@@ -547,7 +560,10 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
         getAlignItem: getAlignItem,
         outlineStyle: outlineStyle,
         htmlContent: htmlContent.join("\n"),
-        estimatedContentHeight: Math.max(estimatedHeight, position?.height || 0)  // NEW LINE
+        estimatedContentHeight: Math.max(estimatedHeight, position?.height || 0),  // NEW LINE
+        // ADD THIS:// 03/09/2026rakesh
+        verticalText: isWordArtVert ? 'wordArtVert' : isVert270 ? 'vert270' : isVert ? 'vert' : isVertEaVert ? 'eaVert' : null
+
     };
 
 }
@@ -648,6 +664,58 @@ function getTextAlignmentFromParagraph(pPrNode, shapeNode, placeholderType, layo
                     return convertAlgnToCSS(defPPr["$"]["algn"]);
                 }
             }
+        }
+    }
+
+    //03/09/2026rakesh ✅ FINAL FALLBACK: Check bodyPr attributes for alignment hints
+    const bodyPrAttrs = shapeNode?.["p:txBody"]?.[0]?.["a:bodyPr"]?.[0]?.["$"];
+
+    if (bodyPrAttrs) {
+        const anchorCtr = bodyPrAttrs.anchorCtr;
+        const vert = bodyPrAttrs.vert;
+        const anchor = bodyPrAttrs.anchor;
+
+        // anchorCtr="1" means text is centered within the shape
+        if (anchorCtr === "1") {
+            // Check vert for vertical text direction
+            // If vertical text, "center" means something different
+            if (vert === "vert" || vert === "vert270" || vert === "eaVert") {
+                // Vertical text — anchorCtr centers horizontally in rotated context
+                // Map anchor to text-align for vertical text
+                switch (anchor) {
+                    case "t": return "left";    // top anchor = left in vertical
+                    case "b": return "right";   // bottom anchor = right in vertical
+                    case "ctr": return "center";
+                    default: return "center";   // anchorCtr=1 defaults to center
+                }
+            }
+
+            // Normal horizontal text with anchorCtr="1"
+            // anchor tells us the primary axis, anchorCtr=1 centers on cross axis
+            switch (anchor) {
+                case "t": return "center"; // top anchor + centered = center align
+                case "b": return "center"; // bottom anchor + centered = center align
+                case "ctr": return "center"; // center anchor + centered = center align
+                case "just": return "justify";
+                default: return "center"; // anchorCtr=1 always means center
+            }
+        }
+
+        // anchorCtr="0" or absent — use anchor for vertical alignment hints only
+        // For horizontal text-align, check vert direction
+        if (vert === "vert" || vert === "vert270") {
+            // Vertical text — anchor maps to text-align
+            switch (anchor) {
+                case "t": return "left";
+                case "b": return "right";
+                case "ctr": return "center";
+                default: return "left";
+            }
+        }
+
+        // ✅ Check for rtlCol (right-to-left column)
+        if (bodyPrAttrs.rtlCol === "1") {
+            return "right";
         }
     }
 
@@ -1649,7 +1717,7 @@ function hexToRGB(hex) {
 
 
 // UPDATED: Extract shape border with gradient support
-function extractTextOutline(shapeNode, themeXML, clrMap) {
+function extractTextOutline(shapeNode, themeXML, clrMap, masterXML) {
     try {
         let outlineInfo = {
             width: 0,
@@ -1691,12 +1759,9 @@ function extractTextOutline(shapeNode, themeXML, clrMap) {
             }
 
             // Extract line width (in EMUs)
-            const widthEMU = lnNode?.["$"]?.w;
-            if (widthEMU) {
-                outlineInfo.width = Math.round(parseInt(widthEMU) / getEMUDivisor());
-            } else {
-                outlineInfo.width = 0;
-            }
+            // Per OOXML spec, if w attribute is absent the default line width is 12700 EMU (1pt)
+            const widthEMU = lnNode?.["$"]?.w ?? 12700;
+            outlineInfo.width = Math.max(1, Math.round(parseInt(widthEMU) / getEMUDivisor()));
 
             // Check for gradient fill first
             const gradFill = lnNode?.["a:gradFill"]?.[0];
@@ -1730,7 +1795,7 @@ function extractTextOutline(shapeNode, themeXML, clrMap) {
             else {
                 const solidFill = lnNode?.["a:solidFill"]?.[0];
                 if (solidFill) {
-                    outlineInfo.color = extractColorFromNode(solidFill, themeXML);
+                    outlineInfo.color = extractColorFromNode(solidFill, themeXML, masterXML);
                 }
             }
 
@@ -1805,6 +1870,8 @@ function extractTextOutline(shapeNode, themeXML, clrMap) {
             };
 
             outlineInfo.width = lineWidths[idx] || 0;
+
+            console.log("Extracted line reference:", { color: outlineInfo.color, width: outlineInfo.width });
 
             if (outlineInfo.width > 0) {
                 // NEW: Adjust clip-path to show border
@@ -1925,7 +1992,7 @@ function applyShadeOrTint(hexColor, value, type) {
 
 
 // UPDATED: Better color extraction with proper scheme color handling
-function extractColorFromNode(solidFill, themeXML) {
+function extractColorFromNode(solidFill, themeXML, masterXML) {
     // Handle direct RGB color
     if (solidFill["a:srgbClr"]) {
         const srgbNode = solidFill["a:srgbClr"][0];
@@ -1945,7 +2012,12 @@ function extractColorFromNode(solidFill, themeXML) {
     else if (solidFill["a:schemeClr"]) {
         const schemeNode = solidFill["a:schemeClr"][0];
         const schemeVal = schemeNode["$"].val;
-        let color = colorHelper.resolveThemeColorHelper(schemeVal, themeXML, null);
+
+        console.log(" ---- <<<<<<<<->>>>>>>>> Resolving scheme color:", { schemeVal });
+
+        let color = colorHelper.resolveThemeColorHelper(schemeVal, themeXML, masterXML);
+
+        console.log(" ---- <<<<<<<<->>>>>>>>> Resolved scheme color:", { color });
 
         // Apply shade if present
         const shade = schemeNode["a:shade"]?.[0]?.["$"]?.val;
@@ -1959,13 +2031,19 @@ function extractColorFromNode(solidFill, themeXML) {
             color = applyShadeOrTint(color, tint, 'tint');
         }
 
+        console.log(" ---- <<<<<<>>>>>>>>>>>>>>> Applying lumMod to color:", { color });
+
         // Apply luminance modifications
         const lumMod = schemeNode["a:lumMod"]?.[0]?.["$"]?.val;
         const lumOff = schemeNode["a:lumOff"]?.[0]?.["$"]?.val;
         if (lumMod && lumOff) {
             color = pptBackgroundColors.applyLuminanceModifier(color, lumMod, lumOff);
         } else if (lumMod) {
+            console.log(" ---- >>>>>>>>> Applying lumMod to color:", { color, lumMod });
+
             color = colorHelper.applyLumMod(color, lumMod);
+
+            console.log(" ---- >>>>>>>>> After applying lumMod to color:", { color });
         }
 
         return color;
@@ -2114,4 +2192,4 @@ function getDashStyle(prstDash) {
 
 module.exports = {
     getAllTextInformationFromShape
-};;
+};

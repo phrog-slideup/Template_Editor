@@ -254,7 +254,7 @@ function getArrowRotation(segment, isStart) {
     }
 }
 
-async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, layoutXML) {
+async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, layoutXML, nodes) {
     if (!shapeNode) {
         console.warn("convertConnectorToHTML: shapeNode is null or undefined");
         return "";
@@ -267,8 +267,8 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
 
     // z-index from node ordering
     let zIndex = 0;
-    if (shapeName && this.nodes) {
-        const matchedNode = this.nodes.find(node => node.name === shapeName);
+    if (shapeName && nodes) {
+        const matchedNode = nodes.find(node => node.name === shapeName);
         if (matchedNode) zIndex = matchedNode.id;
     }
 

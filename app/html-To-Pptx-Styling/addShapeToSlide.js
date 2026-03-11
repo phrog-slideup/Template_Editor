@@ -1,6 +1,6 @@
 const addTextBox = require("./addTextBoxToSlide.js");
 const svgAddToSlide = require("./addSvgToSlide.js");
-
+const { parseShadowFromBoxShadow } = require('./parseShadowFromBoxShadow.js');
 
 
 // ========== CORRECTED Connector ==========
@@ -760,6 +760,9 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
     const w = parseFloat(style.width || "0") / 72;
     const h = parseFloat(style.height || "0") / 72;
 
+
+    const shadowOptions = parseShadowFromBoxShadow(shapeElement);
+
     let shapeOptions = {
         x: x,
         y: y,
@@ -767,7 +770,8 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
         h: h,
         rotate: rotation,
         objectName: objName || '',
-        hidden: true
+        hidden: true,
+        ...(shadowOptions ? { shadow: shadowOptions } : {})
     };
 
     //     shapeOptions.shadow = {

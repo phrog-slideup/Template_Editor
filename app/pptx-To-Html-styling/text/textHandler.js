@@ -57,8 +57,6 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
     const fontColor = pptTextAllInfo.getFontColor(shapeNode, themeXML, clrMap);
     const outlineStyle = extractTextOutline(shapeNode, themeXML, clrMap, masterXML);
 
-    console.log(" ---- <<<<<<<=-=>>>>>>>>> Extracted text information:", outlineStyle);
-
     let marginTop = 0;
     let marginRight = 0;
     let marginBottom = 0;
@@ -1758,6 +1756,20 @@ function extractTextOutline(shapeNode, themeXML, clrMap, masterXML) {
                 return null;
             }
 
+            // BUGFIX: An empty <a:ln/> with no width attribute AND no fill means "no border".
+            // In OOXML, <a:ln/> alone (no w, no solidFill/gradFill/pattFill) is used as a
+            // reset/inheritance override meaning "no border", not "default 1pt border".
+            // Only apply default width fallback if a fill color is actually present.
+            const hasFillDefined = lnNode?.["a:solidFill"] ||
+                lnNode?.["a:gradFill"] ||
+                lnNode?.["a:pattFill"];
+            const hasWidthDefined = lnNode?.["$"]?.w !== undefined;
+
+            if (!hasWidthDefined && !hasFillDefined) {
+                // Empty <a:ln/> — no border intended
+                return null;
+            }
+
             // Extract line width (in EMUs)
             // Per OOXML spec, if w attribute is absent the default line width is 12700 EMU (1pt)
             const widthEMU = lnNode?.["$"]?.w ?? 12700;
@@ -1809,12 +1821,11 @@ function extractTextOutline(shapeNode, themeXML, clrMap, masterXML) {
                     // Negative inset to prevent clip-path from cutting off the border
                     const inset = -outlineInfo.width;
                     outlineInfo.css = `
-                        border: ${outlineInfo.width}px ${outlineInfo.style} ${outlineInfo.color}; 
-                        border-radius: ${outlineInfo.borderRadius}px;
+                        border: ${outlineInfo.width}px ${outlineInfo.style} ${outlineInfo.color};
                         clip-path: inset(${inset}px round ${outlineInfo.borderRadius}px) !important;
                     `.replace(/\s+/g, ' ').trim();
                 } else {
-                    outlineInfo.css = `border: ${outlineInfo.width}px ${outlineInfo.style} ${outlineInfo.color}; border-radius: ${outlineInfo.borderRadius}px;`;
+                    outlineInfo.css = `border: ${outlineInfo.width}px ${outlineInfo.style} ${outlineInfo.color};`;
 
                 }
             }
@@ -1871,20 +1882,17 @@ function extractTextOutline(shapeNode, themeXML, clrMap, masterXML) {
 
             outlineInfo.width = lineWidths[idx] || 0;
 
-            console.log("Extracted line reference:", { color: outlineInfo.color, width: outlineInfo.width });
-
             if (outlineInfo.width > 0) {
                 // NEW: Adjust clip-path to show border
                 if (outlineInfo.hasClipPath) {
                     // Negative inset to prevent clip-path from cutting off the border
                     const inset = -outlineInfo.width;
                     outlineInfo.css = `
-                        border: ${outlineInfo.width}px ${outlineInfo.style} ${outlineInfo.color}; 
-                        border-radius: ${outlineInfo.borderRadius}px;
+                        border: ${outlineInfo.width}px ${outlineInfo.style} ${outlineInfo.color};
                         clip-path: inset(${inset}px round ${outlineInfo.borderRadius}px) !important;
                     `.replace(/\s+/g, ' ').trim();
                 } else {
-                    outlineInfo.css = `border: ${outlineInfo.width}px ${outlineInfo.style} ${outlineInfo.color}; border-radius: ${outlineInfo.borderRadius}px;`;
+                    outlineInfo.css = `border: ${outlineInfo.width}px ${outlineInfo.style} ${outlineInfo.color}; `;
 
                 }
             }
@@ -2013,11 +2021,7 @@ function extractColorFromNode(solidFill, themeXML, masterXML) {
         const schemeNode = solidFill["a:schemeClr"][0];
         const schemeVal = schemeNode["$"].val;
 
-        console.log(" ---- <<<<<<<<->>>>>>>>> Resolving scheme color:", { schemeVal });
-
         let color = colorHelper.resolveThemeColorHelper(schemeVal, themeXML, masterXML);
-
-        console.log(" ---- <<<<<<<<->>>>>>>>> Resolved scheme color:", { color });
 
         // Apply shade if present
         const shade = schemeNode["a:shade"]?.[0]?.["$"]?.val;
@@ -2031,19 +2035,13 @@ function extractColorFromNode(solidFill, themeXML, masterXML) {
             color = applyShadeOrTint(color, tint, 'tint');
         }
 
-        console.log(" ---- <<<<<<>>>>>>>>>>>>>>> Applying lumMod to color:", { color });
-
         // Apply luminance modifications
         const lumMod = schemeNode["a:lumMod"]?.[0]?.["$"]?.val;
         const lumOff = schemeNode["a:lumOff"]?.[0]?.["$"]?.val;
         if (lumMod && lumOff) {
             color = pptBackgroundColors.applyLuminanceModifier(color, lumMod, lumOff);
         } else if (lumMod) {
-            console.log(" ---- >>>>>>>>> Applying lumMod to color:", { color, lumMod });
-
             color = colorHelper.applyLumMod(color, lumMod);
-
-            console.log(" ---- >>>>>>>>> After applying lumMod to color:", { color });
         }
 
         return color;

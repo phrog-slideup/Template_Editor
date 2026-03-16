@@ -1,7 +1,206 @@
 const colorHelper = require("../../api/helper/colorHelper.js");
 
 // ─── EMU constants ────────────────────────────────────────────────────────────
-const EMU_PER_PX = 12700; // 96 dpi: 914400 EMU/in ÷ 72 pt/in * (72/96) ≈ 12700 per CSS px
+const EMU_PER_PX = 12700; // 914400 EMU/in ÷ 72 pt/in = 12700 EMU per CSS px
+
+
+// ─── Main exported function ───────────────────────────────────────────────────
+
+function getShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
+    try {
+        // ── Resolve effectLst (multi-level fallback) ──────────────────────────
+        const effectLst =
+            shapeNode?.["p:spPr"]?.[0]?.["a:effectLst"]?.[0]                                // Level A
+            ?? shapeNode?.["a:effectLst"]?.[0]                                               // Level B
+            ?? (shapeNode?.["a:outerShdw"] || shapeNode?.["a:innerShdw"] ? shapeNode : null);// Level C
+
+        if (!effectLst) return "";
+
+        // ── Detect outer vs inner shadow ──────────────────────────────────────
+        const outerShdw = effectLst?.["a:outerShdw"]?.[0];
+        const innerShdw = effectLst?.["a:innerShdw"]?.[0];
+        const shdwNode = outerShdw ?? innerShdw;
+        if (!shdwNode) return "";
+
+        const isInner = !outerShdw && !!innerShdw;
+        const attrs = shdwNode["$"] ?? {};
+
+        // ── 1. Color + alpha ──────────────────────────────────────────────────
+        const color = resolveShadowColor(shdwNode, themeXML, masterXML);
+        const alpha = resolveShadowAlpha(shdwNode);
+
+        // ── 2. Blur ───────────────────────────────────────────────────────────
+        const blurPx = blurRadToPx(attrs.blurRad);
+
+        // ── 3. Offset (dir + dist + algn) ─────────────────────────────────────
+        // Use null for absent dir so dirDistToOffset can distinguish it from
+        // an explicit 0° (East) direction.
+        const distRaw = attrs.dist ? parseInt(attrs.dist, 10) : 0;
+        const dirRaw = (attrs.dir != null && attrs.dir !== "")
+            ? parseInt(attrs.dir, 10)
+            : null;
+
+        let { offX, offY } = dirDistToOffset(dirRaw, distRaw, attrs.algn);
+
+        if (isInner) {
+            offX = -offX;
+            offY = -offY;
+        }
+
+        // ── 5. Spread (outerShdw sx/sy; innerShdw has no scale attrs) ─────────
+        const spread = isInner ? 0 : scaleToSpread(attrs.sx, attrs.sy, blurPx);
+
+        // ── 6. Compose final CSS ──────────────────────────────────────────────
+        const rgb = hexToRgbComponents(color);
+        const cssOffX = Math.round(offX * 10) / 10;
+        const cssOffY = Math.round(offY * 10) / 10;
+        const cssBlur = Math.round(blurPx * 10) / 10;
+        const cssSpread = Math.round(spread * 10) / 10;
+        const cssAlpha = Math.round(alpha * 100) / 100;
+        const inset = isInner ? "inset " : "";
+
+        return `box-shadow: ${inset}${cssOffX}px ${cssOffY}px ${cssBlur}px ${cssSpread}px rgba(${rgb}, ${cssAlpha});`;
+
+    } catch (err) {
+        console.error("getShapeShadowStyle error:", err);
+        return "";
+    }
+}
+
+function resolveShadowColor(shadowNode, themeXML, masterXML) {
+    // 1. Preset color (e.g. val="black")
+    const prstClrNode = shadowNode["a:prstClr"]?.[0];
+    if (prstClrNode) {
+        const val = prstClrNode?.["$"]?.val || "black";
+        const baseColor = PRESET_COLORS[val] ?? PRESET_COLORS["black"];
+        const transforms = extractColorTransforms(prstClrNode);
+        return applyColorTransforms(baseColor, transforms);
+    }
+
+    // 2. Direct sRGB hex
+    const srgbClrNode = shadowNode["a:srgbClr"]?.[0];
+    if (srgbClrNode) {
+        const val = srgbClrNode?.["$"]?.val;
+        if (val) {
+            const baseColor = `#${val}`;
+            const transforms = extractColorTransforms(srgbClrNode);
+            return applyColorTransforms(baseColor, transforms);
+        }
+    }
+
+    // 3. Scheme color resolved against theme
+    const schemeClrNode = shadowNode["a:schemeClr"]?.[0];
+    if (schemeClrNode) {
+        const key = schemeClrNode?.["$"]?.val;
+        if (key) {
+            const resolved = colorHelper.resolveThemeColorHelper(key, themeXML, masterXML);
+            if (resolved) {
+                // Apply color transforms (e.g. lumMod=50000 darkens the theme color by 50%)
+                const transforms = extractColorTransforms(schemeClrNode);
+                return applyColorTransforms(resolved, transforms);
+            }
+        }
+    }
+
+    // 4. System color (use lastClr attribute as fallback hex)
+    const sysClrNode = shadowNode["a:sysClr"]?.[0];
+    if (sysClrNode) {
+        const lastClr = sysClrNode?.["$"]?.lastClr;
+        if (lastClr) {
+            const baseColor = `#${lastClr}`;
+            const transforms = extractColorTransforms(sysClrNode);
+            return applyColorTransforms(baseColor, transforms);
+        }
+    }
+
+    return "#000000";
+}
+
+/**
+ * Extract alpha from the shadow color child node.  Returns a float 0–1.
+ *
+ * OOXML: absence of <a:alpha> means the color is FULLY OPAQUE (1.0).
+ * Only an explicit <a:alpha val="N"/> overrides this.
+ */
+
+function resolveShadowAlpha(shadowNode) {
+    const colorTypes = ["a:prstClr", "a:srgbClr", "a:schemeClr", "a:sysClr"];
+
+    for (const type of colorTypes) {
+        const colorNode = shadowNode[type]?.[0];
+        if (!colorNode) continue;
+
+        const alphaVal = colorNode["a:alpha"]?.[0]?.["$"]?.val;
+        if (alphaVal !== undefined && alphaVal !== null) {
+            const parsed = parseInt(alphaVal, 10);
+            if (!isNaN(parsed)) return parsed / 100000; // 100000 = fully opaque
+        }
+
+        // Color node present but no <a:alpha> child → fully opaque
+        return 1.0;
+    }
+
+    return 1.0; // no colour node found → fully opaque fallback
+}
+
+
+/**
+ * Convert blurRad (EMU) to CSS blur px.
+ */
+
+function blurRadToPx(blurRadRaw) {
+    if (!blurRadRaw) return 0;
+    return Math.round((parseInt(blurRadRaw, 10) / EMU_PER_PX) * 10) / 10;
+}
+
+
+function dirDistToOffset(dirRaw, distRaw, algn) {
+    const dist = (distRaw ?? 0) / EMU_PER_PX;
+
+    if (dist === 0) {
+        // No displacement — ambient / glow shadow
+        return { offX: 0, offY: 0 };
+    }
+
+    // Use the explicit dir, or fall back to the OOXML schema default of 0° (East)
+    const dirDeg = (dirRaw != null) ? (dirRaw / 60000) : 0;
+    const rad = (dirDeg * Math.PI) / 180;
+
+    return {
+        offX: Math.round(dist * Math.cos(rad) * 10) / 10,
+        offY: Math.round(dist * Math.sin(rad) * 10) / 10,
+    };
+}
+
+/**
+ * Approximate CSS spread from OOXML sx/sy scale factors.
+ * sx/sy = 100000 → 1× scale (no spread).  101000 → 1% bigger.
+ * spread ≈ (avgScale − 1) × blurPx
+ * Applied to outerShdw only; innerShdw carries no sx/sy.
+ */
+
+function scaleToSpread(sxRaw, syRaw, blurPx) {
+    const sx = sxRaw ? parseInt(sxRaw, 10) / 100000 : 1;
+    const sy = syRaw ? parseInt(syRaw, 10) / 100000 : 1;
+    const avg = (sx + sy) / 2;
+    if (avg <= 1) return 0;
+    return Math.round((avg - 1) * blurPx * 10) / 10;
+}
+
+/**
+ * Convert a 6-char hex string to "r, g, b" components.
+ */
+
+function hexToRgbComponents(hex) {
+    if (!hex || hex === "transparent") return "0, 0, 0";
+    const clean = hex.replace(/^#/, "");
+    if (clean.length < 6) return "0, 0, 0";
+    const r = parseInt(clean.substring(0, 2), 16) || 0;
+    const g = parseInt(clean.substring(2, 4), 16) || 0;
+    const b = parseInt(clean.substring(4, 6), 16) || 0;
+    return `${r}, ${g}, ${b}`;
+}
+
 
 // ─── Preset color table (subset used by shadows) ─────────────────────────────
 const PRESET_COLORS = {
@@ -29,183 +228,154 @@ const PRESET_COLORS = {
     transparent: "transparent",
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Convert a 6-char hex color string to "r, g, b" components.
- */
-function hexToRgbComponents(hex) {
-    if (!hex || hex === "transparent") return "0, 0, 0";
+function hexToHls(hex) {
     const clean = hex.replace(/^#/, "");
-    if (clean.length < 6) return "0, 0, 0";
-    const r = parseInt(clean.substring(0, 2), 16) || 0;
-    const g = parseInt(clean.substring(2, 4), 16) || 0;
-    const b = parseInt(clean.substring(4, 6), 16) || 0;
-    return `${r}, ${g}, ${b}`;
+    const r = parseInt(clean.substring(0, 2), 16) / 255;
+    const g = parseInt(clean.substring(2, 4), 16) / 255;
+    const b = parseInt(clean.substring(4, 6), 16) / 255;
+
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const l = (max + min) / 2;
+    let h = 0, s = 0;
+
+    if (max !== min) {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+            case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+            case g: h = ((b - r) / d + 2) / 6; break;
+            case b: h = ((r - g) / d + 4) / 6; break;
+        }
+    }
+    return [h, l, s];
 }
 
 /**
- * Resolve any OOXML color node inside <a:outerShdw> to a hex string.
- * Supports: <a:prstClr>, <a:srgbClr>, <a:schemeClr>, <a:sysClr>
+ * Convert [H, L, S] (0–1 each) back to a #RRGGBB hex string.
  */
-function resolveShadowColor(shadowNode, themeXML, masterXML) {
-    // 1. Preset color  (most common for shadows: val="black")
-    const prstClrNode = shadowNode["a:prstClr"]?.[0];
-    if (prstClrNode) {
-        const val = prstClrNode?.["$"]?.val || "black";
-        return PRESET_COLORS[val] ?? PRESET_COLORS["black"];
+function hlsToHex(h, l, s) {
+    l = Math.max(0, Math.min(1, l));
+    s = Math.max(0, Math.min(1, s));
+
+    function hueToRgb(p, q, t) {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1 / 6) return p + (q - p) * 6 * t;
+        if (t < 1 / 2) return q;
+        if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+        return p;
     }
 
-    // 2. Direct RGB color
-    const srgbClrNode = shadowNode["a:srgbClr"]?.[0];
-    if (srgbClrNode) {
-        const val = srgbClrNode?.["$"]?.val;
-        if (val) return `#${val}`;
+    let r, g, b;
+    if (s === 0) {
+        r = g = b = l;
+    } else {
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        r = hueToRgb(p, q, h + 1 / 3);
+        g = hueToRgb(p, q, h);
+        b = hueToRgb(p, q, h - 1 / 3);
     }
 
-    // 3. Scheme color (resolved against theme)
-    const schemeClrNode = shadowNode["a:schemeClr"]?.[0];
-    if (schemeClrNode) {
-        const key = schemeClrNode?.["$"]?.val;
-        if (key) {
-            const resolved = colorHelper.resolveThemeColorHelper(key, themeXML, masterXML);
-            if (resolved) return resolved;
+    const toHex = (x) => Math.round(x * 255).toString(16).padStart(2, "0").toUpperCase();
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+
+function applyColorTransforms(hexColor, transforms) {
+    if (!transforms || transforms.length === 0) return hexColor;
+    if (!hexColor || hexColor === "transparent") return hexColor;
+
+    let [h, l, s] = hexToHls(hexColor);
+
+    for (const { name, val } of transforms) {
+        const factor = parseInt(val, 10) / 100000;
+        switch (name) {
+            case "lumMod": l = l * factor; break;
+            case "lumOff": l = l + factor; break;
+            case "satMod": s = s * factor; break;
+            case "tint": l = l + (1.0 - l) * factor; break;
+            case "shade": l = l * factor; break;
+            // "alpha" is handled separately by resolveShadowAlpha() — skip here
         }
     }
 
-    // 4. System color fallback
-    const sysClrNode = shadowNode["a:sysClr"]?.[0];
-    if (sysClrNode) {
-        const lastClr = sysClrNode?.["$"]?.lastClr;
-        if (lastClr) return `#${lastClr}`;
-    }
-
-    return "#000000"; // final fallback
+    return hlsToHex(h, l, s);
 }
 
-/**
- * Extract alpha value from the color child node (whichever color type was present).
- * Returns a float 0–1.
- */
-function resolveShadowAlpha(shadowNode) {
-    // Check all possible color child nodes for <a:alpha>
-    const colorTypes = ["a:prstClr", "a:srgbClr", "a:schemeClr", "a:sysClr"];
-
-    for (const type of colorTypes) {
-        const colorNode = shadowNode[type]?.[0];
-        if (!colorNode) continue;
-
-        const alphaVal = colorNode["a:alpha"]?.[0]?.["$"]?.val;
-        if (alphaVal !== undefined && alphaVal !== null) {
-            const parsed = parseInt(alphaVal, 10);
-            if (!isNaN(parsed)) {
-                return parsed / 100000; // OOXML: 100000 = 100% opaque
-            }
+function extractColorTransforms(colorNode) {
+    const transformNames = ["lumMod", "lumOff", "satMod", "tint", "shade"];
+    const result = [];
+    for (const tname of transformNames) {
+        const tnode = colorNode[`a:${tname}`]?.[0];
+        if (tnode) {
+            const val = tnode["$"]?.val;
+            if (val != null) result.push({ name: tname, val });
         }
     }
-
-    return 0.8; // default: 80% opacity (common for PPT shadows)
-}
-
-/**
- * Convert dir (60000ths-of-a-degree) + dist (EMU) to CSS offsetX/offsetY (px).
- *
- * OOXML angle convention:
- *   0°       = rightward  (East)
- *   5400000  = downward   (South)   [90°]
- *   10800000 = leftward   (West)    [180°]
- *   16200000 = upward     (North)   [270°]
- *
- * CSS box-shadow: positive X = right, positive Y = down.
- */
-function dirDistToOffset(dirRaw, distRaw) {
-    const dir = (dirRaw ?? 0) / 60000; // degrees, 0–359
-    const dist = (distRaw ?? 0) / EMU_PER_PX; // px
-
-    const rad = (dir * Math.PI) / 180;
-    const offX = Math.round(dist * Math.cos(rad) * 10) / 10;
-    const offY = Math.round(dist * Math.sin(rad) * 10) / 10;
-
-    return { offX, offY };
-}
-
-/**
- * Convert blurRad (EMU) to CSS blur px.
- * PPT blurRad is the *radius* (same as CSS blur-radius).
- */
-function blurRadToPx(blurRadRaw) {
-    if (!blurRadRaw) return 0;
-    return Math.round((parseInt(blurRadRaw, 10) / EMU_PER_PX) * 10) / 10;
-}
-
-/**
- * Approximate spread from sx/sy scale factors.
- * sx/sy = 100000 means 1× (no scale).  101000 → 1.01× (1% bigger).
- * We express the extra size as a spread px value relative to the shape,
- * but since CSS spread is absolute px we just use a small approximation:
- * spread ≈ (avgScale - 1) × blurPx   (feels right visually).
- */
-function scaleToSpread(sxRaw, syRaw, blurPx) {
-    const sx = sxRaw ? parseInt(sxRaw, 10) / 100000 : 1;
-    const sy = syRaw ? parseInt(syRaw, 10) / 100000 : 1;
-    const avg = (sx + sy) / 2;
-    if (avg <= 1) return 0;
-    return Math.round((avg - 1) * blurPx * 10) / 10;
-}
-
-/**
- * algn affects which corner of the shape the shadow originates from.
- * We translate this to a small additional CSS offset nudge so the shadow
- * visually matches the "alignment" (origin point) of the shadow.
- *
- * algn values (OOXML ST_RectAlignment):
- *   tl, t, tr, l, ctr, r, bl, b, br
- *
- * The offsets here are proportional adjustments in the same direction as
- * the alignment corner/edge relative to the shape center.  They are small
- * and only noticeable when dist=0 (glow-style shadows).
- */
-function algnToNudge(algn) {
-    // These nudges are deliberately 0 for most cases when dist is already set.
-    // They matter most for "glow" (dist=0) shadows where algn shifts the glow origin.
-    // Return [nudgeX, nudgeY] — expressed as fractions; caller multiplies by blurPx.
-    const map = {
-        tl: [-0.2, -0.2],
-        t: [0.0, -0.2],
-        tr: [0.2, -0.2],
-        l: [-0.2, 0.0],
-        ctr: [0.0, 0.0],
-        r: [0.2, 0.0],
-        bl: [-0.2, 0.2],
-        b: [0.0, 0.2],
-        br: [0.2, 0.2],
-    };
-    return map[algn] ?? [0, 0];
+    return result;
 }
 
 
-// ─── Main exported function ───────────────────────────────────────────────────
+// ─── Custom shape shadow (filter: drop-shadow) ───────────────────────────────
+//
+// Custom shapes (freeform / custGeom) are rendered as SVG paths inside a div.
+// CSS `box-shadow` creates a rectangular shadow that ignores the actual path
+// silhouette, so it is wrong for these shapes.
+//
+// The correct approach is `filter: drop-shadow(offX offY blur color)` applied
+// to the wrapping <div class="custom-shape"> (or directly to the inner <svg>).
+// drop-shadow() respects the alpha channel of the element it is applied to, so
+// it correctly follows the freeform outline.
+//
+// Limitations vs box-shadow:
+//   • No "spread" parameter  — CSS drop-shadow has no spread radius.
+//     We approximate it by adding a fraction of the OOXML sx/sy scale surplus
+//     to the blur radius so that larger-scale shadows still look slightly wider.
+//   • No inset variant       — CSS drop-shadow only supports outer shadows.
+//     Inner shadows on custom shapes are ignored (they are extremely rare).
+//
+// Usage (in your shape-renderer):
+//
+//   const { getCustomShapeShadowStyle } = require("./getShapeShadowStyle");
+//
+//   // shapeNode is the parsed p:sp JSON object (same as getShapeShadowStyle)
+//   const filterStyle = getCustomShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap);
+//   // filterStyle e.g. → "filter: drop-shadow(-2.3px -1.9px 24px rgba(0, 32, 96, 0.89));"
+//
+//   // Apply to the wrapping div:
+//   <div class="custom-shape" style="... ${filterStyle}">
+//     <svg>...</svg>
+//   </div>
 
-/**
- * getShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap)
- *
- * Returns a CSS property string like:
- *   "box-shadow: 4px 6px 12px 0.5px rgba(0, 0, 0, 0.8);"
- * or "" when no shadow is defined.
- *
- * Can be used as a standalone function OR as a class method:
- *   // As a method inside ShapeHandler (rename getShadowStyle → getShapeShadowStyle):
- *   getShapeShadowStyle(shapeNode) {
- *       return getShapeShadowStyle(shapeNode, this.themeXML, this.masterXML, this.clrMap);
- *   }
- */
-function getShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
+function getCustomShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
     try {
-        const effectLst = shapeNode?.["p:spPr"]?.[0]?.["a:effectLst"]?.[0];
+        // ── Resolve effectLst (same multi-level fallback as getShapeShadowStyle) ─
+        const effectLst =
+            shapeNode?.["p:spPr"]?.[0]?.["a:effectLst"]?.[0]
+            ?? shapeNode?.["a:effectLst"]?.[0]
+            ?? (shapeNode?.["a:outerShdw"] || shapeNode?.["a:innerShdw"] ? shapeNode : null);
+
         if (!effectLst) return "";
 
+        // ── Outer shadow only — CSS drop-shadow() has no inset equivalent ──────
+        // OOXML innerShdw on custGeom/freeform shapes cannot be reproduced in CSS
+        // because filter: drop-shadow() only supports outer (non-inset) shadows.
+        // We skip inner shadows and emit a warning so developers know it was seen
+        // but intentionally not rendered, rather than silently producing nothing.
         const outerShdw = effectLst?.["a:outerShdw"]?.[0];
-        if (!outerShdw) return "";
+        const innerShdw = effectLst?.["a:innerShdw"]?.[0];
+        if (!outerShdw) {
+            if (innerShdw) {
+                console.warn(
+                    "[getCustomShapeShadowStyle] Inner shadow on custGeom shape skipped — " +
+                    "CSS drop-shadow() has no inset variant. Shape:",
+                    shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvPr"]?.[0]?.["$"]?.name ?? "(unnamed)"
+                );
+            }
+            return "";
+        }
 
         const attrs = outerShdw["$"] ?? {};
 
@@ -213,40 +383,43 @@ function getShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
         const color = resolveShadowColor(outerShdw, themeXML, masterXML);
         const alpha = resolveShadowAlpha(outerShdw);
 
-        // ── 2. Blur ───────────────────────────────────────────────────────────
-        const blurPx = blurRadToPx(attrs.blurRad);
+        // ── 2. Blur radius ────────────────────────────────────────────────────
+        let blurPx = blurRadToPx(attrs.blurRad);
 
-        // ── 3. Offset from dir + dist ─────────────────────────────────────────
-        const distRaw = attrs.dist ? parseInt(attrs.dist, 10) : 0;
-        const dirRaw = attrs.dir ? parseInt(attrs.dir, 10) : 0;
-        let { offX, offY } = dirDistToOffset(dirRaw, distRaw);
-
-        // ── 4. Alignment nudge (only significant when dist=0) ─────────────────
-        if (distRaw === 0 && attrs.algn) {
-            const [nx, ny] = algnToNudge(attrs.algn);
-            offX += Math.round(nx * blurPx * 10) / 10;
-            offY += Math.round(ny * blurPx * 10) / 10;
+        // ── 3. Spread approximation added into blur ───────────────────────────
+        // drop-shadow() has no spread param. When sx/sy > 100000 (scaled up),
+        // OOXML means the shadow is slightly enlarged. We add a small extra blur
+        // to roughly mimic that widening effect.
+        const sx = attrs.sx ? parseInt(attrs.sx, 10) / 100000 : 1;
+        const sy = attrs.sy ? parseInt(attrs.sy, 10) / 100000 : 1;
+        const avgScale = (sx + sy) / 2;
+        if (avgScale > 1) {
+            // Spread surplus: e.g. scale=1.02 → adds 2% of blurPx as extra blur
+            blurPx = Math.round((blurPx + (avgScale - 1) * blurPx) * 10) / 10;
         }
 
-        // ── 5. Spread from sx/sy ──────────────────────────────────────────────
-        const spread = scaleToSpread(attrs.sx, attrs.sy, blurPx);
+        // ── 4. Offset (dir + dist) ────────────────────────────────────────────
+        const distRaw = attrs.dist ? parseInt(attrs.dist, 10) : 0;
+        const dirRaw = (attrs.dir != null && attrs.dir !== "")
+            ? parseInt(attrs.dir, 10)
+            : null;
 
-        // ── 6. Compose box-shadow ─────────────────────────────────────────────
+        const { offX, offY } = dirDistToOffset(dirRaw, distRaw, attrs.algn);
+
+        // ── 5. Compose CSS ────────────────────────────────────────────────────
         const rgb = hexToRgbComponents(color);
-
-        // Round values for cleaner CSS output
         const cssOffX = Math.round(offX * 10) / 10;
         const cssOffY = Math.round(offY * 10) / 10;
         const cssBlur = Math.round(blurPx * 10) / 10;
-        const cssSpread = Math.round(spread * 10) / 10;
         const cssAlpha = Math.round(alpha * 100) / 100;
 
-        return `box-shadow: ${cssOffX}px ${cssOffY}px ${cssBlur}px ${cssSpread}px rgba(${rgb}, ${cssAlpha});`;
+        return `filter: drop-shadow(${cssOffX}px ${cssOffY}px ${cssBlur}px rgba(${rgb}, ${cssAlpha}));`;
 
     } catch (err) {
-        console.error("getShapeShadowStyle error:", err);
+        console.error("getCustomShapeShadowStyle error:", err);
         return "";
     }
 }
 
-module.exports = { getShapeShadowStyle };
+
+module.exports = { getShapeShadowStyle, getCustomShapeShadowStyle };

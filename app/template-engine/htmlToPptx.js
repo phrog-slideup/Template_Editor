@@ -11,6 +11,7 @@ const JSZip = require('jszip');
 // Add at the very top, BEFORE requiring PptxGenJS
 const { clearGradientMetadata } = require('./pptxgen-text-gradient-patch');
 const { injectTextGradientsIntoSlideXML } = require('./text-gradient-processor');
+const { clearReflectionStore, collectReflectionsFromSlide, injectReflectionsIntoSlideXML } = require('./shape-reflection-processor');
 
 const addShapeToSlide = require("../html-To-Pptx-Styling/addShapeToSlide");
 const addTextBox = require("../html-To-Pptx-Styling/addTextBoxToSlide");
@@ -25,6 +26,7 @@ const sharedCache = require('../api/shared/cache.js');
 async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName) {
     try {
         clearGradientMetadata();
+        clearReflectionStore();
         const dom = new JSDOM(htmlString);
         const document = dom.window.document;
         const slides = document.querySelectorAll(".sli-slide:not(.sli-slide .sli-slide)");
@@ -99,6 +101,9 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
                     console.error(`   ❌ Error setting background: ${bgError.message}`);
                 }
 
+                // Collect reflection metadata for post-processing XML injection
+                collectReflectionsFromSlide(slideElement);
+
                 // Process regular slide content (excluding masters)
                 await processSlideContent(pptx, pptSlide, slideElement, slideContext);
 
@@ -152,6 +157,14 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         // 🎨 STEP 6.5: INJECT TEXT GRADIENTS HERE
         // ========================================
         const gradientResult = await injectTextGradientsIntoSlideXML(slideXmlsDir);
+
+        // ========================================
+        // 🪞 STEP 6.5B: INJECT SHAPE REFLECTIONS
+        // ========================================
+        const reflectionResult = await injectReflectionsIntoSlideXML(slideXmlsDir);
+        if (reflectionResult.shapesInjected > 0) {
+            console.log(`   ✅ Injected reflections into ${reflectionResult.shapesInjected} shape(s)`);
+        }
 
         // NEW STEP 6.7: Fix chart relationships
         const chartRelsResult = await fixChartRelationships(slideXmlsDir);
@@ -443,6 +456,19 @@ async function processSlideContent(pptx, pptSlide, slideElement, slideContext) {
     for (const { element } of allElements) {
         try {
             if (processedElements.has(element) || isMasterElement(element)) {
+                continue;
+            }
+
+            // NEW: Handle shape-reflection-wrapper — process only the real .shape child,
+            // skip the .shape-reflection ghost div (it's replaced by OOXML reflection in post-processing)
+            if (element.classList.contains('shape-reflection-wrapper') ||
+                element.getAttribute('data-reflection') === 'true') {
+                const realShape = element.querySelector('.shape');
+                if (realShape && !isMasterElement(realShape)) {
+                    await processShapeElement(pptx, pptSlide, realShape, slideContext);
+                    processedElements.add(realShape);
+                }
+                processedElements.add(element);
                 continue;
             }
 
@@ -2217,9 +2243,124 @@ async function extractAndProcessSlideXMLs(pptxFilePath, customOutputDir = null, 
         throw error;
     }
 }
+// // Original Function
+// async function replaceSlideXMLInPPTX(fileFolderName, extractedSlidesDir) {
+//     try {
+//         // Validate inputs
+//         if (!fileFolderName || !extractedSlidesDir) {
+//             throw new Error('Invalid folder name or extracted slides directory path.');
+//         }
+
+//         const filesDir = path.resolve(__dirname, '../files');
+//         const targetDir = path.join(filesDir, fileFolderName);
+
+//         // Check if target directory exists
+//         try {
+//             await fsPromises.access(targetDir);
+//         } catch {
+//             throw new Error(`Target directory not found: ${targetDir}`);
+//         }
+
+//         // Paths for extracted files
+//         const extractedSlidesPath = path.join(extractedSlidesDir, 'slides');
+//         const extractedRelsPath = path.join(extractedSlidesDir, '_rels');
+
+//         // Check if extracted directories exist
+//         const slidesExist = await checkDirectoryExists(extractedSlidesPath);
+//         const relsExist = await checkDirectoryExists(extractedRelsPath);
+
+//         if (!slidesExist && !relsExist) {
+//             throw new Error('No extracted slide files found to replace');
+//         }
+
+//         let replacedCount = 0;
+
+//         // Replace slideX.xml files
+//         if (slidesExist) {
+//             const slideFiles = await fsPromises.readdir(extractedSlidesPath);
+//             const xmlFiles = slideFiles.filter(file => file.match(/^slide\d+\.xml$/));
+
+//             for (const xmlFile of xmlFiles) {
+//                 try {
+//                     // Read converted XML content
+//                     const convertedXMLPath = path.join(extractedSlidesPath, xmlFile);
+//                     const convertedXMLContent = await fsPromises.readFile(convertedXMLPath, 'utf8');
+
+//                     // Target path in PPTX structure
+//                     const targetXMLPath = path.join(targetDir, 'ppt', 'slides', xmlFile);
+
+//                     // Check if target file exists
+//                     try {
+//                         await fsPromises.access(targetXMLPath);
+//                         await fsPromises.writeFile(targetXMLPath, convertedXMLContent, 'utf8');
+//                         replacedCount++;
+//                     } catch {
+//                         console.log(`   ⚠️ Target file not found, skipping: ${xmlFile}`);
+//                     }
+//                 } catch (error) {
+//                     console.error(`   ❌ Error replacing ${xmlFile}: ${error.message}`);
+//                 }
+//             }
+//         }
+
+//         // Replace slideX.xml.rels files
+//         if (relsExist) {
+//             const relsFiles = await fsPromises.readdir(extractedRelsPath);
+//             const relsXmlFiles = relsFiles.filter(file => file.match(/^slide\d+\.xml\.rels$/));
+
+//             for (const relsFile of relsXmlFiles) {
+//                 try {
+//                     // Read converted rels content
+//                     const convertedRelsPath = path.join(extractedRelsPath, relsFile);
+//                     const convertedRelsContent = await fsPromises.readFile(convertedRelsPath, 'utf8');
+
+//                     // Target path in PPTX structure
+//                     const targetRelsPath = path.join(targetDir, 'ppt', 'slides', '_rels', relsFile);
+
+//                     // Ensure _rels directory exists
+//                     const relsDir = path.dirname(targetRelsPath);
+//                     await fsPromises.mkdir(relsDir, { recursive: true });
+
+//                     // Read original rels file to preserve slideLayout relationship
+//                     let finalRelsContent = convertedRelsContent;
+
+//                     try {
+//                         await fsPromises.access(targetRelsPath);
+//                         const originalRelsContent = await fsPromises.readFile(targetRelsPath, 'utf8');
+
+//                         // Merge rels files - preserve slideLayout from original
+//                         finalRelsContent = await mergeRelsFiles(originalRelsContent, convertedRelsContent, relsFile);
+
+//                     } catch {
+//                         console.log(`   ℹ️ Creating new rels file: ${relsFile}`);
+//                     }
+
+//                     await fsPromises.writeFile(targetRelsPath, finalRelsContent, 'utf8');
+//                     replacedCount++;
+//                 } catch (error) {
+//                     console.error(`   ❌ Error replacing ${relsFile}: ${error.message}`);
+//                 }
+//             }
+//         }
+
+//         return {
+//             success: true,
+//             message: `Successfully replaced ${replacedCount} slide-related files`,
+//             replacedCount
+//         };
+
+//     } catch (error) {
+//         console.error(`   ❌ Error in replaceSlideXMLInPPTX: ${error.message}`);
+//         throw error;
+//     }
+// }
+
+
+// // Chart Handler Function ..
 
 async function replaceSlideXMLInPPTX(fileFolderName, extractedSlidesDir) {
     try {
+
         // Validate inputs
         if (!fileFolderName || !extractedSlidesDir) {
             throw new Error('Invalid folder name or extracted slides directory path.');
@@ -2238,21 +2379,31 @@ async function replaceSlideXMLInPPTX(fileFolderName, extractedSlidesDir) {
         // Paths for extracted files
         const extractedSlidesPath = path.join(extractedSlidesDir, 'slides');
         const extractedRelsPath = path.join(extractedSlidesDir, '_rels');
+        const extractedChartsPath = path.join(extractedSlidesDir, 'charts');
+        const extractedChartRelsPath = path.join(extractedSlidesDir, 'charts', '_rels');
+        const extractedEmbeddingsPath = path.join(extractedSlidesDir, 'embeddings');
 
         // Check if extracted directories exist
         const slidesExist = await checkDirectoryExists(extractedSlidesPath);
         const relsExist = await checkDirectoryExists(extractedRelsPath);
+        const chartsExist = await checkDirectoryExists(extractedChartsPath);
+        const chartRelsExist = await checkDirectoryExists(extractedChartRelsPath);
+        const embeddingsExist = await checkDirectoryExists(extractedEmbeddingsPath);
 
-        if (!slidesExist && !relsExist) {
-            throw new Error('No extracted slide files found to replace');
+        if (!slidesExist && !relsExist && !chartsExist && !chartRelsExist && !embeddingsExist) {
+            throw new Error('No extracted files found to replace');
         }
 
         let replacedCount = 0;
 
         // Replace slideX.xml files
         if (slidesExist) {
+
             const slideFiles = await fsPromises.readdir(extractedSlidesPath);
+
             const xmlFiles = slideFiles.filter(file => file.match(/^slide\d+\.xml$/));
+
+            console.log(`📄 Found ${xmlFiles.length} slide XML files to replace`);
 
             for (const xmlFile of xmlFiles) {
                 try {
@@ -2317,10 +2468,156 @@ async function replaceSlideXMLInPPTX(fileFolderName, extractedSlidesDir) {
             }
         }
 
+        // Replace chartX.xml files
+        if (chartsExist) {
+            const chartFiles = await fsPromises.readdir(extractedChartsPath);
+            const chartXmlFiles = chartFiles.filter(file => file.match(/^chart\d+\.xml$/));
+
+            for (const chartFile of chartXmlFiles) {
+                try {
+                    // Read converted chart XML content
+                    const convertedChartPath = path.join(extractedChartsPath, chartFile);
+                    const convertedChartContent = await fsPromises.readFile(convertedChartPath, 'utf8');
+
+                    // Target path in PPTX structure
+                    const targetChartPath = path.join(targetDir, 'ppt', 'charts', chartFile);
+
+                    // Ensure charts directory exists
+                    const chartsDir = path.dirname(targetChartPath);
+                    await fsPromises.mkdir(chartsDir, { recursive: true });
+
+                    // Check if target file exists
+                    try {
+                        await fsPromises.access(targetChartPath);
+                        await fsPromises.writeFile(targetChartPath, convertedChartContent, 'utf8');
+
+                        replacedCount++;
+                    } catch {
+                        console.log(`   ℹ️ Creating new chart file: ${chartFile}`);
+                        await fsPromises.writeFile(targetChartPath, convertedChartContent, 'utf8');
+                        replacedCount++;
+                    }
+                } catch (error) {
+                    console.error(`   ❌ Error replacing ${chartFile}: ${error.message}`);
+                }
+            }
+        }
+
+        // Replace chartX.xml.rels files
+        if (chartRelsExist) {
+            const chartRelsFiles = await fsPromises.readdir(extractedChartRelsPath);
+            const chartRelsXmlFiles = chartRelsFiles.filter(file => file.match(/^chart\d+\.xml\.rels$/));
+
+            for (const chartRelsFile of chartRelsXmlFiles) {
+                try {
+                    // Read converted chart rels content
+                    const convertedChartRelsPath = path.join(extractedChartRelsPath, chartRelsFile);
+                    const convertedChartRelsContent = await fsPromises.readFile(convertedChartRelsPath, 'utf8');
+
+                    // Target path in PPTX structure
+                    const targetChartRelsPath = path.join(targetDir, 'ppt', 'charts', '_rels', chartRelsFile);
+
+                    // Ensure chart _rels directory exists
+                    const chartRelsDir = path.dirname(targetChartRelsPath);
+                    await fsPromises.mkdir(chartRelsDir, { recursive: true });
+
+                    // Check if target file exists and merge if needed
+                    let finalChartRelsContent = convertedChartRelsContent;
+
+                    try {
+                        await fsPromises.access(targetChartRelsPath);
+                        const originalChartRelsContent = await fsPromises.readFile(targetChartRelsPath, 'utf8');
+
+                        // You might want to merge chart rels files similar to slide rels
+                        // For now, we'll replace completely, but you can add merge logic if needed
+                        finalChartRelsContent = convertedChartRelsContent;
+                    } catch {
+                        console.log(`   ℹ️ Creating new chart rels file: ${chartRelsFile}`);
+                    }
+
+                    // 🆕 Remove style1.xml and colors1.xml relationships from chart rels
+                    finalChartRelsContent = finalChartRelsContent.replace(
+                        /<Relationship[^>]*Target="style1\.xml"[^>]*\/>\s*/g,
+                        ''
+                    );
+                    finalChartRelsContent = finalChartRelsContent.replace(
+                        /<Relationship[^>]*Target="colors1\.xml"[^>]*\/>\s*/g,
+                        ''
+                    );
+                    console.log(`   🧹 Cleaned chart rels: removed style1.xml and colors1.xml relationships`);
+
+                    await fsPromises.writeFile(targetChartRelsPath, finalChartRelsContent, 'utf8');
+
+                    replacedCount++;
+                } catch (error) {
+                    console.error(`   ❌ Error replacing ${chartRelsFile}: ${error.message}`);
+                }
+            }
+        }
+
+        // Replace embedded Excel files
+        if (embeddingsExist) {
+            // Source (extracted) files
+            const embeddingFiles = await fsPromises.readdir(extractedEmbeddingsPath);
+            const excelFiles = embeddingFiles.filter(file =>
+                /^Microsoft_Excel_Worksheet\d+\.xlsx$/i.test(file)
+            );
+
+            // Target embeddings dir inside the PPTX folder
+            const targetEmbeddingsDir = path.join(targetDir, 'ppt', 'embeddings');
+            await fsPromises.mkdir(targetEmbeddingsDir, { recursive: true });
+
+            // 1) Remove any existing Excel files in ppt/embeddings
+            try {
+                const existingTargetEmbeds = await fsPromises.readdir(targetEmbeddingsDir);
+                const existingExcel = existingTargetEmbeds.filter(name => /\.xlsx$/i.test(name));
+                if (existingExcel.length) {
+
+                    for (const oldXlsx of existingExcel) {
+                        const oldPath = path.join(targetEmbeddingsDir, oldXlsx);
+                        try {
+                            await fsPromises.unlink(oldPath);
+                        } catch (delErr) {
+                            console.warn(`   ⚠️ Could not remove ${oldXlsx}: ${delErr.message}`);
+                        }
+                    }
+                } else {
+                    console.log("   ℹ️ No existing Excel embeddings to remove");
+                }
+            } catch (scanErr) {
+                console.warn(`   ⚠️ Could not scan target embeddings dir: ${scanErr.message}`);
+            }
+
+            // 2) Create (write) fresh Excel embeddings
+            for (const excelFile of excelFiles) {
+                try {
+                    const srcPath = path.join(extractedEmbeddingsPath, excelFile);
+                    const buf = await fsPromises.readFile(srcPath);
+
+                    const targetExcelPath = path.join(targetEmbeddingsDir, excelFile);
+                    await fsPromises.writeFile(targetExcelPath, buf);
+
+                    replacedCount++;
+                } catch (error) {
+                    console.error(`   ❌ Error writing ${excelFile}: ${error.message}`);
+                }
+            }
+        }
+
+
+        console.log(`   🎉 Successfully replaced ${replacedCount} files total`);
+
         return {
             success: true,
-            message: `Successfully replaced ${replacedCount} slide-related files`,
-            replacedCount
+            message: `Successfully replaced ${replacedCount} files (slides, rels, charts, chart rels, and embeddings)`,
+            replacedCount,
+            details: {
+                slidesProcessed: slidesExist,
+                relsProcessed: relsExist,
+                chartsProcessed: chartsExist,
+                chartRelsProcessed: chartRelsExist,
+                embeddingsProcessed: embeddingsExist
+            }
         };
 
     } catch (error) {
@@ -2328,6 +2625,7 @@ async function replaceSlideXMLInPPTX(fileFolderName, extractedSlidesDir) {
         throw error;
     }
 }
+
 
 async function replaceSlideImages(fileFolderName, extractedSlidesDir) {
     try {

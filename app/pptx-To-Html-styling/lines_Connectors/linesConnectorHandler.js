@@ -293,13 +293,11 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
                 strokeColor = `#${solidFill[0]["a:srgbClr"][0]["$"].val}`;
             } else if (solidFill[0]["a:schemeClr"]) {
                 strokeColor = resolveColor(solidFill[0]["a:schemeClr"][0]["$"].val, clrMap, themeXML);
-
                 const lumMod = solidFill[0]["a:schemeClr"][0]["a:lumMod"]?.[0]?.["$"]?.val;
-                if (lumMod) {
-                    strokeColor = colorHelper.applyLumMod(strokeColor, lumMod);
-                }
+                if (lumMod) strokeColor = colorHelper.applyLumMod(strokeColor, lumMod);
             }
-        } else {
+        }
+        else {
             const lnRef = shapeNode?.["p:style"]?.[0]?.["a:lnRef"]?.[0];
             if (lnRef?.["a:schemeClr"]) {
                 strokeColor = resolveColor(lnRef["a:schemeClr"][0]["$"].val, clrMap, themeXML);
@@ -317,20 +315,18 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
         strokeDashArray = getDashArray(dashType, strokeWidth);
     }
     // If no color was found from line, check style reference (for connectors without line object or without solidFill)
-    if (strokeColor === "#000000") {
+    if (strokeColor === null) {
         const lnRef = shapeNode?.["p:style"]?.[0]?.["a:lnRef"]?.[0];
         if (lnRef?.["a:schemeClr"]) {
             strokeColor = resolveColor(lnRef["a:schemeClr"][0]["$"].val, clrMap, themeXML);
-
-            // Apply lumMod if present
             const lumMod = lnRef["a:schemeClr"][0]["a:lumMod"]?.[0]?.["$"]?.val;
-            if (lumMod) {
-                strokeColor = colorHelper.applyLumMod(strokeColor, lumMod);
-            }
+            if (lumMod) strokeColor = colorHelper.applyLumMod(strokeColor, lumMod);
         } else if (lnRef?.["a:srgbClr"]) {
             strokeColor = `#${lnRef["a:srgbClr"][0]["$"].val}`;
         }
     }
+    if (strokeColor === null) strokeColor = "#000000";
+
     // Extract line end properties (arrows, dots, etc.)
     const lineEnds = line ? extractLineEnds(line) : { headType: "none", tailType: "none" };
 
@@ -973,11 +969,6 @@ function generateCurvedHTML(shapeType, width, height, strokeColor, strokeWidth, 
         endAngle: endAngle
     };
 }
-
-
-
-
-
 
 module.exports = {
     convertConnectorToHTML

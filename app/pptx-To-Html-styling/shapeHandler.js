@@ -96,7 +96,7 @@ class ShapeHandler {
             for (const cxnSpNode of lineShapeTag) {
                 try {
 
-                    const connectorHtml = await getLineConnectorHandler.convertConnectorToHTML(cxnSpNode, this.themeXML, masterXML, this.clrMap, this.layoutXML, this.nodes);
+                    const connectorHtml = await getLineConnectorHandler.convertConnectorToHTML(cxnSpNode, this.themeXML, this.clrMap, masterXML, this.layoutXML, this.nodes);
 
                     if (typeof connectorHtml === 'string' && connectorHtml.trim()) {
                         allHtmlElements.push(connectorHtml);
@@ -1664,9 +1664,21 @@ class ShapeHandler {
         let shapeBorderCSS = '';
 
         // Rakesh Notes::: height issue=height set properly for the text box as outer shape hide the inner text with a specific height
+        const bodyPrWrap = shapeNode?.["p:txBody"]?.[0]?.["a:bodyPr"]?.[0]?.["$"]?.wrap;
+        const needsAutoHeight = !bodyPrWrap && isPlaceholder;
         const useHeight = shapeInfo && shapeInfo.estimatedContentHeight && shapeInfo.estimatedContentHeight > position.height;
-        let effectiveHeight = useHeight ? shapeInfo.estimatedContentHeight : position.height;
-        const overflowStyle = useHeight ? 'visible' : 'hidden';
+
+        let effectiveHeight;
+        if (needsAutoHeight) {
+            // ✅ No wrap + placeholder = PPT auto-expands
+            // Use position.height but subtract small buffer so text isn't clipped
+            // by sub-pixel rendering differences between PPT and browser
+            effectiveHeight = position.height - 4;
+        } else {
+            effectiveHeight = useHeight ? shapeInfo.estimatedContentHeight : position.height;
+        }
+
+        const overflowStyle = (useHeight || needsAutoHeight) ? 'visible' : 'hidden';
         const isCtrTitlePlaceholder = this.isCenterTitlePlaceholder(shapeNode);
         const isTextBoxCheck = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvSpPr"]?.[0]?.["$"]?.txBox === "1";
 
@@ -1677,17 +1689,15 @@ class ShapeHandler {
             shapeBorderCSS = shapeInfo.outlineStyle.css;
             effectiveHeight = position.height;
         }
-        // ✅ CRITICAL FIX: Center the text box on slide for ctrTitle placeholders
-        if (isCtrTitlePlaceholder && !isTextBoxCheck) {
-            const slideWidth = 960; // Standard slide width
-            const slideHeight = 540; // Standard slide height
+        const hasExplicitPosition = shapeNode?.["p:spPr"]?.[0]?.["a:xfrm"]?.[0]?.["a:off"]?.[0];
 
-            // Horizontally center
+        if (isCtrTitlePlaceholder && !isTextBoxCheck && !hasExplicitPosition) {
+            const slideWidth = 960;
+            const slideHeight = 540;
             adjustedLeft = (slideWidth - position.width) / 2;
-
-            // Vertically center
             adjustedTop = (slideHeight - effectiveHeight) / 2;
         }
+
 
         // ── Glow wrapper pattern ───────────────────────────────────────────────
 

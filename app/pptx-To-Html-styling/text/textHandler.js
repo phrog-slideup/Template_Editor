@@ -47,7 +47,7 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
     const rotation = pptTextAllInfo.getRotation(shapeNode);
     const placeholderType = shapeNode?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0]?.["$"]?.type;
     // justifyContent (vertical) comes from bodyPr anchor (t/ctr/b)
-    justifyContent = getJustifyContentFromAnchor(shapeNode, layoutXML, placeholderType);
+    justifyContent = getJustifyContentFromAnchor(shapeNode, layoutXML, placeholderType, masterXML);
     // getAlignItem (horizontal) will be derived from textAlign after paragraph processing — see below
     // Get font size with proper flag parameter
     const fontSize = pptTextAllInfo.getFontSize(shapeNode, masterXML);
@@ -567,17 +567,29 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
 }
 
 
-// Returns justify-content value (vertical main-axis) from bodyPr anchor attribute.
-// With flex-direction:column, justify-content controls VERTICAL positioning (t/ctr/b).
-function getJustifyContentFromAnchor(shapeNode, layoutXML, placeholderType) {
+function getJustifyContentFromAnchor(shapeNode, layoutXML, placeholderType, masterXML) {
 
-    const anchor = shapeNode?.["p:txBody"]?.[0]?.["a:bodyPr"]?.[0]?.["$"]?.anchor;
-    if (anchor) {
-        return convertAnchorToFlexJustify(anchor);
+    const bodyPr = shapeNode?.["p:txBody"]?.[0]?.["a:bodyPr"]?.[0];
+    const bodyPrAttrs = bodyPr?.["$"];
+
+    // 1. Shape's own bodyPr anchor — always trust this
+    if (bodyPrAttrs?.anchor) {
+        return convertAnchorToFlexJustify(bodyPrAttrs.anchor);
     }
 
+    // 2. Text boxes have no inherited vertical alignment — always top
+    const isTextBox = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvSpPr"]?.[0]?.["$"]?.txBox === "1";
+    if (isTextBox) {
+        return "flex-start";
+    }
+
+    // ✅ FIX: anchor is absent — check layout regardless of whether bodyPr exists
+    // (bodyPr may exist but be empty e.g. <a:bodyPr wrap="square" /> with no anchor)
+    const placeholderIdx = shapeNode?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]
+        ?.["p:ph"]?.[0]?.["$"]?.idx;
+
     if (placeholderType && layoutXML) {
-        const layoutShape = findPlaceholderInLayout(placeholderType, layoutXML);
+        const layoutShape = findPlaceholderInLayout(placeholderType, layoutXML, placeholderIdx);
         if (layoutShape) {
             const layoutAnchor = layoutShape?.["p:txBody"]?.[0]?.["a:bodyPr"]?.[0]?.["$"]?.anchor;
             if (layoutAnchor) {
@@ -586,7 +598,33 @@ function getJustifyContentFromAnchor(shapeNode, layoutXML, placeholderType) {
         }
     }
 
-    return "flex-start"; // default: top
+    // Master fallback
+    const SKIP_MASTER_TYPES = ["body", "subBody", "obj", "dt", "ftr", "sldNum"];
+    if (placeholderType && masterXML && !SKIP_MASTER_TYPES.includes(placeholderType)) {
+        const masterShapes = masterXML?.["p:sldMaster"]?.["p:cSld"]?.[0]
+            ?.["p:spTree"]?.[0]?.["p:sp"] || [];
+
+        let masterShape = masterShapes.find(shape => {
+            const ph = shape?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0]?.["$"];
+            return ph?.type === placeholderType && String(ph?.idx) === String(placeholderIdx);
+        });
+
+        if (!masterShape) {
+            masterShape = masterShapes.find(shape => {
+                const ph = shape?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0]?.["$"];
+                return ph?.type === placeholderType;
+            });
+        }
+
+        if (masterShape) {
+            const masterAnchor = masterShape?.["p:txBody"]?.[0]?.["a:bodyPr"]?.[0]?.["$"]?.anchor;
+            if (masterAnchor) {
+                return convertAnchorToFlexJustify(masterAnchor);
+            }
+        }
+    }
+
+    return "flex-start";
 }
 
 // NEW: Helper method to detect empty paragraphs
@@ -969,7 +1007,13 @@ function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight,
     let gradientDataAttrs = ''; // NEW: Store gradient data as attributes
 
     const solidFillNode = runRPrNode?.["a:solidFill"]?.[0];
-
+    // ✅ FIX: If run has no solidFill, check inherited defRPr color from lstStyle BEFORE defaulting to #000000
+    if (!solidFillNode && !runRPrNode?.["a:gradFill"]) {
+        const lstStyleDefColor = getLstStyleDefRPrColor(shapeNode, themeXML, masterXML);
+        if (lstStyleDefColor) {
+            color = lstStyleDefColor;
+        }
+    }
     // Check for gradient fill FIRST (priority over solid fill)
     const textGradient = extractTextGradient(runRPrNode, themeXML);
     if (textGradient) {
@@ -1044,7 +1088,8 @@ function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight,
 
 
     // Fallback to master color (existing code)
-    if (color == "#000000" || !color) {
+    const colorWasResolvedFromLstStyle = !solidFillNode && !runRPrNode?.["a:gradFill"] && color !== "#000000";
+    if (!colorWasResolvedFromLstStyle && (color == "#000000" || !color)) {
         try {
             const masterFontColor = pptTextAllInfo.getFontColor(shapeNode, themeXML, clrMap, masterXML);
 
@@ -1058,7 +1103,7 @@ function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight,
                 }
             }
 
-            if (masterFontColor && masterFontColor !== "#000000") {
+            if (masterFontColor && masterFontColor !== "#000000" && masterFontColor.toLowerCase() !== "#ffffff") {
                 color = masterFontColor;
             }
         } catch (err) {
@@ -1145,7 +1190,55 @@ function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight,
     return `<span class="span-txt" ${gradientDataAttrs} originalEA="${originalEA}" originCS="${originCS}" originSYM="${originSYM}" latinFont="${latinFont}" originalTxtColor="${originalTxtColor}" originalLumMod="${originalLumMod}" originalLumOff="${originalLumOff}" alpha="${opacity}" cap="${capValue || ''}" style="${styles};">${preservedText}</span>`;
 
 }
+/**
+ * Reads the color defined in lstStyle > lvl1pPr > defRPr > solidFill
+ * This is the inherited default text color for runs that have no explicit color.
+ */
+function getLstStyleDefRPrColor(shapeNode, themeXML, masterXML) {
+    try {
+        const lstStyle = shapeNode?.["p:txBody"]?.[0]?.["a:lstStyle"]?.[0];
+        if (!lstStyle) return null;
 
+        // Check lvl1pPr first, then fall through to other levels
+        const levelKeys = ["a:lvl1pPr", "a:lvl2pPr", "a:lvl3pPr"];
+        for (const key of levelKeys) {
+            const defRPr = lstStyle?.[key]?.[0]?.["a:defRPr"]?.[0];
+            if (!defRPr) continue;
+
+            const solidFill = defRPr?.["a:solidFill"]?.[0];
+            if (!solidFill) continue;
+
+            // Direct RGB color
+            if (solidFill["a:srgbClr"]?.[0]?.["$"]?.val) {
+                return `#${solidFill["a:srgbClr"][0]["$"].val}`;
+            }
+
+            // Scheme color (e.g. "bg1" = white, "tx1" = black)
+            if (solidFill["a:schemeClr"]?.[0]?.["$"]?.val) {
+                const schemeVal = solidFill["a:schemeClr"][0]["$"].val;
+
+                // Resolve bg1/tx1 through master clrMap first
+                let resolvedScheme = schemeVal;
+                if (masterXML) {
+                    const clrMap = masterXML?.["p:sldMaster"]?.["p:clrMap"]?.[0]?.["$"];
+                    if (clrMap && clrMap[schemeVal]) {
+                        resolvedScheme = clrMap[schemeVal];
+                    }
+                }
+
+                const resolved = colorHelper.resolveThemeColorHelper(resolvedScheme, themeXML, masterXML);
+                if (resolved) return resolved;
+            }
+
+            // Found defRPr but no color — don't check next levels
+            break;
+        }
+        return null;
+    } catch (err) {
+        console.warn("getLstStyleDefRPrColor error:", err);
+        return null;
+    }
+}
 // NEW: Extract text gradient fill
 function extractTextGradient(runRPrNode, themeXML) {
     try {
@@ -1397,16 +1490,30 @@ function convertAlignToFlexItems(algn) {
     }
 }
 
-
-function findPlaceholderInLayout(placeholderType, layoutXML) {
+function findPlaceholderInLayout(placeholderType, layoutXML, placeholderIdx = null) {
     if (!layoutXML || !placeholderType) return null;
+
+    // ✅ No [0] after p:sldLayout — it's a direct object, not an array
     const shapes = layoutXML?.["p:sldLayout"]?.["p:cSld"]?.[0]?.["p:spTree"]?.[0]?.["p:sp"] || [];
+
+    // First pass: match by both type AND idx (most specific)
+    if (placeholderIdx !== null && placeholderIdx !== undefined) {
+        for (const shape of shapes) {
+            const ph = shape?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0]?.["$"];
+            if (ph?.type === placeholderType && String(ph?.idx) === String(placeholderIdx)) {
+                return shape;
+            }
+        }
+    }
+
+    // Second pass: match by type only
     for (const shape of shapes) {
-        const phType = shape?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0]?.["$"]?.type;
-        if (phType === placeholderType) {
+        const ph = shape?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0]?.["$"];
+        if (ph?.type === placeholderType) {
             return shape;
         }
     }
+
     return null;
 }
 

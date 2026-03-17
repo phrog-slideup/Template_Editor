@@ -52,11 +52,12 @@ function getShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
 
         // ── 6. Compose final CSS ──────────────────────────────────────────────
         const rgb = hexToRgbComponents(color);
-        const cssOffX = Math.round(offX * 10) / 10;
-        const cssOffY = Math.round(offY * 10) / 10;
+        const cssOffX = Math.round(offX * 1000) / 1000;
+        const cssOffY = Math.round(offY * 1000) / 1000;
         const cssBlur = Math.round(blurPx * 10) / 10;
-        const cssSpread = Math.round(spread * 10) / 10;
-        const cssAlpha = Math.round(alpha * 100) / 100;
+        const cssSpread = Math.round(spread * 1000) / 1000;
+        // alpha at 3dp: preserves non-round OOXML values like 66667 → 0.667
+        const cssAlpha = Math.round(alpha * 1000) / 1000;
         const inset = isInner ? "inset " : "";
 
         return `box-shadow: ${inset}${cssOffX}px ${cssOffY}px ${cssBlur}px ${cssSpread}px rgba(${rgb}, ${cssAlpha});`;
@@ -116,12 +117,6 @@ function resolveShadowColor(shadowNode, themeXML, masterXML) {
     return "#000000";
 }
 
-/**
- * Extract alpha from the shadow color child node.  Returns a float 0–1.
- *
- * OOXML: absence of <a:alpha> means the color is FULLY OPAQUE (1.0).
- * Only an explicit <a:alpha val="N"/> overrides this.
- */
 
 function resolveShadowAlpha(shadowNode) {
     const colorTypes = ["a:prstClr", "a:srgbClr", "a:schemeClr", "a:sysClr"];
@@ -167,24 +162,17 @@ function dirDistToOffset(dirRaw, distRaw, algn) {
     const rad = (dirDeg * Math.PI) / 180;
 
     return {
-        offX: Math.round(dist * Math.cos(rad) * 10) / 10,
-        offY: Math.round(dist * Math.sin(rad) * 10) / 10,
+        offX: Math.round(dist * Math.cos(rad) * 1000) / 1000,
+        offY: Math.round(dist * Math.sin(rad) * 1000) / 1000,
     };
 }
-
-/**
- * Approximate CSS spread from OOXML sx/sy scale factors.
- * sx/sy = 100000 → 1× scale (no spread).  101000 → 1% bigger.
- * spread ≈ (avgScale − 1) × blurPx
- * Applied to outerShdw only; innerShdw carries no sx/sy.
- */
 
 function scaleToSpread(sxRaw, syRaw, blurPx) {
     const sx = sxRaw ? parseInt(sxRaw, 10) / 100000 : 1;
     const sy = syRaw ? parseInt(syRaw, 10) / 100000 : 1;
     const avg = (sx + sy) / 2;
     if (avg <= 1) return 0;
-    return Math.round((avg - 1) * blurPx * 10) / 10;
+    return Math.round((avg - 1) * blurPx * 1000) / 1000;
 }
 
 /**
@@ -319,35 +307,6 @@ function extractColorTransforms(colorNode) {
 
 
 // ─── Custom shape shadow (filter: drop-shadow) ───────────────────────────────
-//
-// Custom shapes (freeform / custGeom) are rendered as SVG paths inside a div.
-// CSS `box-shadow` creates a rectangular shadow that ignores the actual path
-// silhouette, so it is wrong for these shapes.
-//
-// The correct approach is `filter: drop-shadow(offX offY blur color)` applied
-// to the wrapping <div class="custom-shape"> (or directly to the inner <svg>).
-// drop-shadow() respects the alpha channel of the element it is applied to, so
-// it correctly follows the freeform outline.
-//
-// Limitations vs box-shadow:
-//   • No "spread" parameter  — CSS drop-shadow has no spread radius.
-//     We approximate it by adding a fraction of the OOXML sx/sy scale surplus
-//     to the blur radius so that larger-scale shadows still look slightly wider.
-//   • No inset variant       — CSS drop-shadow only supports outer shadows.
-//     Inner shadows on custom shapes are ignored (they are extremely rare).
-//
-// Usage (in your shape-renderer):
-//
-//   const { getCustomShapeShadowStyle } = require("./getShapeShadowStyle");
-//
-//   // shapeNode is the parsed p:sp JSON object (same as getShapeShadowStyle)
-//   const filterStyle = getCustomShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap);
-//   // filterStyle e.g. → "filter: drop-shadow(-2.3px -1.9px 24px rgba(0, 32, 96, 0.89));"
-//
-//   // Apply to the wrapping div:
-//   <div class="custom-shape" style="... ${filterStyle}">
-//     <svg>...</svg>
-//   </div>
 
 function getCustomShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
     try {
@@ -359,11 +318,6 @@ function getCustomShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
 
         if (!effectLst) return "";
 
-        // ── Outer shadow only — CSS drop-shadow() has no inset equivalent ──────
-        // OOXML innerShdw on custGeom/freeform shapes cannot be reproduced in CSS
-        // because filter: drop-shadow() only supports outer (non-inset) shadows.
-        // We skip inner shadows and emit a warning so developers know it was seen
-        // but intentionally not rendered, rather than silently producing nothing.
         const outerShdw = effectLst?.["a:outerShdw"]?.[0];
         const innerShdw = effectLst?.["a:innerShdw"]?.[0];
         if (!outerShdw) {
@@ -387,9 +341,7 @@ function getCustomShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
         let blurPx = blurRadToPx(attrs.blurRad);
 
         // ── 3. Spread approximation added into blur ───────────────────────────
-        // drop-shadow() has no spread param. When sx/sy > 100000 (scaled up),
-        // OOXML means the shadow is slightly enlarged. We add a small extra blur
-        // to roughly mimic that widening effect.
+
         const sx = attrs.sx ? parseInt(attrs.sx, 10) / 100000 : 1;
         const sy = attrs.sy ? parseInt(attrs.sy, 10) / 100000 : 1;
         const avgScale = (sx + sy) / 2;
@@ -411,7 +363,8 @@ function getCustomShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
         const cssOffX = Math.round(offX * 10) / 10;
         const cssOffY = Math.round(offY * 10) / 10;
         const cssBlur = Math.round(blurPx * 10) / 10;
-        const cssAlpha = Math.round(alpha * 100) / 100;
+        // alpha at 3dp for same precision as getShapeShadowStyle
+        const cssAlpha = Math.round(alpha * 1000) / 1000;
 
         return `filter: drop-shadow(${cssOffX}px ${cssOffY}px ${cssBlur}px rgba(${rgb}, ${cssAlpha}));`;
 

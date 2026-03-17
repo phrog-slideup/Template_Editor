@@ -1,102 +1,109 @@
-// ─── parseShadowFromBoxShadow.js ─────────────────────────────────────────────
+// parseShadowFromBoxShadow.js
 //
-// Converts a CSS `box-shadow` string (from an HTML shape element) into a
-// PptxGenJS `shadow` options object that can be passed directly to
-// addShapeToSlide / addTextBoxToSlide as `{ shadow: <result> }`.
-//
-// Handles all 18 PowerPoint shadow-panel presets:
-//   Outer × 9: Bottom Right / Bottom / Bottom Left / Right / Center /
-//              Left / Top Right / Top / Top Left
-//   Inner × 9: same nine positions  (CSS "inset" keyword → type:"inner")
-//
-// ─── Three bugs fixed vs the previous version ────────────────────────────────
-//
-//   FIX 1 — "inset" detection  (type was always "outer")
-//     CSS "box-shadow: inset …" → { type: 'inner' }
-//     CSS "box-shadow: …"       → { type: 'outer' }
-//
-//   FIX 2 — angle convention differs between outer and inner shadows
-//
-//     For OUTER shadows:
-//       OOXML outerShdw `dir` = direction the shadow is CAST from the shape.
-//       CSS offsetX/offsetY point in the SAME direction as the cast shadow.
-//       Therefore: pptxgenjs_angle = atan2(offsetY, offsetX)  ← no rotation
-//
-//       Example – "Bottom" outer shadow: offY=+6 → atan2=90° → dir=5400000=90° ✓
-//       Example – "Right"  outer shadow: offX=+5 → atan2=0°  → dir=0=0°        ✓
-//
-//     For INNER shadows:
-//       getShapeShadowStyle.js already NEGATES the CSS offsets so that the
-//       inset shadow renders on the correct inner edge (CSS inset convention is
-//       opposite to OOXML). When we reverse those negated offsets back to the
-//       original OOXML direction we must add +180°:
-//       pptxgenjs_angle = (atan2(offsetY, offsetX) + 180) % 360
-//
-//       Example – "Left" inner shadow: CSS inset offX=+4 → atan2=0° → +180=180°
-//         → dir=10800000=180° (West) ✓
-//
-//   FIX 3 — "size" field removed
-//     PptxGenJS createShadowElement() hardcodes sx/sy to 100000 and has no
-//     `size` option; the computed value was silently discarded.
-//
-// ─── Integration (addShapeToSlide.js) ────────────────────────────────────────
-//
-//   const { parseShadowFromBoxShadow } = require('./parseShadowFromBoxShadow');
-//
-//   // Before building shapeOptions:
-//   const shadowOptions = parseShadowFromBoxShadow(shapeElement);
-//
-//   // Inside shapeOptions object literal:
-//   ...(shadowOptions ? { shadow: shadowOptions } : {})
-//
-// ─────────────────────────────────────────────────────────────────────────────
+
+const ONEPT = 12700; // 1 pt = 12700 EMU (same constant pptxgenjs uses internally)
 
 
-/**
- * Parse a shape element's inline `box-shadow` style and return a PptxGenJS
- * shadow options object, or `null` if no shadow is present.
- *
- * @param {Element} shapeElement  DOM/JSDOM element with an inline `style` attr
- * @returns {{ type, color, opacity, blur, offset, angle } | null}
- */
-function parseShadowFromBoxShadow(shapeElement) {
+function buildShadowXml(shapeElement) {
     try {
         const styleAttr = shapeElement.getAttribute('style') || '';
-
-        // Extract box-shadow value (everything between "box-shadow:" and ";")
         const shadowMatch = styleAttr.match(/box-shadow\s*:\s*([^;]+)/i);
         if (!shadowMatch) return null;
 
         const boxShadowValue = shadowMatch[1].trim();
         if (!boxShadowValue || boxShadowValue.toLowerCase() === 'none') return null;
 
-        // ── FIX 1: detect "inset" BEFORE handing off to the parser ───────────
-        // The CSS "inset" keyword can appear anywhere in the value string.
+        const isInner = /\binset\b/i.test(boxShadowValue);
+        const parsed = parseBoxShadowCSS(boxShadowValue);
+
+        if (!parsed) return null;
+
+        // Convert CSS px offsets back to OOXML dist (EMU) + dir (60000ths of a degree)
+        const { dirEmu, distEmu } = offsetToOoxmlDirDist(parsed.offsetX, parsed.offsetY, isInner);
+
+        // CSS px = pt at 72 dpi, 1pt = ONEPT EMU
+        const blurEmu = Math.round(parsed.blur * ONEPT);
+
+        let sxVal, syVal;
+        if (isInner) {
+            // innerShdw has no sx/sy attributes in OOXML — leave undefined
+            sxVal = undefined;
+            syVal = undefined;
+        } else if (parsed.blur > 0 && Math.abs(parsed.spread) > 0.0001) {
+            // Outer shadow with non-zero spread → calculate scale from spread
+            const avgScale = 1 + (parsed.spread / parsed.blur);
+            sxVal = Math.round(avgScale * 100000);
+            syVal = sxVal; // PowerPoint always writes sx === sy (symmetric)
+        } else {
+            // Outer shadow, spread=0 → no scaling (default 100%)
+            sxVal = 100000;
+            syVal = 100000;
+        }
+
+        // Alpha: CSS rgba 0-1 float -> OOXML 0-100000 (no intermediate rounding)
+        const alphaVal = Math.round(Math.max(0, Math.min(1, parsed.alpha)) * 100000);
+
+        const color = parsed.color; // 6-char uppercase hex, no '#'
+        const tag = isInner ? 'innerShdw' : 'outerShdw';
+
+        // outerShdw requires sx/sy/kx/ky/algn attrs.
+        // innerShdw must NOT have them (sxVal/syVal are undefined for inner).
+        const outerAttrs = isInner
+            ? ''
+            : ` sx="${sxVal}" sy="${syVal}" kx="0" ky="0" algn="bl" rotWithShape="0"`;
+
+        const alphaTag = alphaVal < 100000 ? `<a:alpha val="${alphaVal}"/>` : '';
+
+        let xml = '<a:effectLst>';
+        xml += `<a:${tag}${outerAttrs} blurRad="${blurEmu}" dist="${distEmu}" dir="${dirEmu}">`;
+        xml += `<a:srgbClr val="${color}">${alphaTag}</a:srgbClr>`;
+        xml += `</a:${tag}>`;  // FIX 4: correct closing tag, NOT hardcoded "outerShdw"
+        xml += '</a:effectLst>';
+
+        return xml;
+
+    } catch (err) {
+        console.error('buildShadowXml error:', err);
+        return null;
+    }
+}
+
+
+// ── parseShadowFromBoxShadow ──────────────────────────────────────────────────
+//
+
+function parseShadowFromBoxShadow(shapeElement) {
+    try {
+        const styleAttr = shapeElement.getAttribute('style') || '';
+
+        const shadowMatch = styleAttr.match(/box-shadow\s*:\s*([^;]+)/i);
+        if (!shadowMatch) return null;
+
+        const boxShadowValue = shadowMatch[1].trim();
+        if (!boxShadowValue || boxShadowValue.toLowerCase() === 'none') return null;
+
+        // FIX 1: detect "inset" before any other processing
         const isInner = /\binset\b/i.test(boxShadowValue);
 
         const parsed = parseBoxShadowCSS(boxShadowValue);
         if (!parsed) return null;
 
-        // ── FIX 2: correct angle conversion ──────────────────────────────────
-        // For outer shadows: atan2 directly (shadow cast direction = CSS offset direction).
-        // For inner shadows: atan2 + 180° (CSS inset offsets are pre-negated by
-        // getShapeShadowStyle, so we rotate back to the original OOXML dir).
+        // FIX 2: correct angle/distance conversion for inner vs outer
         const { angle, offset } = offsetToAngleAndDist(parsed.offsetX, parsed.offsetY, isInner);
 
-        // blur: CSS px = pt at 72 dpi → pass directly
+        // blur: CSS px = pt at 72 dpi, pass directly to pptxgenjs
         const blurPt = Math.round(parsed.blur * 10) / 10;
 
-        // opacity clamped to [0, 1]
+        // FIX 3 / opacity: keep full 0-1 float, no lossy rounding
         const opacity = Math.max(0, Math.min(1, parsed.alpha));
 
-        // ── FIX 3: no "size" field — pptxgenjs ignores it anyway ─────────────
         return {
             type: isInner ? 'inner' : 'outer',
-            color: parsed.color,   // 6-char uppercase hex, no '#'
-            opacity: opacity,        // 0–1 float
-            blur: blurPt,         // points (= CSS px at 72 dpi)
-            offset: offset,         // points (displacement distance)
-            angle: angle,          // degrees 0–360, CW from East (light-source dir)
+            color: parsed.color,  // 6-char uppercase hex, no '#'
+            opacity: opacity,       // 0-1 float (pptxgenjs multiplies by 100000 internally)
+            blur: blurPt,        // points (pptxgenjs converts to EMU internally)
+            offset: offset,        // points (displacement distance)
+            angle: angle,         // degrees 0-360, CW from East
         };
 
     } catch (err) {
@@ -106,62 +113,40 @@ function parseShadowFromBoxShadow(shapeElement) {
 }
 
 
-// ─── offsetToAngleAndDist ─────────────────────────────────────────────────────
+// ── offsetToOoxmlDirDist ──────────────────────────────────────────────────────
+
+function offsetToOoxmlDirDist(offsetX, offsetY, isInner) {
+    // Undo the negation that getShapeShadowStyle applies for inner shadows
+    const ox = isInner ? -offsetX : offsetX;
+    const oy = isInner ? -offsetY : offsetY;
+
+    const distPx = Math.sqrt(ox * ox + oy * oy);
+    const distEmu = Math.round(distPx * ONEPT);
+
+    let dirEmu = 0;
+    if (distPx > 0.01) {
+        let atan2Deg = Math.atan2(oy, ox) * (180 / Math.PI);
+        if (atan2Deg < 0) atan2Deg += 360;
+        dirEmu = Math.round(atan2Deg * 60000);
+    }
+
+    return { dirEmu, distEmu };
+}
+
+
+// ── offsetToAngleAndDist ──────────────────────────────────────────────────────
 //
-// Converts CSS box-shadow offsetX / offsetY into:
-//   angle  – PptxGenJS angle (OOXML dir in degrees, CW from East)
-//   offset – displacement distance in points
-//
-// Angle convention differs between outer and inner shadows:
-//
-//   OUTER (isInner=false):
-//     OOXML outerShdw `dir` = direction the shadow is CAST (same as CSS offset).
-//     pptxAngle = atan2(offsetY, offsetX)   ← no rotation needed
-//
-//     CSS offsets              atan2  pptxAngle  OOXML dir     preset
-//     offX=+3.5 offY=+3.5      45°     45°       2700000    Bottom Right  ✓
-//     offX=0    offY=+6        90°     90°       5400000    Bottom        ✓
-//     offX=-2.8 offY=+2.8     135°    135°       8100000    Bottom Left   ✓
-//     offX=+5   offY=0          0°      0°            0    Right         ✓
-//     offX=0    offY=0        (dist=0)  0°            0    Center        ✓
-//     offX=-4   offY=0        180°    180°      10800000    Left          ✓
-//     offX=+2.8 offY=-2.8     315°    315°      18900000    Top Right     ✓
-//     offX=0    offY=-6       270°    270°      16200000    Top           ✓
-//     offX=-4.2 offY=-4.2     225°    225°      13500000    Top Left      ✓
-//
-//   INNER (isInner=true):
-//     getShapeShadowStyle.js pre-negates CSS inset offsets so the shadow renders
-//     on the correct inner edge. Reversing that negation requires +180°:
-//     pptxAngle = (atan2(offsetY, offsetX) + 180) % 360
-//
-//     CSS offsets (negated)    atan2  pptxAngle  OOXML dir     preset
-//     offX=+2.8 offY=+2.8      45°    225°      13500000    Inner Top Left  ✓
-//     offX=0    offY=+4        90°    270°      16200000    Inner Top       ✓
-//     offX=-3.5 offY=+3.5     135°    315°      18900000    Inner Top Right ✓
-//     offX=+4   offY=0          0°    180°      10800000    Inner Left      ✓
-//     offX=0    offY=0        (dist=0) 0°            0     Inner Center    ✓
-//     offX=-5   offY=0        180°      0°            0    Inner Right     ✓
-//     offX=+4.2 offY=-4.2     315°    135°       8100000    Inner SW        ✓
-//     offX=0    offY=-4       270°     90°       5400000    Inner Bottom    ✓
-//     offX=-2.8 offY=-2.8     225°     45°       2700000    Inner SE        ✓
-//
-// @param {number}  offsetX  – CSS box-shadow offsetX in px
-// @param {number}  offsetY  – CSS box-shadow offsetY in px
-// @param {boolean} isInner  – true for inset (inner) shadows
-//
+
 function offsetToAngleAndDist(offsetX, offsetY, isInner) {
     const distPx = Math.sqrt(offsetX * offsetX + offsetY * offsetY);
     const distPt = Math.round(distPx * 10) / 10;
 
     let pptxAngle = 0;
     if (distPx > 0.01) {
-        // Direction the shadow offset points (CW from East, Y-axis down)
         let atan2Deg = Math.atan2(offsetY, offsetX) * (180 / Math.PI);
         if (atan2Deg < 0) atan2Deg += 360;
-
-        // Outer: CSS offset direction == OOXML dir → use atan2 directly.
-        // Inner: CSS inset offsets are pre-negated vs OOXML dir → rotate +180°
-        //        to recover the original OOXML shadow-cast direction.
+        // Outer: CSS dir == OOXML dir -> atan2 directly
+        // Inner: CSS offsets are pre-negated -> rotate +180 deg to recover OOXML dir
         pptxAngle = isInner ? (atan2Deg + 180) % 360 : atan2Deg;
     }
 
@@ -172,18 +157,13 @@ function offsetToAngleAndDist(offsetX, offsetY, isInner) {
 }
 
 
-// ─── parseBoxShadowCSS ────────────────────────────────────────────────────────
+// ── parseBoxShadowCSS ─────────────────────────────────────────────────────────
 //
-// Parses a single CSS box-shadow string into its numeric components.
-// The "inset" keyword is stripped before number extraction so it does not
-// interfere with the numeric parsing (no parseFloat side-effects).
-//
-// Returns: { offsetX, offsetY, blur, spread, color, alpha }  or  null
-//
+
 function parseBoxShadowCSS(cssValue) {
     if (!cssValue || cssValue === 'none' || cssValue.trim() === '') return null;
 
-    // ── Take only the first shadow (multi-shadow: split at top-level commas) ─
+    // Take only the first shadow (multi-shadow: split at top-level commas)
     let firstShadow = cssValue.trim();
     {
         let depth = 0, splitIdx = -1;
@@ -195,10 +175,10 @@ function parseBoxShadowCSS(cssValue) {
         if (splitIdx !== -1) firstShadow = firstShadow.slice(0, splitIdx).trim();
     }
 
-    // ── Strip "inset" keyword before numeric extraction ───────────────────────
+    // Strip "inset" keyword before numeric extraction
     let remaining = firstShadow.replace(/\binset\b/gi, '').trim();
 
-    // ── Extract color token (rgba / rgb / hex, at start or end) ──────────────
+    // Extract color token (rgba / rgb / hex — at start or end of the value)
     let colorRgba = null;
 
     const rgbaAtStart = remaining.match(/^(rgba?\([^)]+\))\s*(.*)/i);
@@ -219,14 +199,14 @@ function parseBoxShadowCSS(cssValue) {
         if (hexAtEnd) { colorRgba = parseHex(hexAtEnd[2]); remaining = hexAtEnd[1]; }
     }
 
-    // Fallback: black at 80% (PowerPoint's default shadow color/opacity)
+    // Fallback: black at 80% (PowerPoint default shadow)
     if (!colorRgba) colorRgba = { r: 0, g: 0, b: 0, a: 0.8 };
 
-    // ── Parse numeric lengths: offsetX offsetY [blur] [spread] ───────────────
+    // Parse numeric lengths: offsetX offsetY [blur] [spread]
     const numbers = remaining.trim().match(/([-\d.]+)px/g) || [];
     const vals = numbers.map(n => parseFloat(n));
 
-    if (vals.length < 2) return null; // need at least offsetX + offsetY
+    if (vals.length < 2) return null;
 
     return {
         offsetX: vals[0] ?? 0,
@@ -239,7 +219,7 @@ function parseBoxShadowCSS(cssValue) {
 }
 
 
-// ─── Color helpers ────────────────────────────────────────────────────────────
+// ── Color helpers ─────────────────────────────────────────────────────────────
 
 function rgbToHex6(r, g, b) {
     return [r, g, b]
@@ -272,4 +252,4 @@ function parseRgba(str) {
 }
 
 
-module.exports = { parseShadowFromBoxShadow, parseBoxShadowCSS };
+module.exports = { buildShadowXml, parseShadowFromBoxShadow, parseBoxShadowCSS };

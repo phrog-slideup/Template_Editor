@@ -1,6 +1,7 @@
 const addTextBox = require("./addTextBoxToSlide.js");
 const svgAddToSlide = require("./addSvgToSlide.js");
 const { parseShadowFromBoxShadow } = require('./parseShadowFromBoxShadow.js');
+const { extractGlowFromWrapperHTML } = require('./handleShapeGlow.js');
 
 
 // ========== CORRECTED Connector ==========
@@ -754,6 +755,67 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
     // Optional: final safety clamp (should already be safe)
     borderRadiusValue = Math.max(0, Math.min(borderRadiusValue, minInches / 2));
 
+
+    // ── Glow wrapper detection ─────────────────────────────────────────────────
+    function safeClosest(el, selector) {
+        if (!el) return null;
+        if (typeof el.closest === 'function') return el.closest(selector);
+        // jsdom fallback: walk parentElement chain manually
+        let cur = el.parentElement;
+        while (cur) {
+            if (typeof cur.matches === 'function' && cur.matches(selector)) return cur;
+            if (cur.className && typeof cur.className === 'string' &&
+                cur.className.includes('shape-glow-wrapper') && selector === '.shape-glow-wrapper') return cur;
+            cur = cur.parentElement;
+        }
+        return null;
+    }
+
+    const glowWrapper = safeClosest(shapeElement, '.shape-glow-wrapper');
+
+    // ── Position source ────────────────────────────────────────────────────────
+
+    const positionSource = glowWrapper || shapeElement;
+    const positionStyle = positionSource.getAttribute
+        ? (() => {
+            // Parse inline style attribute string into an object with left/top/width/height
+            const raw = positionSource.getAttribute('style') || '';
+            const get = (prop) => {
+                const m = raw.match(new RegExp(prop + '\\s*:\\s*([0-9.-]+)px', 'i'));
+                return m ? m[1] : null;
+            };
+            return {
+                left: get('left'),
+                top: get('top'),
+                width: get('width'),
+                height: get('height'),
+            };
+        })()
+        : {};
+
+    // Use wrapper values when available, fall back to shapeElement style
+    const rawLeft = positionStyle.left !== null ? positionStyle.left : (style.left || '0').replace('px', '');
+    const rawTop = positionStyle.top !== null ? positionStyle.top : (style.top || '0').replace('px', '');
+    const rawWidth = positionStyle.width !== null ? positionStyle.width : (style.width || '0').replace('px', '');
+    const rawHeight = positionStyle.height !== null ? positionStyle.height : (style.height || '0').replace('px', '');
+
+
+    // ── Glow parsing ───────────────────────────────────────────────────────────
+    // The filter: drop-shadow(...) is on the wrapper div — parse it back to
+    // PPTX glow parameters (radEmu, colorHex, alphaVal) via handleShapeGlow.js
+    let glowOptions = null;
+    if (glowWrapper) {
+        const wrapperStyleAttr = glowWrapper.getAttribute('style') || '';
+        const glowData = extractGlowFromWrapperHTML(wrapperStyleAttr);
+        if (glowData) {
+            glowOptions = {
+                size: glowData.radEmu / 12700,           // EMU → points
+                color: glowData.colorHex.replace('#', ''), // hex without #
+                opacity: glowData.alphaVal / 100000,         // 0–1
+            };
+        }
+    }
+
     // Extract position and dimensions with slide scaling
     const x = parseFloat(style.left || "0") / 72;
     const y = parseFloat(style.top || "0") / 72;
@@ -771,7 +833,8 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
         rotate: rotation,
         objectName: objName || '',
         hidden: true,
-        ...(shadowOptions ? { shadow: shadowOptions } : {})
+        ...(shadowOptions ? { shadow: shadowOptions } : {}),
+        ...(glowOptions ? { glow: glowOptions } : {}),
     };
 
     //     shapeOptions.shadow = {

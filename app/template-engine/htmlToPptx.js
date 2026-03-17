@@ -489,6 +489,18 @@ async function processSlideContent(pptx, pptSlide, slideElement, slideContext) {
                 }
             }
 
+            // ── Shape glow wrapper ─────────────────────────────────────────────────────
+            if (element.classList.contains('shape-glow-wrapper')) {
+                const innerShape = element.querySelector('.shape');
+                if (innerShape && !isMasterElement(innerShape)) {
+                    await processShapeElement(pptx, pptSlide, innerShape, slideContext);
+                    processedElements.add(innerShape);
+                }
+                processedElements.add(element);
+                continue;
+            }
+
+
             if (element.classList.contains("shape") || element.classList.contains("custom-shape") || element.id === "custGeom" || element.classList.contains("sli-svg-connector")) {
 
                 // CASE 2: shape + image-container — shape-type image with crop offsets

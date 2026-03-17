@@ -20,6 +20,7 @@ const shapeFillColor = require("./shapes_Properties/getShapeFillColor.js");
 const getLineConnectorHandler = require("./lines_Connectors/linesConnectorHandler.js");
 const freeFormShape = require("./free_Form_Shape/generateFreeForm.js");
 const { getShapeShadowStyle } = require("./shapes_Properties/getShapeShadowStyle.js");
+const { getShapeGlowStyle } = require("./shapes_Properties/getShapeGlow.js");
 
 // Define the directory to save images using config
 const imageSavePath = path.resolve(__dirname, "../uploads/");
@@ -1688,6 +1689,52 @@ class ShapeHandler {
             adjustedTop = (slideHeight - effectiveHeight) / 2;
         }
 
+        // ── Glow wrapper pattern ───────────────────────────────────────────────
+
+        if (glowStyle) {
+            return `<div class="shape-glow-wrapper" style="
+                position: absolute;
+                left: ${adjustedLeft}px;
+                top: ${adjustedTop}px;
+                width: ${position.width}px;
+                height: ${effectiveHeight}px;
+                ${glowStyle}
+                overflow: visible;
+                pointer-events: none;
+                z-index: ${zIndex};
+            "><div class="shape" id="${caseName}"
+                data-name="${shapeName}"
+                data-original-color="${originalThemeColor}"
+                originalLumMod="${originalLumMod}"
+                originalLumOff="${originalLumOff}"
+                originalAlpha="${originalAlpha}"
+                style="
+                    position: absolute;
+                    left: 0px;
+                    top: 0px;
+                    width: ${position.width}px;
+                    height: ${effectiveHeight}px;
+                    background: ${fillColor};
+                    ${opacity};
+                    border-radius: ${borderRadius};
+                    ${shapeBorder}
+                    ${shapeBorderCSS}
+                    ${shadowStyle}
+                    display: ${hidden ? "none" : "flex"};
+                    transform: ${transformString};
+                    box-sizing: border-box;
+                    overflow: ${overflowStyle};
+                    justify-content: ${shapeInfo.justifyContent};
+                    align-items: ${shapeInfo.getAlignItem};
+                    pointer-events: auto;
+                    z-index: 0;
+                    ${clipPath ? `clip-path: ${clipPath};` : ""}
+                    ${maskPath ? `mask: ${maskPath};` : ""}
+                ">
+                ${textContent}
+            </div></div>`;
+        }
+
         return `<div class="shape" id="${caseName}" 
             data-name="${shapeName}" 
             data-original-color="${originalThemeColor}" 
@@ -3140,6 +3187,11 @@ class ShapeHandler {
     getShadowStyle(shapeNode) {
         return getShapeShadowStyle(shapeNode, this.themeXML, this.masterXML, this.clrMap);
     }
+
+    getGlowStyle(shapeNode) {
+        return getShapeGlowStyle(shapeNode, this.themeXML, this.masterXML, this.clrMap);
+    }
+
 
 
     // getShadowStyle(shapeNode) {

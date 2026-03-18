@@ -358,7 +358,7 @@ class ShapeHandler {
 
         const fillProps = shapeFillColor.getShapeFillColor(shapeNode, themeXML, masterXMLToUse) ? shapeFillColor.getShapeFillColor(shapeNode, themeXML, masterXMLToUse) : { fillColor: "gray", opacity: 1 };
         const shadowStyle = this.getShadowStyle(shapeNode);
-
+        const glowStyle = this.getGlowStyle(shapeNode);
         const fillColor = fillProps?.fillColor || "gray";
         const originalThemeColor = fillProps?.originalThemeColor || null;
         const originalLumMod = fillProps?.originalLumMod || null;

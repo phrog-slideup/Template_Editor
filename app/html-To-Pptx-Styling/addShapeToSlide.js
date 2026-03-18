@@ -816,11 +816,12 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
         }
     }
 
-    // Extract position and dimensions with slide scaling
-    const x = parseFloat(style.left || "0") / 72;
-    const y = parseFloat(style.top || "0") / 72;
-    const w = parseFloat(style.width || "0") / 72;
-    const h = parseFloat(style.height || "0") / 72;
+    // ── Extract position and dimensions ───────────────────────────────────────
+    const x = parseFloat(rawLeft) / 72;
+    const y = parseFloat(rawTop) / 72;
+    const w = parseFloat(rawWidth) / 72;
+    const h = parseFloat(rawHeight) / 72;
+
 
 
     const shadowOptions = parseShadowFromBoxShadow(shapeElement);

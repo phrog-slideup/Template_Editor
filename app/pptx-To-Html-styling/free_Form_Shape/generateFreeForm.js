@@ -1,12 +1,25 @@
-
-function generateCustomShapeSVG(custGeom, position, fillColor, stroke) {
+function generateCustomShapeSVG(custGeom, position, fillColor, stroke, flipOptions = {}) {
 
     const viewBoxWidth = position.width;
     const viewBoxHeight = position.height;
 
+    // ✅ FIX 1: Build SVG-level flip transform for the <path> element.
+    // PowerPoint's flipH/flipV mirrors the custGeom path within its own bounding box.
+    // The outer HTML div must NOT carry scaleX(-1)/scaleY(-1) — that would flip an
+    // already-correct SVG a second time. We handle it here via an SVG transform.
+    const { flipH = false, flipV = false } = flipOptions;
+    let pathTransform = "";
+    if (flipH && flipV) {
+        pathTransform = `transform="translate(${viewBoxWidth},${viewBoxHeight}) scale(-1,-1)"`;
+    } else if (flipH) {
+        pathTransform = `transform="translate(${viewBoxWidth},0) scale(-1,1)"`;
+    } else if (flipV) {
+        pathTransform = `transform="translate(0,${viewBoxHeight}) scale(1,-1)"`;
+    }
+
     if (!custGeom || !custGeom["a:pathLst"] || !custGeom["a:pathLst"][0] || !custGeom["a:pathLst"][0]["a:path"]) {
         return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none">
-            <rect width="${viewBoxWidth}" height="${viewBoxHeight}" fill="${fillColor}" stroke="${stroke.color}" stroke-width="${stroke.width}"/>
+            <rect width="${viewBoxWidth}" height="${viewBoxHeight}" fill="${fillColor}" stroke="${stroke.color}" stroke-width="${stroke.width}" ${pathTransform}/>
         </svg>`;
     }
 
@@ -30,6 +43,11 @@ function generateCustomShapeSVG(custGeom, position, fillColor, stroke) {
             for (const gd of gdList) {
                 if (gd && gd["$"]) {
                     const name = gd["$"].name;
+                    // ✅ FIX 2: Skip connsite* guide names. PowerPoint repeats them many
+                    // times (once per edit-history entry) and they are only used by
+                    // <a:cxnLst> connection sites — never for path coordinate resolution.
+                    // Including them pollutes the guides map and can corrupt scaleX/scaleY.
+                    if (/^connsite/.test(name)) continue;
                     const fmla = gd["$"].fmla;
                     guides[name] = evaluateFormula(fmla, originalWidth, originalHeight, guides);
                 }
@@ -37,7 +55,6 @@ function generateCustomShapeSVG(custGeom, position, fillColor, stroke) {
         }
 
         function scaleX(x) {
-            // If x is a guide reference, resolve it first
             if (typeof x === 'string' && guides[x] !== undefined) {
                 x = guides[x];
             }
@@ -45,7 +62,6 @@ function generateCustomShapeSVG(custGeom, position, fillColor, stroke) {
         }
 
         function scaleY(y) {
-            // If y is a guide reference, resolve it first
             if (typeof y === 'string' && guides[y] !== undefined) {
                 y = guides[y];
             }
@@ -57,39 +73,88 @@ function generateCustomShapeSVG(custGeom, position, fillColor, stroke) {
             combinedPathData += pathData + " ";
         } catch (error) {
             console.error("Error processing custom shape:", error);
-            // Ultimate fallback
             combinedPathData += `M0,0 L${viewBoxWidth},0 L${viewBoxWidth},${viewBoxHeight} L0,${viewBoxHeight} Z `;
         }
     }
 
     combinedPathData = combinedPathData.trim();
 
-    // Handle gradient fills
-    const gradientRegex = /linear-gradient\((\d+)deg, (rgba?\([^\)]+\)) (\d+%)?, (rgba?\([^\)]+\)) (\d+%)?\)/;
-    const match = fillColor.match(gradientRegex);
+    // ✅ FIX 3: Convert CSS linear-gradient angle to correct SVG linearGradient vector.
+    // The old code hardcoded x1="100%" y1="0%" x2="0%" y2="0%" (always left→right).
+    // Now we extract the actual angle from the CSS string and compute the correct
+    // SVG x1/y1/x2/y2 using the standard formula:
+    //   start = (0.5 - 0.5·sinθ, 0.5 + 0.5·cosθ), end = (0.5 + 0.5·sinθ, 0.5 - 0.5·cosθ)
+    // The regex also now tolerates N gradient stops (not just exactly 2), and handles
+    // radial-gradient pass-through for non-linear fills.
+    const isLinearGradient = /^linear-gradient\(/.test(fillColor);
+    const isRadialGradient = /^radial-gradient\(/.test(fillColor);
 
-    if (match) {
-        const angle = match[1];
-        const color1 = match[2];
-        const offset1 = match[3] || "100%";
-        const color2 = match[4];
-        const offset2 = match[5] || "0%";
-        const gradientId = `gradient_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    if (isLinearGradient) {
+        // Extract angle and all stops from the CSS linear-gradient string
+        const angleMatch = fillColor.match(/linear-gradient\((\d+(?:\.\d+)?)deg,\s*([\s\S]+)\)/);
+        if (angleMatch) {
+            const angleDeg = parseFloat(angleMatch[1]);
+            const stopsStr = angleMatch[2];
 
-        return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none">
+            // Convert CSS angle → SVG gradient vector
+            const rad = (angleDeg * Math.PI) / 180;
+            const sinA = Math.sin(rad);
+            const cosA = Math.cos(rad);
+            const x1 = ((0.5 - 0.5 * sinA) * 100).toFixed(2);
+            const y1 = ((0.5 + 0.5 * cosA) * 100).toFixed(2);
+            const x2 = ((0.5 + 0.5 * sinA) * 100).toFixed(2);
+            const y2 = ((0.5 - 0.5 * cosA) * 100).toFixed(2);
+
+            // Parse individual stops: each is "rgba(...) XX%" or "#hex XX%"
+            const stopRegex = /(rgba?\([^)]+\)|#[0-9a-fA-F]+)\s+(\d+(?:\.\d+)?%)/g;
+            const svgStops = [];
+            let m;
+            while ((m = stopRegex.exec(stopsStr)) !== null) {
+                svgStops.push({ color: m[1], offset: m[2] });
+            }
+
+            // Sort stops by offset ascending (SVG spec requirement)
+            svgStops.sort((a, b) => parseFloat(a.offset) - parseFloat(b.offset));
+
+            const gradientId = `gradient_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            const stopElements = svgStops
+                .map(s => `<stop offset="${s.offset}" style="stop-color:${s.color}; stop-opacity:1"/>`)
+                .join("\n               ");
+
+            return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none">
            <defs>
-               <linearGradient id="${gradientId}" x1="100%" y1="0%" x2="0%" y2="0%">
-                   <stop offset="${offset2}" style="stop-color:${color2}; stop-opacity:1" />
-                   <stop offset="${offset1}" style="stop-color:${color1}; stop-opacity:1" />
+               <linearGradient id="${gradientId}" x1="${x1}%" y1="${y1}%" x2="${x2}%" y2="${y2}%">
+               ${stopElements}
                </linearGradient>
            </defs>
-           <path d="${combinedPathData}" fill="url(#${gradientId})" stroke="${stroke.color || '#000'}" stroke-width="${stroke.width || 0}"/>
+           <path d="${combinedPathData}" fill="url(#${gradientId})" stroke="${stroke.color || 'none'}" stroke-width="${stroke.width || 0}" ${pathTransform}/>
        </svg>`;
-    } else {
+        }
+    }
+
+    if (isRadialGradient) {
+        // Radial gradients: use CSS directly via foreignObject trick is unreliable in SVG.
+        // Best approach: pass through as a CSS background on a <foreignObject> rect,
+        // clipped to the path shape. We use a clipPath for correctness.
+        const clipId = `clip_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none">
-           <path d="${combinedPathData}" fill="${fillColor}" stroke="${stroke.color || '#000'}" stroke-width="${stroke.width || 0}"/>
+           <defs>
+               <clipPath id="${clipId}">
+                   <path d="${combinedPathData}" ${pathTransform}/>
+               </clipPath>
+           </defs>
+           <foreignObject width="${viewBoxWidth}" height="${viewBoxHeight}" clip-path="url(#${clipId})">
+               <div xmlns="http://www.w3.org/1999/xhtml"
+                    style="width:100%;height:100%;background:${fillColor};"></div>
+           </foreignObject>
+           <path d="${combinedPathData}" fill="none" stroke="${stroke.color || 'none'}" stroke-width="${stroke.width || 0}" ${pathTransform}/>
        </svg>`;
     }
+
+    // Solid fill fallback
+    return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none">
+       <path d="${combinedPathData}" fill="${fillColor}" stroke="${stroke.color || 'none'}" stroke-width="${stroke.width || 0}" ${pathTransform}/>
+   </svg>`;
 }
 
 // Evaluate DrawingML formulas used in guide definitions
@@ -269,19 +334,31 @@ function parsePathCommandsDynamic(path, scaleX, scaleY) {
         }
     }
 
-    // Process cubic bezier curves
-    for (const cubicBez of cubicBezTos) {
-        const points = getCubicBezierPoints(cubicBez);
-        if (points && points.length === 3) {
-            pathData += `C${points[0].x},${points[0].y} ${points[1].x},${points[1].y} ${points[2].x},${points[2].y} `;
-        }
-    }
+    // ✅ FIX 4: Emit lnTo commands BEFORE cubicBezTo in the fallback path.
+    //
+    // xml2js (without explicitChildren) collapses all same-name child elements into
+    // separate arrays, losing their interleaved XML document order. The most common
+    // custGeom pattern is: moveTo → lnTo × N → cubicBezTo (closing arc) → close.
+    // Emitting cubicBezTos first (the old order) produced: M→C→L→L→L→Z which is
+    // completely wrong geometry. The correct fallback is lnTos-first → cubicBezTos.
+    //
+    // For shapes where a cubicBezTo appears BEFORE lnTos in the XML, you MUST
+    // configure xml2js with { explicitChildren: true, preserveChildrenOrder: true }
+    // so that tryParseInXMLOrder() handles it correctly above.
 
-    // Process line segments
+    // Process line segments first
     for (const lineTo of lineTos) {
         const pt = getPoint(lineTo);
         if (pt) {
             pathData += `L${pt.x},${pt.y} `;
+        }
+    }
+
+    // Then cubic bezier curves (typically closing arcs at end of path)
+    for (const cubicBez of cubicBezTos) {
+        const points = getCubicBezierPoints(cubicBez);
+        if (points && points.length === 3) {
+            pathData += `C${points[0].x},${points[0].y} ${points[1].x},${points[1].y} ${points[2].x},${points[2].y} `;
         }
     }
 

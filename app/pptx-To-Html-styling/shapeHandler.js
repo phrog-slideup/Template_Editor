@@ -463,8 +463,7 @@ class ShapeHandler {
                 }
             }
 
-            const isTextBox = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvSpPr"]?.[0]?.["$"]?.txBox === "1";
-            const transformString = this.getTransformString(position, isTextBox);
+            // isTextBox and transformString already declared/hoisted before the switch above.
             // Rakesh Notes::: here from the below style i have remove the transformString variable as it is adding double rotation to bot the inner and outer (transform: ${transformString};)
 
             // NEW: Calculate if we need dynamic height
@@ -508,7 +507,38 @@ class ShapeHandler {
         }
 
         if (custGeom) {
-            const svgMarkup = freeFormShape.generateCustomShapeSVG(custGeom, position, fillColor, stroke);
+            // ✅ FIX: flipH / flipV must NOT be on the outer div for custGeom shapes.
+            // PowerPoint's flip mirrors the path within the shape bounding box.
+            // CSS scaleX(-1)/scaleY(-1) on the container would double-flip the already
+            // correct SVG. Instead, pass the flags into the SVG generator so it can
+            // apply an SVG-level transform on the <path> element itself.
+            const flipH = position.flipH || false;
+            const flipV = position.flipV || false;
+
+            // ✅ FIX: Resolve <a:ln> stroke schemeClr through theme + lumMod/lumOff
+            // before passing to SVG. extractStrokeProperties() may miss these modifiers
+            // for custGeom shapes, causing the stroke to fall back to #000.
+            let resolvedStroke = { ...stroke };
+            const lnNode = shapeNode?.["p:spPr"]?.[0]?.["a:ln"]?.[0];
+            if (lnNode) {
+                const schClrNode = lnNode?.["a:solidFill"]?.[0]?.["a:schemeClr"]?.[0];
+                if (schClrNode) {
+                    const schVal = schClrNode["$"]?.val;
+                    if (schVal) {
+                        let resolvedColor = colorHelper.resolveThemeColorHelper(schVal, themeXML, masterXMLToUse);
+                        const lumMod = schClrNode["a:lumMod"]?.[0]?.["$"]?.val;
+                        const lumOff = schClrNode["a:lumOff"]?.[0]?.["$"]?.val;
+                        if (lumMod && lumOff) {
+                            resolvedColor = pptBackgroundColors.applyLuminanceModifier(resolvedColor, lumMod, lumOff);
+                        } else if (lumMod) {
+                            resolvedColor = colorHelper.applyLumMod(resolvedColor, lumMod);
+                        }
+                        resolvedStroke = { ...resolvedStroke, color: resolvedColor };
+                    }
+                }
+            }
+
+            const svgMarkup = freeFormShape.generateCustomShapeSVG(custGeom, position, fillColor, resolvedStroke, { flipH, flipV });
             return `<div id="custGeom" class="custom-shape" data-name="${shapeName}"
                         style="position:absolute; 
                         left:${position.x}px; 
@@ -516,7 +546,7 @@ class ShapeHandler {
                         z-index:${zIndex};
                         width:${position.width}px; 
                         height:${position.height}px; 
-                        transform: rotate(${position.rotation}deg) ${position.flipH ? 'scaleX(-1)' : ''} ${position.flipV ? 'scaleY(-1)' : ''};                    
+                        transform: rotate(${position.rotation}deg);
                         ${opacity}; 
                         overflow:visible;">${textContent}${svgMarkup}
                     </div>`;
@@ -538,6 +568,13 @@ class ShapeHandler {
                 strokeDashArray = "5, 5, 2, 5";
             }
         }
+        // ✅ FIX: Hoist isTextBox + transformString BEFORE the switch so that
+        // cases which return early (e.g. "diamond") can reference them.
+        // Previously both were declared only AFTER the switch closed (~line 1690),
+        // causing: ReferenceError: Cannot access 'transformString' before initialization
+        const isTextBox = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvSpPr"]?.[0]?.["$"]?.txBox === "1";
+        const transformString = this.getTransformString(position, isTextBox);
+
         // Handling Different Shapes
         switch (shapeType) {
             // CORRECTED VERSION - Replace the 'line' case in convertShapeToHTML function
@@ -665,9 +702,7 @@ class ShapeHandler {
                     opacity: fillProps.opacity || 1
                 });
 
-                // Calculate transform string (same as other shapes)
-                const isTextBox = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvSpPr"]?.[0]?.["$"]?.txBox === "1";
-                const transformString = this.getTransformString(position, isTextBox);
+                // isTextBox and transformString already declared/hoisted before the switch.
 
                 return `<div class="shape" id="${caseName}" 
                             data-original-color="${originalThemeColor}" 
@@ -837,10 +872,135 @@ class ShapeHandler {
                 caseName = "bentUpArrow";
                 clipPath = "polygon(15.94% 65.33%, 15.70% 84.67%, 16.18% 85.33%, 44.69% 84.67%, 68.12% 85.33%, 68.60% 84.67%, 68.60% 29.33%, 75.12% 29.33%, 75.60% 29.00%, 75.60% 28.33%, 61.84% 9.33%, 60.87% 9.33%, 47.34% 28.00%, 47.58% 29.33%, 54.35% 29.33%, 54.11% 65.33%, 15.94% 65.33%)";
                 break;
-            case "diamond":
-                caseName = "diamond";
-                clipPath = "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)";
-                break;
+            case "diamond": {
+                // ✅ FIX: CSS clip-path has three critical bugs for diamond:
+                //
+                // BUG 1 — Border on bounding rectangle, not diamond outline:
+                //   CSS `border` is applied to the full <div> before clip-path trims it.
+                //   Result: rectangular border bleeds through the triangular corners.
+                //
+                // BUG 2 — Gradient distorted after clip:
+                //   CSS linear-gradient fills the full rectangle first; clip-path then
+                //   cuts the corners away. Colour spread is compressed vs PowerPoint's
+                //   native rendering where the gradient fills only the diamond polygon.
+                //
+                // BUG 3 — overflow:visible leaks rectangular content outside the shape.
+                //
+                // FIX: render as an inline SVG <polygon> with a proper SVG
+                // linearGradient and SVG stroke — same strategy as custGeom.
+
+                const dW = position.width;
+                const dH = position.height;
+
+                // Diamond: top-centre → right-mid → bottom-centre → left-mid
+                const diamondPoints = `${dW / 2},0 ${dW},${dH / 2} ${dW / 2},${dH} 0,${dH / 2}`;
+
+                // ── Resolve stroke (schemeClr + lumMod/lumOff aware) ──────────
+                let dStrokeColor = "none";
+                let dStrokeWidth = 0;
+                const dLnNode = shapeNode?.["p:spPr"]?.[0]?.["a:ln"]?.[0];
+                if (dLnNode) {
+                    dStrokeWidth = dLnNode["$"]?.w
+                        ? parseInt(dLnNode["$"].w, 10) / this.getEMUDivisor()
+                        : 0;
+                    const dSolid = dLnNode?.["a:solidFill"]?.[0];
+                    if (dSolid) {
+                        const dSrgb = dSolid["a:srgbClr"]?.[0]?.["$"]?.val;
+                        if (dSrgb) {
+                            dStrokeColor = `#${dSrgb}`;
+                        } else {
+                            const dSchClr = dSolid["a:schemeClr"]?.[0];
+                            if (dSchClr) {
+                                let dc = colorHelper.resolveThemeColorHelper(
+                                    dSchClr["$"]?.val, themeXML, masterXMLToUse
+                                );
+                                const dLumMod = dSchClr["a:lumMod"]?.[0]?.["$"]?.val;
+                                const dLumOff = dSchClr["a:lumOff"]?.[0]?.["$"]?.val;
+                                if (dLumMod && dLumOff) {
+                                    dc = pptBackgroundColors.applyLuminanceModifier(dc, dLumMod, dLumOff);
+                                } else if (dLumMod) {
+                                    dc = colorHelper.applyLumMod(dc, dLumMod);
+                                }
+                                dStrokeColor = dc;
+                            }
+                        }
+                    }
+                }
+
+                // ── Build SVG fill (gradient or solid) ────────────────────────
+                let dFillAttr = fillColor;
+                let dDefs = "";
+                const isLinGrad = /^linear-gradient\(/.test(fillColor);
+                const isRadGrad = /^radial-gradient\(/.test(fillColor);
+
+                if (isLinGrad) {
+                    const gMatch = fillColor.match(
+                        /linear-gradient\((\d+(?:\.\d+)?)deg,\s*([\s\S]+)\)/
+                    );
+                    if (gMatch) {
+                        const gAngleDeg = parseFloat(gMatch[1]);
+                        const gRad = (gAngleDeg * Math.PI) / 180;
+                        const gx1 = ((0.5 - 0.5 * Math.sin(gRad)) * 100).toFixed(2);
+                        const gy1 = ((0.5 + 0.5 * Math.cos(gRad)) * 100).toFixed(2);
+                        const gx2 = ((0.5 + 0.5 * Math.sin(gRad)) * 100).toFixed(2);
+                        const gy2 = ((0.5 - 0.5 * Math.cos(gRad)) * 100).toFixed(2);
+                        const stopRe = /(rgba?\([^)]+\)|#[0-9a-fA-F]+)\s+(\d+(?:\.\d+)?%)/g;
+                        const svgStops = [];
+                        let sm;
+                        while ((sm = stopRe.exec(gMatch[2])) !== null) {
+                            svgStops.push({ color: sm[1], offset: sm[2] });
+                        }
+                        svgStops.sort((a, b) => parseFloat(a.offset) - parseFloat(b.offset));
+                        const gId = `dgradient_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                        const stopEls = svgStops
+                            .map(s => `<stop offset="${s.offset}" style="stop-color:${s.color};stop-opacity:1"/>`)
+                            .join("");
+                        dDefs = `<defs><linearGradient id="${gId}" x1="${gx1}%" y1="${gy1}%" x2="${gx2}%" y2="${gy2}%">${stopEls}</linearGradient></defs>`;
+                        dFillAttr = `url(#${gId})`;
+                    }
+                } else if (isRadGrad) {
+                    const clipId = `dclip_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                    const radSvg = `<svg viewBox="0 0 ${dW} ${dH}" width="100%" height="100%" preserveAspectRatio="none" style="position:absolute;left:0;top:0;">
+                        <defs><clipPath id="${clipId}"><polygon points="${diamondPoints}"/></clipPath></defs>
+                        <foreignObject width="${dW}" height="${dH}" clip-path="url(#${clipId})">
+                            <div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%;background:${fillColor};"></div>
+                        </foreignObject>
+                        <polygon points="${diamondPoints}" fill="none" stroke="${dStrokeColor}" stroke-width="${dStrokeWidth}" stroke-linejoin="round"/>
+                    </svg>`;
+                    return `<div class="shape" id="diamond" data-name="${shapeName}"
+                        data-original-color="${originalThemeColor}"
+                        originalLumMod="${originalLumMod}" originalLumOff="${originalLumOff}" originalAlpha="${originalAlpha}"
+                        style="position:absolute;left:${position.x}px;top:${position.y}px;
+                            width:${dW}px;height:${dH}px;${opacity};
+                            transform:${transformString};z-index:${zIndex};overflow:visible;">
+                        ${textContent}${radSvg}
+                    </div>`;
+                }
+
+                const dSvg = `<svg viewBox="0 0 ${dW} ${dH}" width="100%" height="100%" preserveAspectRatio="none" style="position:absolute;left:0;top:0;overflow:visible;">
+                    ${dDefs}
+                    <polygon points="${diamondPoints}"
+                        fill="${dFillAttr}"
+                        stroke="${dStrokeColor}"
+                        stroke-width="${dStrokeWidth}"
+                        stroke-linejoin="round"/>
+                </svg>`;
+
+                return `<div class="shape" id="diamond" data-name="${shapeName}"
+                    data-original-color="${originalThemeColor}"
+                    originalLumMod="${originalLumMod}" originalLumOff="${originalLumOff}" originalAlpha="${originalAlpha}"
+                    style="position:absolute;
+                        left:${position.x}px;
+                        top:${position.y}px;
+                        width:${dW}px;
+                        height:${dH}px;
+                        ${opacity};
+                        transform:${transformString};
+                        z-index:${zIndex};
+                        overflow:visible;">
+                    ${textContent}${dSvg}
+                </div>`;
+            }
 
             case "frame":
                 // Get adjustment value for frame
@@ -1655,8 +1815,7 @@ class ShapeHandler {
                 break;
         }
 
-        const isTextBox = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvSpPr"]?.[0]?.["$"]?.txBox === "1";
-        const transformString = this.getTransformString(position, isTextBox);
+        // isTextBox and transformString already declared before the switch (hoisted above).
 
         const borderShape = shapeBorderStyle.border;
 

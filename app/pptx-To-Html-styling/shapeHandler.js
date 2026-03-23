@@ -20,6 +20,7 @@ const shapeFillColor = require("./shapes_Properties/getShapeFillColor.js");
 const getLineConnectorHandler = require("./lines_Connectors/linesConnectorHandler.js");
 const freeFormShape = require("./free_Form_Shape/generateFreeForm.js");
 
+const LineChartHandler = require("./charts/LineChartHandler.js");
 // Define the directory to save images using config
 const imageSavePath = path.resolve(__dirname, "../uploads/");
 
@@ -93,7 +94,7 @@ class ShapeHandler {
 
             for (const cxnSpNode of lineShapeTag) {
                 try {
-                    
+
                     const connectorHtml = await getLineConnectorHandler.convertConnectorToHTML(cxnSpNode, this.nodes, this.themeXML, masterXML, this.clrMap, this.layoutXML);
 
                     if (typeof connectorHtml === 'string' && connectorHtml.trim()) {
@@ -162,6 +163,11 @@ class ShapeHandler {
                     );
                 } else if (chartType === "area") {
                     chartHandler = new TwoDAreaChartHandler(
+                        graphicsNode, chartXML, chartRelsXML, chartColorsXML, chartStyleXML, this.themeXML
+                    );
+                }
+                else if (chartType === "line") {  // ADD THIS
+                    chartHandler = new LineChartHandler(
                         graphicsNode, chartXML, chartRelsXML, chartColorsXML, chartStyleXML, this.themeXML
                     );
                 }

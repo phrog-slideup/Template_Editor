@@ -1,8 +1,183 @@
+
+function postProcessChartXML(chartXML, chartType, chartData) {
+    if (chartType !== 'line') {
+        return chartXML; // Only fix line charts
+    }
+
+    try {
+        // Fix 1: Add c:grouping element if missing
+
+        // Fix 1: Add c:grouping element if missing
+        if (!chartXML.includes('<c:grouping')) {
+            // Insert c:grouping right after <c:lineChart> opening tag
+            chartXML = chartXML.replace(
+                /(<c:lineChart[^>]*>)\s*/,
+                '$1<c:grouping val="standard"/>'
+            );
+        }        // Fix 2: Remove third axis ID from c:lineChart if present
+        // Line charts should only have 2 axis IDs
+        const axIdMatches = chartXML.match(/<c:axId val="[^"]+"\s*\/>/g) || [];
+        if (axIdMatches.length > 2) {
+            // Find the c:lineChart section
+            const lineChartMatch = chartXML.match(/<c:lineChart>([\s\S]*?)<\/c:lineChart>/);
+            if (lineChartMatch) {
+                let lineChartContent = lineChartMatch[1];
+                const axIds = lineChartContent.match(/<c:axId val="[^"]+"\s*\/>/g) || [];
+
+                if (axIds.length > 2) {
+                    // Remove the third axis ID
+                    const thirdAxisId = axIds[2];
+                    lineChartContent = lineChartContent.replace(thirdAxisId, '');
+                    chartXML = chartXML.replace(lineChartMatch[0], `<c:lineChart>${lineChartContent}</c:lineChart>`);
+                }
+            }
+        }
+
+        // Fix 3: Ensure only 2 axes are defined (catAx and valAx)
+        // Remove any extra axis definitions
+        const catAxCount = (chartXML.match(/<c:catAx>/g) || []).length;
+        const valAxCount = (chartXML.match(/<c:valAx>/g) || []).length;
+
+        if (valAxCount > 1) {
+            // Remove duplicate valAx - keep only the first one
+            const valAxMatches = chartXML.match(/<c:valAx>[\s\S]*?<\/c:valAx>/g);
+            if (valAxMatches && valAxMatches.length > 1) {
+                // Remove the second valAx
+                chartXML = chartXML.replace(valAxMatches[1], '');
+            }
+        }
+
+        // Fix 4: Inject per-point marker customizations (c:dPt elements)
+        if (chartData && chartData.series) {
+            chartData.series.forEach((series, seriesIdx) => {
+                if (series.markers && Array.isArray(series.markers)) {
+                    // Find the c:ser element for this series
+                    // AFTER:
+                    const serPattern = new RegExp(`<c:ser>\\s*<c:idx val="${seriesIdx}"[\\s\\S]*?<\\/c:ser>`, 'g');
+
+                    chartXML = chartXML.replace(serPattern, (serMatch) => {
+                        // Build c:dPt elements for non-default markers
+                        let dPtElements = '';
+
+                        series.markers.forEach((marker, pointIdx) => {
+                            if (marker.symbol !== 'circle' || marker.size !== 5) {
+                                dPtElements += `<c:dPt><c:idx val="${pointIdx}"/><c:marker><c:symbol val="${marker.symbol}"/><c:size val="${marker.size}"/></c:marker></c:dPt>`;
+                            }
+                        });
+
+                        if (dPtElements) {
+                            // Insert c:dPt elements immediately after c:marker
+                            serMatch = serMatch.replace(
+                                /(<\/c:marker>)([\s\S]*?)(<c:cat>)/,
+                                `$1${dPtElements}$2$3`
+                            );
+                        }
+
+                        return serMatch;
+                    });
+                }
+            });
+        }
+
+        // Add this new section to postProcessChartXML function, AFTER the existing Fix 4
+
+        // Fix 5: Inject marker COLORS and SYMBOLS into series-level c:marker and c:dPt elements
+        if (chartData && chartData.series) {
+            chartData.series.forEach((series, seriesIdx) => {
+                const markerColor = (series.markerColor || series.lineColor).replace('#', '').toUpperCase();
+                const lineColor = (series.lineColor || '#4472C4').replace('#', '').toUpperCase();
+
+                // Find this series in the XML
+                const serPattern = new RegExp(
+                    `<c:ser>\\s*<c:idx val="${seriesIdx}"[\\s\\S]*?<\\/c:ser>`,
+                    'g'
+                );
+
+                chartXML = chartXML.replace(serPattern, (serMatch) => {
+                    // Step 1: Inject marker color/symbol into SERIES-LEVEL c:marker
+                    serMatch = serMatch.replace(
+                        /(<c:marker>)([\s\S]*?)(<\/c:marker>)/,
+                        (markerMatch, openTag, markerContent, closeTag) => {
+                            // Check if spPr already exists in marker
+                            if (!markerContent.includes('<c:spPr>')) {
+                                // Add complete spPr with fill and border
+                                const spPrXML = `<c:spPr><a:solidFill><a:srgbClr val="${markerColor}"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="${lineColor}"/></a:solidFill></a:ln><a:effectLst/></c:spPr>`;
+                                return `${openTag}${markerContent}${spPrXML}${closeTag}`;
+                            }
+                            return markerMatch;
+                        }
+                    );
+
+                    // Step 2: Inject marker color into ALL c:dPt elements
+                    const dPtPattern = /<c:dPt>(<c:idx val="\d+"\/><c:marker>.*?<\/c:marker>)<\/c:dPt>/g;
+
+                    serMatch = serMatch.replace(dPtPattern, (dPtMatch, innerContent) => {
+                        // Check if spPr already exists in this dPt
+                        if (!dPtMatch.includes('<c:spPr>')) {
+                            // Add spPr with marker fill color and line border
+                            return `<c:dPt>${innerContent}<c:spPr><a:solidFill><a:srgbClr val="${markerColor}"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="${lineColor}"/></a:solidFill></a:ln><a:effectLst/></c:spPr></c:dPt>`;
+                        }
+                        return dPtMatch;
+                    });
+
+                    return serMatch;
+                });
+            });
+        }
+
+
+        return chartXML;
+    } catch (error) {
+        console.error('Error post-processing chart XML:', error);
+        return chartXML; // Return original if processing fails
+    }
+}
+
 /**
  * addChartToSlide.js
  * Converts HTML charts to PPTX charts using pptxgenjs
  * Node.js/JSDOM compatible version - CORRECTED
  */
+
+function createChartOptions(chartData, position, styling) {
+    const options = {
+        x: position.x,
+        y: position.y,
+        w: position.w,
+        h: position.h,
+        showTitle: !!chartData.title,
+        title: chartData.title || '',
+        showLegend: true,
+        legendPos: 'r',
+        showValue: false,
+
+        // ===== ADDED: Proper axis configuration for line charts =====
+        catAxisOptions: {
+            showTitle: false,
+            showGridlines: chartData.type === 'line', // Show gridlines for line charts
+            gridlineColor: '888888',
+            gridlineSize: 1,
+        },
+        valAxisOptions: {
+            showTitle: false,
+            showGridlines: true,
+            gridlineColor: '888888',
+            gridlineSize: 1,
+        }
+        // ===== END ADDITION =====
+    };
+
+    // Apply series-specific styling
+    if (styling.seriesOptions && chartData.series) {
+        options.chartColors = chartData.series.map(s => s.lineColor || '#4472C4');
+    }
+
+    // ===== ADDED: Line chart specific options =====
+
+    // ===== END ADDITION =====
+
+    return options;
+}
 
 function addChartToSlide(pptx, pptSlide, element, slideContext) {
     try {
@@ -28,10 +203,41 @@ function addChartToSlide(pptx, pptSlide, element, slideContext) {
         // Create chart options
         const chartOptions = createChartOptions(chartData, position, styling);
 
+        // ===== CHANGED: Add special handling for line charts =====
+        if (chartData.type === 'line') {
+            // Ensure only 2 axes are configured
+            if (!chartOptions.catAxisOptions) {
+                chartOptions.catAxisOptions = {};
+            }
+            if (!chartOptions.valAxisOptions) {
+                chartOptions.valAxisOptions = {};
+            }
+
+            // Remove any third axis configuration
+            delete chartOptions.serAxisOptions;
+            delete chartOptions.catAxisOptions2;
+            delete chartOptions.valAxisOptions2;
+        }
+        // ===== END CHANGE =====
+
         // Add chart to slide
+
+        // Collect marker data so postProcessPPTXForMarkers can inject c:dPt elements
+        if (chartData.type === 'line' && chartData.series?.length) {
+            if (!pptx._chartMarkerData) pptx._chartMarkerData = [];
+            pptx._chartMarkerData.push({
+                chartIndex: pptx._chartMarkerData.length,
+                series: chartData.series.map(s => ({
+                    markers: s.markers || [],
+                    markerColor: s.markerColor,
+                    lineColor: s.lineColor
+                }))
+            });
+        }
         pptSlide.addChart(getChartType(chartData.type), pptxChartData, chartOptions);
 
-        console.log("   ✅ Chart added to slide successfully");
+
+       
         return true;
 
     } catch (error) {
@@ -39,6 +245,7 @@ function addChartToSlide(pptx, pptSlide, element, slideContext) {
         return false;
     }
 }
+
 
 function isChartElement(element) {
     if (!element || !element.classList) return false;
@@ -56,9 +263,16 @@ function isChartElement(element) {
         return true;
     }
 
+    // Check data-chart-type attribute (set by LineChartHandler / BarChartHandler)
+    if (element.getAttribute && element.getAttribute('data-chart-type')) {
+        return true;
+    }
+
     // Check for chart-specific elements inside
     const hasChartElements =
         element.querySelector('.bar') ||
+        element.querySelector('.line-series') ||
+        element.querySelector('.line-point') ||
         element.querySelector('.chart-area') ||
         element.querySelector('[data-value]') ||
         element.querySelector('.category-label') ||
@@ -98,133 +312,110 @@ function extractChartDataFromHTML(chartContainer) {
             ...extractedData,
             title,
             type: chartType,
-            isValid: extractedData && extractedData.categories && extractedData.series && extractedData.series.length > 0
+            isValid: true
         };
-
     } catch (error) {
         console.error("Error extracting chart data:", error);
-        return { isValid: false };
+        return {
+            isValid: false
+        };
     }
 }
 
-function detectChartType(chartContainer) {
-    // Check for specific chart type indicators
-    if (chartContainer.querySelector('.bar, [data-series]')) {
-        return 'bar';
+function detectChartType(container) {
+    // Check data-chart-type attribute first
+    const dataType = container.getAttribute('data-chart-type');
+    if (dataType) {
+        return dataType;
     }
-    if (chartContainer.querySelector('.line, .path, polyline')) {
+
+    // Check for line-specific elements
+    if (container.querySelector('.line-series') ||
+        container.querySelector('.line-point') ||
+        container.classList.contains('line-chart')) {
         return 'line';
     }
-    if (chartContainer.querySelector('.pie, .slice, .arc')) {
+
+    // Check for bar-specific elements
+    if (container.querySelector('.bar') ||
+        container.classList.contains('bar-chart') ||
+        container.classList.contains('column-chart')) {
+        return 'bar';
+    }
+
+    // Check for pie-specific elements
+    if (container.querySelector('.pie-slice') ||
+        container.classList.contains('pie-chart')) {
         return 'pie';
     }
-    if (chartContainer.querySelector('.scatter, .dot')) {
-        return 'scatter';
-    }
 
-    // Check CSS classes for type hints
-    const classList = chartContainer.className.toLowerCase();
-    if (classList.includes('bar') || classList.includes('column')) return 'bar';
-    if (classList.includes('line')) return 'line';
-    if (classList.includes('pie') || classList.includes('donut')) return 'pie';
-    if (classList.includes('scatter')) return 'scatter';
-
-    // FIXED: Default to bar chart instead of null
+    // Default to bar chart
     return 'bar';
 }
 
 function extractBarChartData(chartContainer) {
-    const categories = [];
-    const seriesMap = new Map();
-    const seriesColors = new Map();
-    const seriesNames = new Map();
-
     try {
-        // Extract category labels
-        const categoryElements = chartContainer.querySelectorAll('.category-label');
+        const categories = [];
+        const series = [];
 
-        if (categoryElements.length > 0) {
-            for (let i = 0; i < categoryElements.length; i++) {
-                const el = categoryElements[i];
-                const text = el.textContent ? el.textContent.trim() : '';
-                if (text) {
-                    categories.push(text);
-                }
+        // Try to get categories from .category-label elements
+        const categoryLabels = chartContainer.querySelectorAll('.category-label');
+        categoryLabels.forEach(label => {
+            categories.push(label.textContent.trim());
+        });
+
+        // Try to get series data from .bar elements
+        const bars = chartContainer.querySelectorAll('.bar');
+        const seriesMap = new Map();
+
+        bars.forEach((bar, idx) => {
+            const seriesName = bar.getAttribute('data-series-name') || `Series ${idx + 1}`;
+            const value = parseFloat(bar.getAttribute('data-value') || '0');
+            const color = bar.getAttribute('data-color') || '#4472C4';
+
+            if (!seriesMap.has(seriesName)) {
+                seriesMap.set(seriesName, {
+                    name: seriesName,
+                    values: [],
+                    color: color
+                });
+            }
+
+            seriesMap.get(seriesName).values.push(value);
+        });
+
+        seriesMap.forEach(s => series.push(s));
+
+        // If no data found, try generic approach
+        if (series.length === 0) {
+            const dataElements = chartContainer.querySelectorAll('[data-value]');
+            if (dataElements.length > 0) {
+                const values = Array.from(dataElements).map(el =>
+                    parseFloat(el.getAttribute('data-value') || '0')
+                );
+                series.push({
+                    name: 'Series 1',
+                    values: values,
+                    color: '#4472C4'
+                });
             }
         }
 
-        // Extract bars and their data
-        const bars = chartContainer.querySelectorAll('.bar[data-value][data-series][data-category]');
-
-        if (bars.length > 0) {
-            for (let i = 0; i < bars.length; i++) {
-                const bar = bars[i];
-
-                const value = parseFloat(bar.getAttribute('data-value')) || 0;
-                const seriesIndex = parseInt(bar.getAttribute('data-series')) || 0;
-                const categoryIndex = parseInt(bar.getAttribute('data-category')) || 0;
-
-                // Extract color from style
-                const color = extractColorFromElement(bar);
-
-                // Extract series name from title attribute
-                const title = bar.getAttribute('title') || '';
-                const seriesName = title.split(':')[0].trim() || `Series ${seriesIndex + 1}`;
-
-                // Initialize series if not exists
-                if (!seriesMap.has(seriesIndex)) {
-                    seriesMap.set(seriesIndex, new Map());
-                    seriesColors.set(seriesIndex, color);
-                    seriesNames.set(seriesIndex, seriesName);
-                }
-
-                // Store value for this series and category
-                seriesMap.get(seriesIndex).set(categoryIndex, value);
-            }
-        }
-
-        // If no categories found from labels, generate them based on the data
-        if (categories.length === 0) {
-            const maxCategoryIndex = Math.max(...Array.from(seriesMap.values()).map(categoryMap =>
-                Math.max(...categoryMap.keys())
-            ));
-            for (let i = 0; i <= maxCategoryIndex; i++) {
+        // Ensure we have categories
+        if (categories.length === 0 && series.length > 0) {
+            const valueCount = series[0].values.length;
+            for (let i = 0; i < valueCount; i++) {
                 categories.push(`Category ${i + 1}`);
             }
         }
 
-        // Convert series map to array format
-        const series = [];
-        const sortedSeriesIndices = Array.from(seriesMap.keys()).sort((a, b) => a - b);
-
-        sortedSeriesIndices.forEach(seriesIndex => {
-            const categoryMap = seriesMap.get(seriesIndex);
-            const values = [];
-
-            // Fill values array in category order
-            for (let catIndex = 0; catIndex < categories.length; catIndex++) {
-                values.push(categoryMap.get(catIndex) || 0);
-            }
-
-            series.push({
-                name: seriesNames.get(seriesIndex) || `Series ${seriesIndex + 1}`,
-                values: values,
-                color: normalizeColor(seriesColors.get(seriesIndex))
-            });
-        });
-
-        // Calculate min/max values
-        const allValues = series.flatMap(s => s.values).filter(v => !isNaN(v));
-        const maxValue = allValues.length > 0 ? Math.max(...allValues) : 10;
-        const minValue = allValues.length > 0 ? Math.min(...allValues, 0) : 0;
-
+        const allValues = series.flatMap(s => s.values);
         return {
             categories,
             series,
-            maxValue,
-            minValue
+            maxValue: allValues.length ? Math.max(...allValues) : 10,
+            minValue: allValues.length ? Math.min(...allValues, 0) : 0
         };
-
     } catch (error) {
         console.error("Error in extractBarChartData:", error);
         return {
@@ -236,264 +427,211 @@ function extractBarChartData(chartContainer) {
     }
 }
 
-function extractColorFromElement(element) {
+function extractLineChartData(chartContainer) {
     try {
-        // Check inline style attribute
-        const styleAttr = element.getAttribute('style');
-        if (styleAttr) {
-            // Parse background-color
-            const bgColorMatch = styleAttr.match(/background-color:\s*([^;]+)/i);
-            if (bgColorMatch) {
-                return bgColorMatch[1].trim();
+        // ── Try to read the structured HTML emitted by LineChartHandler ──────
+        const seriesNodes = chartContainer.querySelectorAll('.line-series');
+
+        if (seriesNodes.length > 0) {
+            const categories = [];
+            const series = [];
+
+            // ── Collect categories from the first series ──────────────────
+            const firstSeriesPoints = seriesNodes[0].querySelectorAll('.line-point');
+            firstSeriesPoints.forEach(pt => {
+                const label = pt.getAttribute('data-category-label') || '';
+                categories.push(label);
+            });
+
+            // ── Also collect from .category-labels span elements ──────────
+            if (categories.length === 0) {
+                const labelEls = chartContainer.querySelectorAll('.category-label');
+                labelEls.forEach(el => categories.push(el.textContent.trim()));
             }
+
+            // ── Parse each series ─────────────────────────────────────────
+            seriesNodes.forEach((serEl, sIdx) => {
+                const name = serEl.getAttribute('data-series-name') || `Series ${sIdx + 1}`;
+                const lineColor = serEl.getAttribute('data-series-line-color') || '#4472C4';
+                const markerColor = serEl.getAttribute('data-series-marker-color') || lineColor;
+
+                const points = serEl.querySelectorAll('.line-point');
+                const values = [];
+                const markers = [];  // ADDED - Array to store marker data
+
+                // Build values indexed by category position
+                const byIdx = new Map();
+                const markerByIdx = new Map();  // ADDED - Map to store markers by index
+                points.forEach(pt => {
+                    const catIdx = parseInt(pt.getAttribute('data-category-index') ?? '0', 10);
+                    const val = parseFloat(pt.getAttribute('data-value') ?? '0');
+                    byIdx.set(catIdx, isNaN(val) ? 0 : val);
+
+                    // ADDED - Extract marker data
+                    const markerSymbol = pt.getAttribute('data-marker-symbol') || 'circle';
+                    const markerSize = parseInt(pt.getAttribute('data-marker-size') || '5', 10);
+                    markerByIdx.set(catIdx, { symbol: markerSymbol, size: markerSize });
+                });
+
+                // Ensure we have one value per category
+                const count = Math.max(categories.length, byIdx.size);
+                for (let i = 0; i < count; i++) {
+                    values.push(byIdx.get(i) ?? 0);
+                    markers.push(markerByIdx.get(i) ?? { symbol: 'circle', size: 5 });  // ADDED
+                }
+
+                series.push({
+                    name,
+                    lineColor: normalizeColor(lineColor),
+                    markerColor: normalizeColor(markerColor),
+                    values,
+                    markers
+                });  // ADDED markers
+            });
+
+            // Fill categories if still empty
+            if (categories.length === 0 && series.length > 0) {
+                const count = series[0].values.length;
+                for (let i = 0; i < count; i++) categories.push(`Category ${i + 1}`);
+            }
+
+            const allVals = series.flatMap(s => s.values).filter(v => !isNaN(v));
+            return {
+                categories,
+                series,
+                maxValue: allVals.length ? Math.max(...allVals) : 10,
+                minValue: allVals.length ? Math.min(...allVals, 0) : 0,
+            };
         }
 
-        // Check computed style if available
-        if (element.style && element.style.backgroundColor) {
-            return element.style.backgroundColor;
-        }
-
-        return '#4472C4'; // Default color
+        // ── Fallback: generic [data-value] elements (same as bar chart) ──
+        return extractBarChartData(chartContainer);
 
     } catch (error) {
-        console.error("Error extracting color:", error);
-        return '#4472C4';
+        console.error("Error in extractLineChartData:", error);
+        return {
+            categories: ['Category 1'],
+            series: [{ name: 'Series 1', values: [1], color: '#4472C4' }],
+            maxValue: 1,
+            minValue: 0,
+        };
     }
-}
-
-function extractLineChartData(chartContainer) {
-    // Fallback to bar chart extraction for now
-    return extractBarChartData(chartContainer);
 }
 
 function extractPieChartData(chartContainer) {
-    // Fallback to bar chart extraction for now
-    return extractBarChartData(chartContainer);
-}
-
-function extractChartPosition(chartContainer, slideContext) {
     try {
-        // First, try to get the actual chart area dimensions if available
-        const chartArea = chartContainer.querySelector('.chart-area');
-        let left = 0, top = 0, width = 400, height = 300;
+        const categories = [];
+        const values = [];
+        const colors = [];
 
-        // Extract container position
-        const containerStyle = chartContainer.getAttribute('style');
-        if (containerStyle) {
-            const leftMatch = containerStyle.match(/left:\s*([0-9]*\.?[0-9]+)px/i);
-            const topMatch = containerStyle.match(/top:\s*([0-9]*\.?[0-9]+)px/i);
+        // Try to get pie slices
+        const slices = chartContainer.querySelectorAll('.pie-slice, [data-slice]');
+        slices.forEach(slice => {
+            const label = slice.getAttribute('data-label') ||
+                slice.getAttribute('data-category') ||
+                `Slice ${categories.length + 1}`;
+            const value = parseFloat(slice.getAttribute('data-value') || '0');
+            const color = slice.getAttribute('data-color') ||
+                getComputedStyle(slice).fill || '#4472C4';
 
-            if (leftMatch) left = parseFloat(leftMatch[1]) || 0;
-            if (topMatch) top = parseFloat(topMatch[1]) || 0;
+            categories.push(label);
+            values.push(value);
+            colors.push(normalizeColor(color));
+        });
+
+        // If no slices found, try generic approach
+        if (categories.length === 0) {
+            const dataElements = chartContainer.querySelectorAll('[data-value]');
+            dataElements.forEach((el, idx) => {
+                categories.push(`Category ${idx + 1}`);
+                values.push(parseFloat(el.getAttribute('data-value') || '0'));
+                colors.push('#4472C4');
+            });
         }
 
-        // Use the full container dimensions for better sizing
-        if (containerStyle) {
-            const widthMatch = containerStyle.match(/width:\s*([0-9]*\.?[0-9]+)px/i);
-            const heightMatch = containerStyle.match(/height:\s*([0-9]*\.?[0-9]+)px/i);
-
-            if (widthMatch) width = parseFloat(widthMatch[1]) || 400;
-            if (heightMatch) height = parseFloat(heightMatch[1]) || 300;
-        }
-
-        // COMPLETELY REVISED APPROACH: Use proportional sizing instead of exact pixel conversion
-        // Get slide dimensions - try to detect from HTML structure
-        let slideWidthPx = 960;
-        let slideHeightPx = 540;
-
-        const slideElement = chartContainer.closest('.sli-slide');
-        if (slideElement) {
-            const slideStyle = slideElement.getAttribute('style');
-            if (slideStyle) {
-                const slideWidthMatch = slideStyle.match(/width:\s*([0-9]*\.?[0-9]+)px/i);
-                const slideHeightMatch = slideStyle.match(/height:\s*([0-9]*\.?[0-9]+)px/i);
-                if (slideWidthMatch) slideWidthPx = parseFloat(slideWidthMatch[1]);
-                if (slideHeightMatch) slideHeightPx = parseFloat(slideHeightMatch[1]);
-            }
-        }
-
-        // Calculate proportions of the chart relative to the slide
-        const widthRatio = width / slideWidthPx;
-        const heightRatio = height / slideHeightPx;
-        const leftRatio = left / slideWidthPx;
-        const topRatio = top / slideHeightPx;
-
-        // FIXED: Use standard PowerPoint slide dimensions (10" x 7.5" for 4:3 or 13.33" x 7.5" for 16:9)
-        // Most modern presentations use 16:9, so let's use that
-        const pptSlideWidthIn = 13.33;
-        const pptSlideHeightIn = 7.5;
-
-        // Apply the same proportions to PowerPoint slide
-        let pptX = leftRatio * pptSlideWidthIn;
-        let pptY = topRatio * pptSlideHeightIn;
-        let pptW = widthRatio * pptSlideWidthIn;
-        let pptH = heightRatio * pptSlideHeightIn;
-
-        // CRITICAL FIX: Apply size multiplier if chart is still too small
-        // Based on your screenshots, we need to make it significantly larger
-        const minVisibleWidth = 4.5;  // Minimum 4.5 inches to be clearly visible
-        const minVisibleHeight = 3.0; // Minimum 3 inches to be clearly visible
-
-        if (pptW < minVisibleWidth) {
-            const scaleFactor = minVisibleWidth / pptW;
-            pptW = minVisibleWidth;
-            pptH *= scaleFactor; // Scale height proportionally
-        }
-
-        if (pptH < minVisibleHeight) {
-            const scaleFactor = minVisibleHeight / pptH;
-            pptH = minVisibleHeight;
-            pptW *= scaleFactor; // Scale width proportionally  
-        }
-
-        // Ensure chart fits within slide boundaries after scaling
-        if (pptX + pptW > pptSlideWidthIn) {
-            if (pptW > pptSlideWidthIn - 1) {
-                // Chart is wider than slide, scale down
-                const scale = (pptSlideWidthIn - 1) / pptW;
-                pptW = pptSlideWidthIn - 1;
-                pptH *= scale;
-                pptX = 0.5;
-            } else {
-                // Just reposition
-                pptX = pptSlideWidthIn - pptW - 0.5;
-            }
-        }
-
-        if (pptY + pptH > pptSlideHeightIn) {
-            if (pptH > pptSlideHeightIn - 1) {
-                // Chart is taller than slide, scale down
-                const scale = (pptSlideHeightIn - 1) / pptH;
-                pptH = pptSlideHeightIn - 1;
-                pptW *= scale;
-                pptY = 0.5;
-            } else {
-                // Just reposition
-                pptY = pptSlideHeightIn - pptH - 0.5;
-            }
-        }
-
-        // Final positioning with safety margins
-        const finalPosition = {
-            x: Math.max(0.25, pptX),
-            y: Math.max(0.25, pptY),
-            w: pptW,
-            h: pptH
+        return {
+            categories,
+            series: [{
+                name: 'Values',
+                values: values,
+                colors: colors
+            }],
+            maxValue: values.length ? Math.max(...values) : 100,
+            minValue: 0
         };
-
-        // Additional debugging info
-        return finalPosition;
-
     } catch (error) {
-        console.error("Error extracting position:", error);
-        // Return a large, visible fallback
-        return { x: 2, y: 2, w: 7, h: 4.5 };
+        console.error("Error in extractPieChartData:", error);
+        return {
+            categories: ['Category 1'],
+            series: [{ name: 'Values', values: [100], colors: ['#4472C4'] }],
+            maxValue: 100,
+            minValue: 0
+        };
     }
 }
 
-function extractChartStyling(chartContainer, chartData) {
+function extractChartPosition(element, slideContext) {
+    const style = element.style;
+    const left = parseFloat(style.left) || 0;
+    const top = parseFloat(style.top) || 0;
+    let width = parseFloat(style.width) || 400;
+    let height = parseFloat(style.height) || 300;
+    
+    // Get chart type
+    const chartType = element.getAttribute('data-chart-type');
+    
+    // Increase dimensions for line charts to prevent marker collision
+    if (chartType === 'line') {
+        width = width * 1.45;   // 15% increase in width
+        height = height * 1.25;  // 25% increase in height
+    }
+    
+    // Convert px to inches (assuming 96 DPI)
+    return {
+        x: left / 96,
+        y: top / 96,
+        w: width / 96,
+        h: height / 96
+    };
+}
+
+function extractChartStyling(element, chartData) {
     const styling = {
         colors: [],
-        fontSize: 12,
-        fontFamily: 'Arial',
-        showLegend: true,
-        showGridLines: true,
-        showDataLabels: false
+        seriesOptions: {}
     };
 
     try {
-        // Extract colors from series
-        styling.colors = chartData.series.map(s => s.color || '#4472C4');
-
-        // Extract font styling from title element
-        const titleElement = chartContainer.querySelector('.chart-title');
-        if (titleElement) {
-            const styleAttr = titleElement.getAttribute('style');
-            if (styleAttr) {
-                const fontSizeMatch = styleAttr.match(/font-size:\s*([^;]+)/i);
-                const fontFamilyMatch = styleAttr.match(/font-family:\s*([^;]+)/i);
-
-                if (fontSizeMatch) styling.fontSize = parseInt(fontSizeMatch[1]) || 12;
-                if (fontFamilyMatch) styling.fontFamily = fontFamilyMatch[1].trim().replace(/['"]/g, '') || 'Arial';
-            }
+        // Extract colors from series data
+        if (chartData.series) {
+            styling.colors = chartData.series.map(s => s.lineColor || '#4472C4');
+            styling.markerColors = chartData.series.map(s => s.markerColor || s.lineColor || '#4472C4');
         }
 
-        // Check for grid lines - if axis labels exist, assume grid lines are wanted
-        const axisLabels = chartContainer.querySelectorAll('.axis-label');
-        styling.showGridLines = axisLabels.length > 0;
+        // Extract additional styling from element attributes
+        const bgColor = element.getAttribute('data-bg-color');
+        if (bgColor) {
+            styling.backgroundColor = normalizeColor(bgColor);
+        }
+
+        const borderColor = element.getAttribute('data-border-color');
+        if (borderColor) {
+            styling.borderColor = normalizeColor(borderColor);
+        }
 
     } catch (error) {
-        console.error("Error extracting styling:", error);
+        console.error("Error extracting chart styling:", error);
     }
 
     return styling;
 }
 
-// FIXED: Correct PPTX data format matching pptxgenjs expectations
-// function convertToPptxFormat(chartData) {
-//     try {
-//         // Validate input data
-//         if (!chartData || !chartData.categories || !chartData.series) {
-//             console.error('Invalid chart data structure');
-//             return getDefaultChartData();
-//         }
-
-//         if (chartData.categories.length === 0 || chartData.series.length === 0) {
-//             console.error('Chart data is empty');
-//             return getDefaultChartData();
-//         }
-
-//         // Validate that all series have the same number of values as categories
-//         const expectedLength = chartData.categories.length;
-//         const validSeries = chartData.series.filter(series => {
-//             if (!series || !Array.isArray(series.values)) {
-//                 console.warn(`Invalid series found:`, series);
-//                 return false;
-//             }
-//             if (series.values.length !== expectedLength) {
-//                 console.warn(`Series ${series.name} has ${series.values.length} values but expected ${expectedLength}`);
-//             }
-//             return true;
-//         });
-
-//         if (validSeries.length === 0) {
-//             console.error('No valid series found');
-//             return getDefaultChartData();
-//         }
-
-//         // CORRECTED: Use the exact format pptxgenjs expects
-//         // Each series object needs: name, labels (array of arrays), values (array)
-//         const pptxData = validSeries.map((series, idx) => {
-//             const cleanValues = series.values.map(v => (typeof v === 'number' && !isNaN(v)) ? v : 0);
-//             const base = { name: series.name || 'Unnamed Series', values: cleanValues };
-//             if (idx === 0) {
-//                 // Only first series carries labels
-//                 base.labels = [chartData.categories.slice()];
-//             }
-//             return base;
-//         });
-
-
-//         // Validate final data structure
-//         if (!validatePptxData(pptxData)) {
-//             console.error('Generated invalid PPTX data, using fallback');
-//             return getDefaultChartData();
-//         }
-
-//         return pptxData;
-
-//     } catch (error) {
-//         console.error('Error converting to PPTX format:', error);
-//         return getDefaultChartData();
-//     }
-// }
-
 function convertToPptxFormat(chartData) {
     try {
-        if (!chartData || !Array.isArray(chartData.categories) || !Array.isArray(chartData.series)) {
-            return getDefaultChartData();
-        }
-        const cats = chartData.categories.slice(); // flat array of strings
+        // ────────────────────────────────────────────────────────────────────────
+        // CRITICAL FIX: Flat labels array (NOT nested under "labels" key)
+        // ────────────────────────────────────────────────────────────────────────
+        const cats = chartData.categories || [];
         if (cats.length === 0 || chartData.series.length === 0) return getDefaultChartData();
 
         const expected = cats.length;
@@ -502,11 +640,26 @@ function convertToPptxFormat(chartData) {
             .filter(s => s && Array.isArray(s.values))
             .map((s, idx) => {
                 const cleanValues = s.values.map(v => (typeof v === 'number' && !isNaN(v)) ? v : 0);
-                return {
+
+                // ADDED - Build dataPointStyles for markers
+                // ADDED - Build dataPointStyles for markers
+                const dataPointStyles = [];
+                if (s.markers && Array.isArray(s.markers)) {
+
+                }
+
+                const seriesData = {
                     name: s.name || `Series ${idx + 1}`,
                     labels: cats,          // <-- IMPORTANT: flat labels on EVERY series
                     values: cleanValues
                 };
+
+                // Add dataPointStyles only if we have custom markers
+                if (dataPointStyles.length > 0) {
+                    seriesData.dataPointStyles = dataPointStyles;
+                }
+
+                return seriesData;
             });
 
         // Ensure all series lengths match
@@ -546,22 +699,70 @@ function validatePptxData(data) {
     return true;
 }
 
-// FIXED: Simplified chart options to avoid compatibility issues
+// FIXED: Chart options that produce Syncfusion-compatible XML
 function createChartOptions(chartData, position, styling) {
+    const isLine = chartData.type === 'line';
+
     const options = {
+        // Position & size
         x: position.x, y: position.y, w: position.w, h: position.h,
-        title: chartData.title || 'Chart', showTitle: true,
+
+        // Title
+        title: chartData.title || 'Chart',
+        showTitle: !!chartData.title,
+
+        // Legend — bottom position to match original XML (legendPos="b")
         showLegend: chartData.series && chartData.series.length > 1,
-        barDir: 'col',
-        barGrouping: 'clustered',
-        barGapWidthPct: 150,
-        barOverlapPct: -25,
-        // leave gridlines/legend fonts as you had
+        legendPos: 'b',
+
+        // Blank cells — use "gap" (original uses "gap", NOT "span")
+        plotAreaBorder: { pt: 0 },
+
+        // Axis tick marks & label position matching original XML
+        catAxisLabelPos: 'nextTo',   // tickLblPos="nextTo"
+        valAxisLabelPos: 'nextTo',
+        catAxisMajorTickMark: 'none',   // majorTickMark="none"
+        catAxisMinorTickMark: 'none',
+        valAxisMajorTickMark: 'none',
+        valAxisMinorTickMark: 'none',
+
+        // Grid lines — only valAx gets majorGridlines (same as original)
+        catGridLine: { style: 'none' },
+        valGridLine: { style: 'solid', color: 'D9D9D9', pt: 0.75 },
+
+        // Rounded corners OFF (original has roundedCorners val="0")
+        chartArea: { roundedCorners: false },
+
+        // Display blanks as gap (matches original dispBlanksAs val="gap")
+        displayBlanksAs: 'gap',
     };
 
-    // Colors (hex without '#')
+    if (isLine) {
+        // ── Line chart specific ──────────────────────────────────────────
+        // grouping="standard" — this is the key missing tag in converted XML
+        options.lineGrouping = 'standard';
+        options.lineDataSymbol = 'circle';
+        options.lineDataSymbolSize = 5;
+        options.lineSize = 2;        // ~28575 EMU in original
+        options.smooth = false;
+
+        // Only 2 axes for line chart (original has exactly 2 axId entries)
+        options.catAxisLineShow = true;
+        options.valAxisLineShow = false;   // valAx line is noFill in original
+
+    } else {
+        // ── Bar / Column chart specific ──────────────────────────────────
+        options.barDir = 'col';
+        options.barGrouping = 'clustered';
+        options.barGapWidthPct = 150;
+        options.barOverlapPct = -25;
+    }
+
+    // Colors (hex without '#') — one per series
     if (styling.colors?.length) {
-        const hexes = styling.colors.map(c => normalizeColor(c, true)).filter(h => typeof h === 'string' && h.length === 6);
+        const hexes = styling.colors
+            .map(c => normalizeColor(c, true))
+            .filter(h => typeof h === 'string' && h.length === 6);
         if (hexes.length) options.chartColors = hexes;
     }
 
@@ -665,9 +866,96 @@ async function processChartElement(pptx, pptSlide, chartElement, slideContext) {
     return await addChartToSlide(pptx, pptSlide, chartElement, slideContext);
 }
 
+async function postProcessPPTXForMarkers(pptxPath, markerDataArray) {
+    try {
+        const JSZip = require('jszip');
+        const fs = require('fs').promises;
+
+        const pptxBuffer = await fs.readFile(pptxPath);
+        const zip = await JSZip.loadAsync(pptxBuffer);
+
+        for (const markerData of markerDataArray) {
+            const chartPath = `ppt/charts/chart${markerData.chartIndex + 1}.xml`;
+            const chartFile = zip.file(chartPath);
+
+            if (!chartFile) continue;
+
+            let chartXML = await chartFile.async('string');
+
+            // Process each series
+            markerData.series.forEach((series, seriesIdx) => {
+                const markerColor = (series.markerColor || series.lineColor || '#4472C4').replace('#', '').toUpperCase();
+                const lineColor = (series.lineColor || '#4472C4').replace('#', '').toUpperCase();
+                
+                // Find this series in the XML
+                const serPattern = new RegExp(
+                    `(<c:ser>\\s*<c:idx val="${seriesIdx}"\\s*\\/>[\\s\\S]*?)(<c:marker>)([\\s\\S]*?)(<\\/c:marker>)`,
+                    'g'
+                );
+                
+                chartXML = chartXML.replace(serPattern, (match, beforeMarker, openMarker, markerContent, closeMarker) => {
+                    // Check if spPr exists in the marker
+                    if (markerContent.includes('<c:spPr>')) {
+                        // Replace existing spPr colors
+                        markerContent = markerContent.replace(
+                            /<a:srgbClr val="[A-F0-9]{6}"\s*\/>/g,
+                            (colorMatch, offset) => {
+                                // First occurrence is fill, second is border
+                                if (markerContent.indexOf(colorMatch) === offset) {
+                                    return `<a:srgbClr val="${markerColor}"/>`;
+                                }
+                                return `<a:srgbClr val="${lineColor}"/>`;
+                            }
+                        );
+                    } else {
+                        // Add spPr with colors
+                        markerContent += `<c:spPr><a:solidFill><a:srgbClr val="${markerColor}"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="${lineColor}"/></a:solidFill></a:ln><a:effectLst/></c:spPr>`;
+                    }
+                    
+                    return beforeMarker + openMarker + markerContent + closeMarker;
+                });
+
+                // Also inject c:dPt elements for per-point markers if needed
+                if (series.markers && series.markers.length > 0) {
+                    const serPattern2 = new RegExp(`<c:ser>\\s*<c:idx val="${seriesIdx}"[\\s\\S]*?<\\/c:ser>`, 'g');
+                    chartXML = chartXML.replace(serPattern2, (serMatch) => {
+                        let dPtElements = '';
+
+                        series.markers.forEach((marker, pointIdx) => {
+                            if (marker.symbol !== 'circle' || marker.size !== 5) {
+                                dPtElements += `<c:dPt><c:idx val="${pointIdx}"/><c:marker><c:symbol val="${marker.symbol}"/><c:size val="${marker.size}"/><c:spPr><a:solidFill><a:srgbClr val="${markerColor}"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="${lineColor}"/></a:solidFill></a:ln><a:effectLst/></c:spPr></c:marker></c:dPt>`;
+                            }
+                        });
+
+                        if (dPtElements) {
+                            serMatch = serMatch.replace(
+                                /(<\/c:marker>)([\s\S]*?)(<c:cat>)/,
+                                `$1${dPtElements}$2$3`
+                            );
+                        }
+
+                        return serMatch;
+                    });
+                }
+            });
+
+            zip.file(chartPath, chartXML);
+        }
+
+        const modifiedBuffer = await zip.generateAsync({ type: 'nodebuffer' });
+        await fs.writeFile(pptxPath, modifiedBuffer);
+
+       
+
+    } catch (error) {
+        console.error('   ⚠️ Error post-processing chart markers:', error);
+    }
+}
 // Export functions for use in the main conversion system
 module.exports = {
     addChartToSlide,
     processChartElement,
-    isChartElement
+    isChartElement,
+    postProcessChartXML,
+    postProcessPPTXForMarkers
 };

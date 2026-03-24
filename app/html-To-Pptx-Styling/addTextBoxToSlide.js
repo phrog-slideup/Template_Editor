@@ -24,7 +24,8 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
         h *= slideContext.scaleY;
     }
 
-    w = w * 0.995;
+    // w = w * 0.995;
+    w = w * 1.0;
 
     const textAlign = style.textAlign || "left";
 
@@ -141,35 +142,46 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
 
     // Continue with normal paragraph processing...
     const paragraphs = textBox.querySelectorAll ? Array.from(textBox.querySelectorAll("p")) : [];
-
     // FIXED: Extract margins from paragraphs (where they actually exist in your HTML)
-    if (paragraphs.length > 0) {
-        // Use the first paragraph's margin as the text box margin
-        const firstParagraph = paragraphs[0];
-        if (firstParagraph && firstParagraph.style) {
-            finalMargins = extractMarginValues(firstParagraph.style);
+    const dataMarginLeft = parseFloat(textBox.getAttribute('data-margin-left')) || 0;
+    const dataMarginTop = parseFloat(textBox.getAttribute('data-margin-top')) || 0;
+    const dataMarginRight = parseFloat(textBox.getAttribute('data-margin-right')) || 0;
+    const dataMarginBottom = parseFloat(textBox.getAttribute('data-margin-bottom')) || 0;
+
+    if (dataMarginLeft > 0 || dataMarginTop > 0 || dataMarginRight > 0 || dataMarginBottom > 0) {
+        finalMargins = {
+            left: dataMarginLeft,
+            top: dataMarginTop,
+            right: dataMarginRight,
+            bottom: dataMarginBottom
+        };
+    } else {
+        // Fallback: try first paragraph
+        if (paragraphs.length > 0) {
+            const firstParagraph = paragraphs[0];
+            if (firstParagraph && firstParagraph.style) {
+                finalMargins = extractMarginValues(firstParagraph.style);
+            }
+        }
+        // Fallback: textBox/parent style
+        if (finalMargins.top === 0 && finalMargins.right === 0 && finalMargins.bottom === 0 && finalMargins.left === 0) {
+            const textBoxMargins = extractMarginValues(style);
+            const parentMargins = extractMarginValues(parentStyle);
+            finalMargins = {
+                top: textBoxMargins.top || parentMargins.top,
+                right: textBoxMargins.right || parentMargins.right,
+                bottom: textBoxMargins.bottom || parentMargins.bottom,
+                left: textBoxMargins.left || parentMargins.left
+            };
         }
     }
-
-    // Fallback: Check textBox style and parent style if no paragraph margins found
-    if (finalMargins.top === 0 && finalMargins.right === 0 && finalMargins.bottom === 0 && finalMargins.left === 0) {
-        const textBoxMargins = extractMarginValues(style);
-        const parentMargins = extractMarginValues(parentStyle);
-
-        finalMargins = {
-            top: textBoxMargins.top || parentMargins.top,
-            right: textBoxMargins.right || parentMargins.right,
-            bottom: textBoxMargins.bottom || parentMargins.bottom,
-            left: textBoxMargins.left || parentMargins.left
-        };
-    }
-
     const marginInches = {
         top: pixelsToEmus(finalMargins.left),
         left: pixelsToEmus(finalMargins.top),
         right: pixelsToEmus(finalMargins.right),
         bottom: pixelsToEmus(finalMargins.bottom)
     };
+
 
     // Detect vertical alignment from flexbox properties
     const detectVerticalAlign = (textBoxStyle, parentShapeStyle) => {
@@ -180,10 +192,9 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
 
         // Priority 1: Check textBox's justify-content (if it's a flex column container)
         if (display === 'flex' && flexDirection === 'column') {
-
             if (justifyContent === 'center') return 'middle';
             if (justifyContent === 'flex-end' || justifyContent === 'end') return 'bottom';
-            if (justifyContent === 'flex-start' || justifyContent === 'start') return 'center';
+            if (justifyContent === 'flex-start' || justifyContent === 'start') return 'top'; // ← FIXED
         }
 
         // Priority 2: Check parent's align-items (common pattern in your HTML)
@@ -247,7 +258,8 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
     if (hasMixedContent) {
         // DEBUG: Analyze list structure before processing
         debugListStructure(textBox);
-
+        const listShadow = extractShadowFromTextBox(textBox);   // ✅ ADD
+        if (listShadow) textBoxOptions.shadow = listShadow;
         // Process mixed content in order
         handleMixedContent(pptSlide, textBox, textBoxOptions, globalLineSpacing, globalFontSize, textAlign);
         return;
@@ -257,7 +269,8 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
     if (hasLists && !hasParagraphs) {
         // DEBUG: Analyze list structure before processing
         debugListStructure(textBox);
-
+        const listShadow = extractShadowFromTextBox(textBox);   // ✅ ADD
+        if (listShadow) textBoxOptions.shadow = listShadow;
         // FIXED: Pass global line spacing to list handler
         handleListContent(pptSlide, textBox, textBoxOptions, globalLineSpacing, globalFontSize);
         return;
@@ -283,29 +296,41 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
         const isEmptyParagraph = isBreakOnlyParagraph || (textContent.replace(/\u00A0/g, '').replace(/\s/g, '') === '' && hasMinHeight);
 
         if (isEmptyParagraph) {
+            const emptyParagraphFontSize = extractFontSizeFromParagraph(p) || globalFontSize;
+
             if (processedParagraphs.length > 0) {
+                // Mark previous paragraph's last run with breakLine
                 const lastParagraph = processedParagraphs[processedParagraphs.length - 1];
                 if (lastParagraph && lastParagraph.length > 0) {
                     const lastRun = lastParagraph[lastParagraph.length - 1];
-                    lastRun.text += '\n';
-                }
-            } else {
-                if (hasMinHeight) {
-                    const emptyParagraphFontSize = extractFontSizeFromParagraph(p) || globalFontSize;
-                    const emptyParagraphAlign = p.style.textAlign || textAlign;
-
-                    processedParagraphs.push([{
-                        text: '\n',
-                        options: {
-                            fontFace: 'Arial',
-                            fontSize: emptyParagraphFontSize,
-                            color: '#000000',
-                            align: emptyParagraphAlign
-                        }
-                    }]);
+                    if (!lastRun.options) lastRun.options = {};
+                    // Only set breakLine if not already set
+                    if (!lastRun.options.breakLine) {
+                        lastRun.options.breakLine = true;
+                    }
                 }
             }
-        } else {
+
+            // Only push empty paragraph if there's content before OR after it
+            // Avoid pushing empty paragraphs at the very start (no preceding content)
+            // and avoid consecutive empty paragraphs
+            const lastProcessed = processedParagraphs[processedParagraphs.length - 1];
+            const lastIsAlreadyEmpty = lastProcessed &&
+                lastProcessed.length === 1 &&
+                lastProcessed[0].text === '';
+
+            if (!lastIsAlreadyEmpty) {
+                processedParagraphs.push([{
+                    text: '',
+                    options: {
+                        fontSize: emptyParagraphFontSize,
+                        color: '000000',
+                        breakLine: false
+                    }
+                }]);
+            }
+        }
+        else {
             // Process non-empty paragraphs
             const paragraphText = processSpansInParagraphWithLineSpacing(p);
 
@@ -342,6 +367,11 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
         if (fallbackText && fallbackText.length > 0) {
             processedParagraphs.push(fallbackText);
         }
+    }
+
+    const textBoxShadow = extractShadowFromTextBox(textBox);
+    if (textBoxShadow) {
+        textBoxOptions.shadow = textBoxShadow;
     }
 
     if (processedParagraphs.length > 0) {
@@ -838,6 +868,16 @@ function extractSpanFormattingWithLineSpacing(span, defaultAlign = "left", origi
         }
     }
 
+    // Read shadow from data attribute and convert to PptxGenJS shadow option
+    const shadowCss = span.getAttribute('data-shadow');
+
+    if (shadowCss) {
+        const pptxShadow = parseCssShadowToPptx(shadowCss);
+        if (pptxShadow) {
+            options.shadow = pptxShadow;
+        }
+    }
+
     return options;
 }
 
@@ -892,36 +932,30 @@ function extractLineHeightFromCSS(cssText) {
     return null;
 }
 
-function convertLineHeightToPowerPoint(lineHeight, fontSize) {
-    if (!lineHeight || !fontSize) {
-        return null;
-    }
 
-    // Convert fontSize from px to pt (assuming 72 DPI where 1px = 1pt)
+function convertLineHeightToPowerPoint(lineHeight, fontSize) {
+    if (!lineHeight || !fontSize) return null;
+
     const fontSizePt = fontSize;
 
-    // Handle absolute values (px or pt)
     if (typeof lineHeight === 'object' && lineHeight.type === 'absolute') {
-        const lineHeightPt = lineHeight.value; // Assuming 72 DPI: 1px = 1pt
-
-        // Calculate the multiplier: lineHeight / fontSize
-        const multiplier = lineHeightPt / fontSizePt;
-
-        // For PptxGenJS, we can return the actual line height in points
-        // or return the multiplier - check PptxGenJS documentation
-        return Math.round(lineHeightPt * 100) / 100; // Return line height in points
+        const lineHeightPt = lineHeight.value;
+        const ratio = lineHeightPt / fontSizePt;
+        // FIXED: Skip normal line heights (ratio 1.0–1.3) — PowerPoint default matches CSS naturally
+        // line-height: 17px on 14px font = ratio 1.21 = normal, don't set explicitly
+        if (ratio <= 1.3) return null;
+        return Math.round(lineHeightPt * 100) / 100;
     }
 
-    // Handle relative values (unitless numbers, em, percentages)
     if (typeof lineHeight === 'number') {
-        // For relative values, calculate the actual line height in points
+        // FIXED: Skip near-normal multipliers
+        if (lineHeight <= 1.3) return null;
         const lineHeightPt = fontSizePt * lineHeight;
         return Math.round(lineHeightPt * 100) / 100;
     }
 
     return null;
 }
-
 
 function processSpansInParagraphWithoutLineSpacing(paragraph) {
     const textRuns = [];
@@ -1251,6 +1285,15 @@ function handleMixedContent(pptSlide, textBox, textBoxOptions, globalLineSpacing
         try {
             const mixedTextBoxOptions = { ...textBoxOptions };
             delete mixedTextBoxOptions.lineSpacing;  // Let individual text runs handle line spacing
+            if (mixedShadow) {
+                mixedTextBoxOptions.shadow = mixedShadow;
+            }
+
+            // Inside handleListContent, before pptSlide.addText(formattedListItems, listTextBoxOptions):
+            const listShadow = extractShadowFromTextBox(textBox);
+            if (listShadow) {
+                listTextBoxOptions.shadow = listShadow;
+            }
 
             pptSlide.addText(allContent, mixedTextBoxOptions);
         } catch (error) {
@@ -2036,6 +2079,80 @@ function rgbToHex(color) {
     return '#000000';
 }
 
+function extractShadowFromTextBox(textBox) {
+    // First check if the text box itself has a shape-level shadow
+    const shapeShadow = textBox.getAttribute ? textBox.getAttribute('data-shape-shadow') : null;
+    if (shapeShadow && shapeShadow.trim()) {
+        return parseCssShadowToPptx(shapeShadow);
+    }
+
+    // Then check individual spans for run-level shadow
+    const spans = textBox.querySelectorAll ? textBox.querySelectorAll('[data-shadow]') : [];
+    for (const span of spans) {
+        const shadowCss = span.getAttribute('data-shadow');
+        if (shadowCss && shadowCss.trim()) {
+            return parseCssShadowToPptx(shadowCss);
+        }
+    }
+
+    return null;
+}
+
+
+function parseCssShadowToPptx(cssShadow) {
+    if (!cssShadow) return null;
+
+    // Extract rgba/rgb color FIRST before splitting by spaces
+    let colorStr = '#000000';
+    let alpha = 1;
+    let shadowWithoutColor = cssShadow;
+
+    const rgbaMatch = cssShadow.match(/rgba?\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/);
+    if (rgbaMatch) {
+        const r = parseInt(rgbaMatch[1]);
+        const g = parseInt(rgbaMatch[2]);
+        const b = parseInt(rgbaMatch[3]);
+        alpha = rgbaMatch[4] !== undefined ? parseFloat(rgbaMatch[4]) : 1;
+        colorStr = '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+        // Remove the rgba() part from the string to parse offsets cleanly
+        shadowWithoutColor = cssShadow.replace(rgbaMatch[0], '').trim();
+    } else {
+        // Try hex color at end
+        const hexMatch = cssShadow.match(/#[0-9a-fA-F]{3,6}/);
+        if (hexMatch) {
+            colorStr = hexMatch[0];
+            shadowWithoutColor = cssShadow.replace(hexMatch[0], '').trim();
+        }
+    }
+
+    // Now parse the numeric parts (offsetX, offsetY, blur)
+    const numParts = shadowWithoutColor.trim().split(/\s+/).filter(s => s.length > 0);
+    if (numParts.length < 2) return null;
+
+    const offsetX = parseFloat(numParts[0]) || 0;
+    const offsetY = parseFloat(numParts[1]) || 0;
+    const blur = numParts[2] ? parseFloat(numParts[2]) : 0;
+
+    // Convert px to pt (72 DPI: 1px = 1pt)
+    const pxToPt = px => Math.round(Math.abs(px) * 100) / 100;
+
+    // Calculate angle and distance from x/y offsets
+    const angle = Math.round(((Math.atan2(offsetY, offsetX) * 180 / Math.PI) % 360 + 360) % 360);
+    const dist = Math.round(Math.sqrt(offsetX * offsetX + offsetY * offsetY) * 100) / 100;
+
+    return {
+        type: 'outer',
+        color: colorStr.replace('#', '').toUpperCase(),
+        opacity: alpha,
+        blur: pxToPt(blur),
+        offset: dist,
+        angle: angle
+    };
+}
+
+
+
 module.exports = {
-    addTextBoxToSlide
+    addTextBoxToSlide,
+    parseCssShadowToPptx
 };

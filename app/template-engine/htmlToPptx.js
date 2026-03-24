@@ -115,6 +115,12 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         // STEP 3: Write initial PPTX file
         await pptx.writeFile({ fileName: outputFilePath });
 
+        // Then post-process to inject marker data
+        if (pptx._chartMarkerData && pptx._chartMarkerData.length > 0) {
+
+            await addChartToSlide.postProcessPPTXForMarkers(outputFilePath, pptx._chartMarkerData);
+        }
+
         // STEP 5: Final cleanup
         await fixPptxFile(outputFilePath);
 
@@ -185,6 +191,9 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         // STEP 7: Replace slide1.xml in the PPTX with the converted slide1.xml
 
         await replaceSlideXMLInPPTX(fileFolderName, slideXmlsDir);
+
+        // ===== ADDED: Copy modified chart XMLs (with c:dPt markers) into source folder =====
+        await replaceChartXMLsInSourceFolder(fileFolderName, slideXmlsDir);
 
         // Replace Images 
         await replaceSlideImages(fileFolderName, slideXmlsDir);
@@ -618,6 +627,28 @@ function isPlaceholderElement(element) {
 
 async function processPlaceholderElement(pptx, pptSlide, element, slideContext) {
     try {
+        const VALID_SCHEME_COLORS = [
+            'tx1', 'tx2', 'bg1', 'bg2',
+            'accent1', 'accent2', 'accent3', 'accent4', 'accent5', 'accent6',
+            'hlink', 'folhlink', 'dk1', 'dk2', 'lt1', 'lt2', 'phclr',
+            'text1', 'text2', 'background1', 'background2'
+        ];
+        const isValidSchemeColor = (v) =>
+            !!(v && v !== 'undefined' && VALID_SCHEME_COLORS.includes(v.toLowerCase()));
+        const isValidHex = (v) =>
+            !!(v && /^[0-9A-Fa-f]{6}$/.test(v.replace(/^#/, '')));
+        const resolveColor = (rawColor, lumMod, lumOff, fallbackColor) => {
+            if (!rawColor || rawColor === 'undefined') return fallbackColor || '';
+            if (isValidSchemeColor(rawColor)) {
+                const obj = { type: 'schemeClr', val: rawColor.toLowerCase() };
+                if (lumMod && !isNaN(parseInt(lumMod))) obj.lumMod = parseInt(lumMod);
+                if (lumOff && lumOff !== 'undefined' && !isNaN(parseInt(lumOff)))
+                    obj.lumOff = parseInt(lumOff);
+                return obj;
+            }
+            if (isValidHex(rawColor)) return '#' + rawColor.replace(/^#/, '');
+            return fallbackColor || '';
+        };
         // Handle placeholder images
         if (element.classList.contains('placeholder-picture') || element.classList.contains('image-container')) {
 
@@ -889,7 +920,12 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                                         underline: spanStyle.textDecoration?.includes('underline'),
                                         strike: spanStyle.textDecoration?.includes('line-through'),
                                         fontSize: parseFloat(spanStyle.fontSize) || textOptions.fontSize,
-                                        color: node.getAttribute('originaltxtcolor') || textOptions.color,
+                                        color: resolveColor(
+                                            node.getAttribute('originaltxtcolor') || '',
+                                            node.getAttribute('originallummod'),
+                                            node.getAttribute('originallumoff'),
+                                            spanStyle.color || textOptions.color
+                                        ),
                                         fontFace: spanStyle.fontFamily?.replace(/['"]/g, '') || textOptions.fontFace
                                     };
 
@@ -914,7 +950,12 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                                         }
                                         isFirstRunInParagraph = false;
                                     }
-
+                                    else {
+                                        if (pAlign) {
+                                            spanOptions.align = pAlign;
+                                        }
+                                        // DO NOT add lineSpacing here - this causes new paragraph in PptxGenJS
+                                    }
                                     paragraphTextRuns.push({
                                         text: spanText,
                                         options: spanOptions
@@ -1003,10 +1044,17 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
             }
 
             // Extract color and luminosity adjustments from the span
+            // Extract color and luminosity adjustments from the span
             const spanElement = textElement?.querySelector('span');
-            let textColor = spanElement?.getAttribute('originaltxtcolor') || '';
+            const rawTxtColor = spanElement?.getAttribute('originaltxtcolor') || '';
             const lumMod = spanElement?.getAttribute('originallummod');
             const lumOff = spanElement?.getAttribute('originallumoff');
+            const textColor = resolveColor(
+                rawTxtColor,
+                lumMod,
+                lumOff,
+                spanElement?.style?.color || ''
+            );
 
             const getCSSProp = (el, cssProp) => {
                 if (!el) return '';
@@ -1050,10 +1098,10 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
 
             // ✅ CRITICAL FIX: Create margin effect by adjusting position and size
             // Convert pixels to inches (96 DPI for screen, PowerPoint uses inches)
-            const marginLeftInches = textBoxMarginLeft / 96;
-            const marginRightInches = textBoxMarginRight / 96;
-            const marginTopInches = textBoxMarginTop / 96;
-            const marginBottomInches = textBoxMarginBottom / 96;
+            const marginLeftInches = textBoxMarginLeft / 72;
+            const marginRightInches = textBoxMarginRight / 72;
+            const marginTopInches = textBoxMarginTop / 72;
+            const marginBottomInches = textBoxMarginBottom / 72;
 
             // Adjust position to account for left/top margins
             const adjustedX = position.x + marginLeftInches;
@@ -1062,7 +1110,19 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
             // Reduce width/height to account for left/right and top/bottom margins
             const adjustedW = position.w - marginLeftInches - marginRightInches;
             const adjustedH = position.h - marginTopInches - marginBottomInches;
+            // 1. Extract shadow BEFORE addText call
+            const shadowCss = spanElement?.getAttribute('data-shadow');
+            let placeholderShadow = null;
+            if (shadowCss && shadowCss.trim()) {
+                placeholderShadow = addTextBox.parseCssShadowToPptx(shadowCss);
+            }
 
+            if (!placeholderShadow) {
+                const shapeShadow = textElement?.getAttribute('data-shape-shadow');
+                if (shapeShadow && shapeShadow.trim()) {
+                    placeholderShadow = addTextBox.parseCssShadowToPptx(shapeShadow);
+                }
+            }
             pptSlide.addText(
                 textRuns,
                 {
@@ -1070,6 +1130,12 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                     y: adjustedY,           // ✅ Shifted down by top margin
                     w: adjustedW,           // ✅ Reduced by left + right margins
                     h: adjustedH,           // ✅ Reduced by top + bottom margins
+                    margin: [                // ← use margin property instead
+                        textBoxMarginTop / 72,
+                        textBoxMarginRight / 72,
+                        textBoxMarginBottom / 72,
+                        textBoxMarginLeft / 72
+                    ],
                     fontSize: textOptions.fontSize,
                     color: textColor || textOptions.color,
                     fontFace: textOptions.fontFace || (typeof isTitle !== 'undefined' && isTitle ? '+mj-lt' : undefined),
@@ -1083,7 +1149,8 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                     placeholderType: txtPhType,
                     placeholderIdx: txtPhIdx,
                     placeholderSz: txtPhSz,
-                    _isPlaceholderFormattingOverride: true
+                    _isPlaceholderFormattingOverride: true,
+                    ...(placeholderShadow ? { shadow: placeholderShadow } : {})
                 });
             return;
         }
@@ -2255,118 +2322,6 @@ async function extractAndProcessSlideXMLs(pptxFilePath, customOutputDir = null, 
         throw error;
     }
 }
-// // Original Function
-// async function replaceSlideXMLInPPTX(fileFolderName, extractedSlidesDir) {
-//     try {
-//         // Validate inputs
-//         if (!fileFolderName || !extractedSlidesDir) {
-//             throw new Error('Invalid folder name or extracted slides directory path.');
-//         }
-
-//         const filesDir = path.resolve(__dirname, '../files');
-//         const targetDir = path.join(filesDir, fileFolderName);
-
-//         // Check if target directory exists
-//         try {
-//             await fsPromises.access(targetDir);
-//         } catch {
-//             throw new Error(`Target directory not found: ${targetDir}`);
-//         }
-
-//         // Paths for extracted files
-//         const extractedSlidesPath = path.join(extractedSlidesDir, 'slides');
-//         const extractedRelsPath = path.join(extractedSlidesDir, '_rels');
-
-//         // Check if extracted directories exist
-//         const slidesExist = await checkDirectoryExists(extractedSlidesPath);
-//         const relsExist = await checkDirectoryExists(extractedRelsPath);
-
-//         if (!slidesExist && !relsExist) {
-//             throw new Error('No extracted slide files found to replace');
-//         }
-
-//         let replacedCount = 0;
-
-//         // Replace slideX.xml files
-//         if (slidesExist) {
-//             const slideFiles = await fsPromises.readdir(extractedSlidesPath);
-//             const xmlFiles = slideFiles.filter(file => file.match(/^slide\d+\.xml$/));
-
-//             for (const xmlFile of xmlFiles) {
-//                 try {
-//                     // Read converted XML content
-//                     const convertedXMLPath = path.join(extractedSlidesPath, xmlFile);
-//                     const convertedXMLContent = await fsPromises.readFile(convertedXMLPath, 'utf8');
-
-//                     // Target path in PPTX structure
-//                     const targetXMLPath = path.join(targetDir, 'ppt', 'slides', xmlFile);
-
-//                     // Check if target file exists
-//                     try {
-//                         await fsPromises.access(targetXMLPath);
-//                         await fsPromises.writeFile(targetXMLPath, convertedXMLContent, 'utf8');
-//                         replacedCount++;
-//                     } catch {
-//                         console.log(`   ⚠️ Target file not found, skipping: ${xmlFile}`);
-//                     }
-//                 } catch (error) {
-//                     console.error(`   ❌ Error replacing ${xmlFile}: ${error.message}`);
-//                 }
-//             }
-//         }
-
-//         // Replace slideX.xml.rels files
-//         if (relsExist) {
-//             const relsFiles = await fsPromises.readdir(extractedRelsPath);
-//             const relsXmlFiles = relsFiles.filter(file => file.match(/^slide\d+\.xml\.rels$/));
-
-//             for (const relsFile of relsXmlFiles) {
-//                 try {
-//                     // Read converted rels content
-//                     const convertedRelsPath = path.join(extractedRelsPath, relsFile);
-//                     const convertedRelsContent = await fsPromises.readFile(convertedRelsPath, 'utf8');
-
-//                     // Target path in PPTX structure
-//                     const targetRelsPath = path.join(targetDir, 'ppt', 'slides', '_rels', relsFile);
-
-//                     // Ensure _rels directory exists
-//                     const relsDir = path.dirname(targetRelsPath);
-//                     await fsPromises.mkdir(relsDir, { recursive: true });
-
-//                     // Read original rels file to preserve slideLayout relationship
-//                     let finalRelsContent = convertedRelsContent;
-
-//                     try {
-//                         await fsPromises.access(targetRelsPath);
-//                         const originalRelsContent = await fsPromises.readFile(targetRelsPath, 'utf8');
-
-//                         // Merge rels files - preserve slideLayout from original
-//                         finalRelsContent = await mergeRelsFiles(originalRelsContent, convertedRelsContent, relsFile);
-
-//                     } catch {
-//                         console.log(`   ℹ️ Creating new rels file: ${relsFile}`);
-//                     }
-
-//                     await fsPromises.writeFile(targetRelsPath, finalRelsContent, 'utf8');
-//                     replacedCount++;
-//                 } catch (error) {
-//                     console.error(`   ❌ Error replacing ${relsFile}: ${error.message}`);
-//                 }
-//             }
-//         }
-
-//         return {
-//             success: true,
-//             message: `Successfully replaced ${replacedCount} slide-related files`,
-//             replacedCount
-//         };
-
-//     } catch (error) {
-//         console.error(`   ❌ Error in replaceSlideXMLInPPTX: ${error.message}`);
-//         throw error;
-//     }
-// }
-
 
 // // Chart Handler Function ..
 
@@ -2635,6 +2590,41 @@ async function replaceSlideXMLInPPTX(fileFolderName, extractedSlidesDir) {
     } catch (error) {
         console.error(`   ❌ Error in replaceSlideXMLInPPTX: ${error.message}`);
         throw error;
+    }
+}
+
+async function replaceChartXMLsInSourceFolder(fileFolderName, slideXmlsDir) {
+    try {
+        const filesDir = path.resolve(__dirname, '../files');
+        const sourceChartsDir = path.join(filesDir, fileFolderName, 'ppt', 'charts');
+        const extractedChartsDir = path.join(slideXmlsDir, 'charts');
+
+        // If no extracted charts dir, nothing to do
+        if (!fs.existsSync(extractedChartsDir)) {
+            return;
+        }
+
+        // Ensure source charts folder exists
+        if (!fs.existsSync(sourceChartsDir)) {
+            return;
+        }
+
+        const chartFiles = await fsPromises.readdir(extractedChartsDir);
+        const chartXmlFiles = chartFiles.filter(f => f.match(/^chart\d+\.xml$/));
+
+        for (const chartFile of chartXmlFiles) {
+            const srcPath = path.join(extractedChartsDir, chartFile);
+            const destPath = path.join(sourceChartsDir, chartFile);
+
+            // Only overwrite if the destination (original) chart file exists
+            if (fs.existsSync(destPath)) {
+                const content = await fsPromises.readFile(srcPath, 'utf8');
+                await fsPromises.writeFile(destPath, content, 'utf8');
+
+            }
+        }
+    } catch (err) {
+        console.error('   ⚠️ replaceChartXMLsInSourceFolder error:', err.message);
     }
 }
 

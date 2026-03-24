@@ -1,8 +1,189 @@
+function postProcessChartXML(chartXML, chartType, chartData) {
+    if (chartType !== 'line') {
+        return chartXML; // Only fix line charts
+    }
+
+    try {
+        // Fix 1: Add c:grouping element if missing
+
+        // Fix 1: Add c:grouping element if missing
+        if (!chartXML.includes('<c:grouping')) {
+            // Insert c:grouping right after <c:lineChart> opening tag
+            chartXML = chartXML.replace(
+                /(<c:lineChart[^>]*>)\s*/,
+                '$1<c:grouping val="standard"/>'
+            );
+        }        // Fix 2: Remove third axis ID from c:lineChart if present
+        // Line charts should only have 2 axis IDs
+        const axIdMatches = chartXML.match(/<c:axId val="[^"]+"\s*\/>/g) || [];
+        if (axIdMatches.length > 2) {
+            // Find the c:lineChart section
+            const lineChartMatch = chartXML.match(/<c:lineChart>([\s\S]*?)<\/c:lineChart>/);
+            if (lineChartMatch) {
+                let lineChartContent = lineChartMatch[1];
+                const axIds = lineChartContent.match(/<c:axId val="[^"]+"\s*\/>/g) || [];
+
+                if (axIds.length > 2) {
+                    // Remove the third axis ID
+                    const thirdAxisId = axIds[2];
+                    lineChartContent = lineChartContent.replace(thirdAxisId, '');
+                    chartXML = chartXML.replace(lineChartMatch[0], `<c:lineChart>${lineChartContent}</c:lineChart>`);
+                }
+            }
+        }
+
+        // Fix 3: Ensure only 2 axes are defined (catAx and valAx)
+        // Remove any extra axis definitions
+        const catAxCount = (chartXML.match(/<c:catAx>/g) || []).length;
+        const valAxCount = (chartXML.match(/<c:valAx>/g) || []).length;
+
+        if (valAxCount > 1) {
+            // Remove duplicate valAx - keep only the first one
+            const valAxMatches = chartXML.match(/<c:valAx>[\s\S]*?<\/c:valAx>/g);
+            if (valAxMatches && valAxMatches.length > 1) {
+                // Remove the second valAx
+                chartXML = chartXML.replace(valAxMatches[1], '');
+            }
+        }
+
+        // Fix 4: Inject per-point marker customizations (c:dPt elements)
+        if (chartData && chartData.series) {
+            chartData.series.forEach((series, seriesIdx) => {
+                if (series.markers && Array.isArray(series.markers)) {
+                    // Find the c:ser element for this series
+                    // AFTER:
+                    const serPattern = new RegExp(`<c:ser>\\s*<c:idx val="${seriesIdx}"[\\s\\S]*?<\\/c:ser>`, 'g');
+
+                    chartXML = chartXML.replace(serPattern, (serMatch) => {
+                        // Build c:dPt elements for non-default markers
+                        let dPtElements = '';
+
+                        series.markers.forEach((marker, pointIdx) => {
+                            if (marker.symbol !== 'circle' || marker.size !== 5) {
+                                dPtElements += `<c:dPt><c:idx val="${pointIdx}"/><c:marker><c:symbol val="${marker.symbol}"/><c:size val="${marker.size}"/></c:marker></c:dPt>`;
+                            }
+                        });
+
+                        if (dPtElements) {
+                            // Insert c:dPt elements immediately after c:marker
+                            serMatch = serMatch.replace(
+                                /(<\/c:marker>)([\s\S]*?)(<c:cat>)/,
+                                `$1${dPtElements}$2$3`
+                            );
+                        }
+
+                        return serMatch;
+                    });
+                }
+            });
+        }
+
+        // Add this new section to postProcessChartXML function, AFTER the existing Fix 4
+
+        // Fix 5: Inject marker COLORS and SYMBOLS into series-level c:marker and c:dPt elements
+        if (chartData && chartData.series) {
+            chartData.series.forEach((series, seriesIdx) => {
+                const markerColor = (series.markerColor || series.lineColor).replace('#', '').toUpperCase();
+                const lineColor = (series.lineColor || '#4472C4').replace('#', '').toUpperCase();
+
+                // Find this series in the XML
+                const serPattern = new RegExp(
+                    `<c:ser>\\s*<c:idx val="${seriesIdx}"[\\s\\S]*?<\\/c:ser>`,
+                    'g'
+                );
+
+                chartXML = chartXML.replace(serPattern, (serMatch) => {
+                    // Step 1: Inject marker color/symbol into SERIES-LEVEL c:marker
+                    serMatch = serMatch.replace(
+                        /(<c:marker>)([\s\S]*?)(<\/c:marker>)/,
+                        (markerMatch, openTag, markerContent, closeTag) => {
+                            // Check if spPr already exists in marker
+                            if (!markerContent.includes('<c:spPr>')) {
+                                // Add complete spPr with fill and border
+                                const spPrXML = `<c:spPr><a:solidFill><a:srgbClr val="${markerColor}"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="${lineColor}"/></a:solidFill></a:ln><a:effectLst/></c:spPr>`;
+                                return `${openTag}${markerContent}${spPrXML}${closeTag}`;
+                            }
+                            return markerMatch;
+                        }
+                    );
+
+                    // Step 2: Inject marker color into ALL c:dPt elements
+                    const dPtPattern = /<c:dPt>(<c:idx val="\d+"\/><c:marker>.*?<\/c:marker>)<\/c:dPt>/g;
+
+                    serMatch = serMatch.replace(dPtPattern, (dPtMatch, innerContent) => {
+                        // Check if spPr already exists in this dPt
+                        if (!dPtMatch.includes('<c:spPr>')) {
+                            // Add spPr with marker fill color and line border
+                            return `<c:dPt>${innerContent}<c:spPr><a:solidFill><a:srgbClr val="${markerColor}"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="${lineColor}"/></a:solidFill></a:ln><a:effectLst/></c:spPr></c:dPt>`;
+                        }
+                        return dPtMatch;
+                    });
+
+                    return serMatch;
+                });
+            });
+        }
+
+
+        return chartXML;
+    } catch (error) {
+        console.error('Error post-processing chart XML:', error);
+        return chartXML; // Return original if processing fails
+    }
+}
+
 /**
  * addChartToSlide.js
  * Converts HTML charts to PPTX charts using pptxgenjs
- * Node.js/JSDOM compatible version - CORRECTED
+ * Node.js/JSDOM compatible version - FIXED FOR BOTH BAR AND LINE CHARTS
  */
+
+// ✅ FIXED: Chart-type-specific options
+function createChartOptions(chartData, position, styling) {
+    const baseOptions = {
+        x: position.x,
+        y: position.y,
+        w: position.w,
+        h: position.h,
+        showTitle: !!chartData.title,
+        title: chartData.title || '',
+        showLegend: true,
+        legendPos: 'r',
+        showValue: false,
+    };
+
+    // ✅ Apply chart-type-specific options
+    if (chartData.type === 'line') {
+        // Line chart specific options
+        return {
+            ...baseOptions,
+            catAxisOptions: {
+                showTitle: false,
+                showGridlines: true,
+                gridlineColor: '888888',
+                gridlineSize: 1,
+            },
+            valAxisOptions: {
+                showTitle: false,
+                showGridlines: true,
+                gridlineColor: '888888',
+                gridlineSize: 1,
+            }
+        };
+    } else if (chartData.type === 'bar' || chartData.type === 'column') {
+        // Bar/Column chart specific options
+        return {
+            ...baseOptions,
+            barDir: 'col',
+            barGrouping: 'clustered',
+            barGapWidthPct: 150,
+            barOverlapPct: -25,
+        };
+    } else {
+        // Default options for other chart types
+        return baseOptions;
+    }
+}
 
 function addChartToSlide(pptx, pptSlide, element, slideContext) {
     try {
@@ -11,126 +192,173 @@ function addChartToSlide(pptx, pptSlide, element, slideContext) {
             return false;
         }
 
-        // Extract chart data from HTML
-        const chartData = extractChartDataFromHTML(element);
-        if (!chartData || !chartData.isValid) {
-            console.log("   ❌ Failed to extract valid chart data");
-            return false;
+        // Extract chart type
+        const chartType = element.getAttribute('data-chart-type') || 'bar';
+
+        // Extract chart data based on type
+        let chartData;
+        if (chartType === 'line') {
+            chartData = extractLineChartData(element);
+        } else if (chartType === 'bar' || chartType === 'column') {
+            chartData = extractBarChartData(element);
+        } else if (chartType === 'pie' || chartType === 'doughnut') {
+            chartData = extractPieChartData(element);
+        } else {
+            chartData = extractBarChartData(element); // Default fallback
         }
 
-        // Extract positioning and styling
+        // Add type to chartData for options generation
+        chartData.type = chartType;
+
+        // Extract position and styling
         const position = extractChartPosition(element, slideContext);
         const styling = extractChartStyling(element, chartData);
 
-        // Convert to pptxgenjs format
-        const pptxChartData = convertToPptxFormat(chartData);
+        // Convert data to pptxgenjs format
+        const pptxData = convertToPptxFormat(chartData);
 
-        // Create chart options
-        const chartOptions = createChartOptions(chartData, position, styling);
+        // Create chart options (now with type-specific logic)
+        const options = createChartOptions(chartData, position, styling);
 
-        // Add chart to slide
-        pptSlide.addChart(getChartType(chartData.type), pptxChartData, chartOptions);
+        // Apply series-specific colors if available
+        if (styling.colors && styling.colors.length > 0) {
+            options.chartColors = styling.colors.map(c => normalizeColor(c, true));
+        } else if (chartData.series && chartData.series.length > 0) {
+            options.chartColors = chartData.series.map(s =>
+                normalizeColor(s.lineColor || s.color || '#4472C4', true)
+            );
+        }
 
-        console.log("   ✅ Chart added to slide successfully");
+        // Validate options before adding chart
+        const validatedOptions = validateChartOptions(options);
+
+        // Add the chart to the slide
+        const pptxChartType = getChartType(chartType);
+
+        // ⭐ CRITICAL: Different handling for line vs bar charts
+        if (chartType === 'line') {
+            // Store the original chartData for post-processing
+            pptSlide.addChart(pptxChartType, pptxData, validatedOptions);
+
+            // ⭐ Attach metadata for post-processing
+            if (!pptx._chartMarkerData) {
+                pptx._chartMarkerData = [];
+            }
+
+            // Extract marker data from chartData
+            const markerData = {
+                chartIndex: (pptx._chartCounter || 0),
+                series: chartData.series.map(s => ({
+                    lineColor: s.lineColor || '#4472C4',
+                    markerColor: s.markerColor || s.lineColor || '#4472C4',
+                    markers: s.markers || []
+                }))
+            };
+
+            pptx._chartMarkerData.push(markerData);
+            pptx._chartCounter = (pptx._chartCounter || 0) + 1;
+
+        } else {
+            // Bar charts and others - standard pptxgenjs behavior
+            pptSlide.addChart(pptxChartType, pptxData, validatedOptions);
+        }
+
         return true;
 
     } catch (error) {
-        console.error("   ❌ Error adding chart to slide:", error);
+        console.error('Error adding chart to slide:', error);
         return false;
     }
 }
 
 function isChartElement(element) {
-    if (!element || !element.classList) return false;
-
-    // Check for chart container classes
-    const chartClasses = [
-        'chart-container',
-        'chart',
-        'graph',
-        'plot',
-        'visualization'
-    ];
-
-    if (chartClasses.some(cls => element.classList.contains(cls))) {
-        return true;
+    try {
+        if (!element || !element.classList) return false;
+        return element.classList.contains('chart-container') ||
+            element.classList.contains('bar-chart') ||
+            element.classList.contains('line-chart') ||
+            element.classList.contains('pie-chart');
+    } catch (error) {
+        return false;
     }
-
-    // Check for chart-specific elements inside
-    const hasChartElements =
-        element.querySelector('.bar') ||
-        element.querySelector('.chart-area') ||
-        element.querySelector('[data-value]') ||
-        element.querySelector('.category-label') ||
-        element.querySelector('canvas[data-chart]') ||
-        element.querySelector('svg[data-chart]');
-
-    return !!hasChartElements;
 }
 
-function extractChartDataFromHTML(chartContainer) {
+// ✅ FIXED: Extract line chart data from HTML with proper data-* attributes
+function extractLineChartData(chartContainer) {
+    const categories = [];
+    const series = [];
+
     try {
-        // Extract title
-        const titleElement = chartContainer.querySelector('.chart-title, .title');
-        const title = titleElement ? titleElement.textContent.trim() : 'Chart';
+        // Extract category labels
+        const categoryElements = chartContainer.querySelectorAll('.category-label');
+        categoryElements.forEach(el => {
+            const text = el.textContent?.trim() || '';
+            if (text) categories.push(text);
+        });
 
-        // Detect chart type
-        let chartType = detectChartType(chartContainer);
+        // Extract series
+        const seriesElements = chartContainer.querySelectorAll('.line-series');
+        seriesElements.forEach((seriesEl, idx) => {
+            const name = seriesEl.getAttribute('data-series-name') || `Series ${idx + 1}`;
+            const lineColor = seriesEl.getAttribute('data-series-line-color') || '#4472C4';
+            const markerColor = seriesEl.getAttribute('data-series-marker-color') || lineColor;
 
-        // Extract data based on chart type
-        let extractedData;
-        switch (chartType) {
-            case 'bar':
-            case 'column':
-                extractedData = extractBarChartData(chartContainer);
-                break;
-            case 'line':
-                extractedData = extractLineChartData(chartContainer);
-                break;
-            case 'pie':
-                extractedData = extractPieChartData(chartContainer);
-                break;
-            default:
-                extractedData = extractBarChartData(chartContainer); // Fallback to bar chart
+            const values = [];
+            const markers = [];
+
+            // Extract points
+            const pointElements = seriesEl.querySelectorAll('.line-point');
+            pointElements.forEach(pointEl => {
+                const value = parseFloat(pointEl.getAttribute('data-value')) || 0;
+                const markerSymbol = pointEl.getAttribute('data-marker-symbol') || 'circle';
+                const markerSize = parseInt(pointEl.getAttribute('data-marker-size')) || 5;
+
+                values.push(value);
+                markers.push({ symbol: markerSymbol, size: markerSize });
+            });
+
+            series.push({
+                name,
+                lineColor,
+                markerColor,
+                values,
+                markers
+            });
+        });
+
+        // Fallback if no data found
+        if (categories.length === 0) {
+            categories.push('Category 1', 'Category 2', 'Category 3');
+        }
+        if (series.length === 0) {
+            series.push({
+                name: 'Series 1',
+                lineColor: '#4472C4',
+                markerColor: '#4472C4',
+                values: [1, 2, 3],
+                markers: [
+                    { symbol: 'circle', size: 5 },
+                    { symbol: 'circle', size: 5 },
+                    { symbol: 'circle', size: 5 }
+                ]
+            });
         }
 
-        return {
-            ...extractedData,
-            title,
-            type: chartType,
-            isValid: extractedData && extractedData.categories && extractedData.series && extractedData.series.length > 0
-        };
+        return { categories, series };
 
     } catch (error) {
-        console.error("Error extracting chart data:", error);
-        return { isValid: false };
+        console.error("Error in extractLineChartData:", error);
+        return {
+            categories: ['Category 1'],
+            series: [{
+                name: 'Series 1',
+                lineColor: '#4472C4',
+                markerColor: '#4472C4',
+                values: [1],
+                markers: [{ symbol: 'circle', size: 5 }]
+            }]
+        };
     }
-}
-
-function detectChartType(chartContainer) {
-    // Check for specific chart type indicators
-    if (chartContainer.querySelector('.bar, [data-series]')) {
-        return 'bar';
-    }
-    if (chartContainer.querySelector('.line, .path, polyline')) {
-        return 'line';
-    }
-    if (chartContainer.querySelector('.pie, .slice, .arc')) {
-        return 'pie';
-    }
-    if (chartContainer.querySelector('.scatter, .dot')) {
-        return 'scatter';
-    }
-
-    // Check CSS classes for type hints
-    const classList = chartContainer.className.toLowerCase();
-    if (classList.includes('bar') || classList.includes('column')) return 'bar';
-    if (classList.includes('line')) return 'line';
-    if (classList.includes('pie') || classList.includes('donut')) return 'pie';
-    if (classList.includes('scatter')) return 'scatter';
-
-    // FIXED: Default to bar chart instead of null
-    return 'bar';
 }
 
 function extractBarChartData(chartContainer) {
@@ -259,11 +487,6 @@ function extractColorFromElement(element) {
         console.error("Error extracting color:", error);
         return '#4472C4';
     }
-}
-
-function extractLineChartData(chartContainer) {
-    // Fallback to bar chart extraction for now
-    return extractBarChartData(chartContainer);
 }
 
 function extractPieChartData(chartContainer) {
@@ -398,24 +621,14 @@ function extractChartStyling(chartContainer, chartData) {
         fontFamily: 'Arial',
         showLegend: true,
         showGridLines: true,
-        showDataLabels: false
+        seriesOptions: null
     };
 
     try {
-        // Extract colors from series
-        styling.colors = chartData.series.map(s => s.color || '#4472C4');
-
-        // Extract font styling from title element
-        const titleElement = chartContainer.querySelector('.chart-title');
-        if (titleElement) {
-            const styleAttr = titleElement.getAttribute('style');
-            if (styleAttr) {
-                const fontSizeMatch = styleAttr.match(/font-size:\s*([^;]+)/i);
-                const fontFamilyMatch = styleAttr.match(/font-family:\s*([^;]+)/i);
-
-                if (fontSizeMatch) styling.fontSize = parseInt(fontSizeMatch[1]) || 12;
-                if (fontFamilyMatch) styling.fontFamily = fontFamilyMatch[1].trim().replace(/['"]/g, '') || 'Arial';
-            }
+        // Extract colors from series data
+        if (chartData && chartData.series) {
+            styling.colors = chartData.series.map(s => s.color || s.lineColor || '#4472C4');
+            styling.seriesOptions = chartData.series;
         }
 
         // Check for grid lines - if axis labels exist, assume grid lines are wanted
@@ -428,65 +641,6 @@ function extractChartStyling(chartContainer, chartData) {
 
     return styling;
 }
-
-// FIXED: Correct PPTX data format matching pptxgenjs expectations
-// function convertToPptxFormat(chartData) {
-//     try {
-//         // Validate input data
-//         if (!chartData || !chartData.categories || !chartData.series) {
-//             console.error('Invalid chart data structure');
-//             return getDefaultChartData();
-//         }
-
-//         if (chartData.categories.length === 0 || chartData.series.length === 0) {
-//             console.error('Chart data is empty');
-//             return getDefaultChartData();
-//         }
-
-//         // Validate that all series have the same number of values as categories
-//         const expectedLength = chartData.categories.length;
-//         const validSeries = chartData.series.filter(series => {
-//             if (!series || !Array.isArray(series.values)) {
-//                 console.warn(`Invalid series found:`, series);
-//                 return false;
-//             }
-//             if (series.values.length !== expectedLength) {
-//                 console.warn(`Series ${series.name} has ${series.values.length} values but expected ${expectedLength}`);
-//             }
-//             return true;
-//         });
-
-//         if (validSeries.length === 0) {
-//             console.error('No valid series found');
-//             return getDefaultChartData();
-//         }
-
-//         // CORRECTED: Use the exact format pptxgenjs expects
-//         // Each series object needs: name, labels (array of arrays), values (array)
-//         const pptxData = validSeries.map((series, idx) => {
-//             const cleanValues = series.values.map(v => (typeof v === 'number' && !isNaN(v)) ? v : 0);
-//             const base = { name: series.name || 'Unnamed Series', values: cleanValues };
-//             if (idx === 0) {
-//                 // Only first series carries labels
-//                 base.labels = [chartData.categories.slice()];
-//             }
-//             return base;
-//         });
-
-
-//         // Validate final data structure
-//         if (!validatePptxData(pptxData)) {
-//             console.error('Generated invalid PPTX data, using fallback');
-//             return getDefaultChartData();
-//         }
-
-//         return pptxData;
-
-//     } catch (error) {
-//         console.error('Error converting to PPTX format:', error);
-//         return getDefaultChartData();
-//     }
-// }
 
 function convertToPptxFormat(chartData) {
     try {
@@ -545,29 +699,6 @@ function validatePptxData(data) {
     }
     return true;
 }
-
-// FIXED: Simplified chart options to avoid compatibility issues
-function createChartOptions(chartData, position, styling) {
-    const options = {
-        x: position.x, y: position.y, w: position.w, h: position.h,
-        title: chartData.title || 'Chart', showTitle: true,
-        showLegend: chartData.series && chartData.series.length > 1,
-        barDir: 'col',
-        barGrouping: 'clustered',
-        barGapWidthPct: 150,
-        barOverlapPct: -25,
-        // leave gridlines/legend fonts as you had
-    };
-
-    // Colors (hex without '#')
-    if (styling.colors?.length) {
-        const hexes = styling.colors.map(c => normalizeColor(c, true)).filter(h => typeof h === 'string' && h.length === 6);
-        if (hexes.length) options.chartColors = hexes;
-    }
-
-    return validateChartOptions(options);
-}
-
 
 // Helper function to validate chart options
 function validateChartOptions(options) {
@@ -665,9 +796,96 @@ async function processChartElement(pptx, pptSlide, chartElement, slideContext) {
     return await addChartToSlide(pptx, pptSlide, chartElement, slideContext);
 }
 
+async function postProcessPPTXForMarkers(pptxPath, markerDataArray) {
+    try {
+        const JSZip = require('jszip');
+        const fs = require('fs').promises;
+
+        const pptxBuffer = await fs.readFile(pptxPath);
+        const zip = await JSZip.loadAsync(pptxBuffer);
+
+        for (const markerData of markerDataArray) {
+            const chartPath = `ppt/charts/chart${markerData.chartIndex + 1}.xml`;
+            const chartFile = zip.file(chartPath);
+
+            if (!chartFile) continue;
+
+            let chartXML = await chartFile.async('string');
+
+            // Process each series
+            markerData.series.forEach((series, seriesIdx) => {
+                const markerColor = (series.markerColor || series.lineColor || '#4472C4').replace('#', '').toUpperCase();
+                const lineColor = (series.lineColor || '#4472C4').replace('#', '').toUpperCase();
+
+                // Find this series in the XML
+                const serPattern = new RegExp(
+                    `(<c:ser>\\s*<c:idx val="${seriesIdx}"\\s*\\/>[\\s\\S]*?)(<c:marker>)([\\s\\S]*?)(<\\/c:marker>)`,
+                    'g'
+                );
+
+                chartXML = chartXML.replace(serPattern, (match, beforeMarker, openMarker, markerContent, closeMarker) => {
+                    // Check if spPr exists in the marker
+                    if (markerContent.includes('<c:spPr>')) {
+                        // Replace existing spPr colors
+                        markerContent = markerContent.replace(
+                            /<a:srgbClr val="[A-F0-9]{6}"\s*\/>/g,
+                            (colorMatch, offset) => {
+                                // First occurrence is fill, second is border
+                                if (markerContent.indexOf(colorMatch) === offset) {
+                                    return `<a:srgbClr val="${markerColor}"/>`;
+                                }
+                                return `<a:srgbClr val="${lineColor}"/>`;
+                            }
+                        );
+                    } else {
+                        // Add spPr with colors
+                        markerContent += `<c:spPr><a:solidFill><a:srgbClr val="${markerColor}"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="${lineColor}"/></a:solidFill></a:ln><a:effectLst/></c:spPr>`;
+                    }
+
+                    return beforeMarker + openMarker + markerContent + closeMarker;
+                });
+
+                // Also inject c:dPt elements for per-point markers if needed
+                if (series.markers && series.markers.length > 0) {
+                    const serPattern2 = new RegExp(`<c:ser>\\s*<c:idx val="${seriesIdx}"[\\s\\S]*?<\\/c:ser>`, 'g');
+                    chartXML = chartXML.replace(serPattern2, (serMatch) => {
+                        let dPtElements = '';
+
+                        series.markers.forEach((marker, pointIdx) => {
+                            if (marker.symbol !== 'circle' || marker.size !== 5) {
+                                dPtElements += `<c:dPt><c:idx val="${pointIdx}"/><c:marker><c:symbol val="${marker.symbol}"/><c:size val="${marker.size}"/><c:spPr><a:solidFill><a:srgbClr val="${markerColor}"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="${lineColor}"/></a:solidFill></a:ln><a:effectLst/></c:spPr></c:marker></c:dPt>`;
+                            }
+                        });
+
+                        if (dPtElements) {
+                            serMatch = serMatch.replace(
+                                /(<\/c:marker>)([\s\S]*?)(<c:cat>)/,
+                                `$1${dPtElements}$2$3`
+                            );
+                        }
+
+                        return serMatch;
+                    });
+                }
+            });
+
+            zip.file(chartPath, chartXML);
+        }
+
+        const modifiedBuffer = await zip.generateAsync({ type: 'nodebuffer' });
+        await fs.writeFile(pptxPath, modifiedBuffer);
+
+
+
+    } catch (error) {
+        console.error('   ⚠️ Error post-processing chart markers:', error);
+    }
+}
 // Export functions for use in the main conversion system
 module.exports = {
     addChartToSlide,
     processChartElement,
-    isChartElement
+    isChartElement,
+    postProcessChartXML,
+    postProcessPPTXForMarkers
 };

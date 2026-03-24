@@ -22,6 +22,7 @@ const freeFormShape = require("./free_Form_Shape/generateFreeForm.js");
 const { getShapeShadowStyle } = require("./shapes_Properties/getShapeShadowStyle.js");
 const { getShapeGlowStyle } = require("./shapes_Properties/getShapeGlow.js");
 
+const LineChartHandler = require("./charts/LineChartHandler.js");
 // Define the directory to save images using config
 const imageSavePath = path.resolve(__dirname, "../uploads/");
 
@@ -164,6 +165,10 @@ class ShapeHandler {
                     );
                 } else if (chartType === "area") {
                     chartHandler = new TwoDAreaChartHandler(
+                        graphicsNode, chartXML, chartRelsXML, chartColorsXML, chartStyleXML, this.themeXML
+                    );
+                } else if (chartType === "line") {  // ADD THIS
+                    chartHandler = new LineChartHandler(
                         graphicsNode, chartXML, chartRelsXML, chartColorsXML, chartStyleXML, this.themeXML
                     );
                 }
@@ -463,7 +468,9 @@ class ShapeHandler {
                 }
             }
 
-            // isTextBox and transformString already declared/hoisted before the switch above.
+
+            const isTextBox = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvSpPr"]?.[0]?.["$"]?.txBox === "1";
+            // const transformString = this.getTransformString(position, isTextBox);
             // Rakesh Notes::: here from the below style i have remove the transformString variable as it is adding double rotation to bot the inner and outer (transform: ${transformString};)
 
             // NEW: Calculate if we need dynamic height
@@ -480,6 +487,11 @@ class ShapeHandler {
                     txtPhSz="${txtPhSz}"
                     data-name="${shapeName}"
                     data-vert="${shapeInfo.verticalText || ''}"
+                    data-margin-left="${marginLeft}"
+                    data-margin-top="${marginTop}"
+                    data-margin-right="${marginRight}"
+                    data-margin-bottom="${marginBottom}"
+                    data-shape-shadow="${shapeInfo.shapeLevelShadow ? shapeInfo.shapeLevelShadow.replace(/"/g, "'") : ''}"
                     id="${uniqueId}"
                     style="
                         color:${shapeInfo.fontColor};
@@ -507,11 +519,6 @@ class ShapeHandler {
         }
 
         if (custGeom) {
-            // ✅ FIX: flipH / flipV must NOT be on the outer div for custGeom shapes.
-            // PowerPoint's flip mirrors the path within the shape bounding box.
-            // CSS scaleX(-1)/scaleY(-1) on the container would double-flip the already
-            // correct SVG. Instead, pass the flags into the SVG generator so it can
-            // apply an SVG-level transform on the <path> element itself.
             const flipH = position.flipH || false;
             const flipV = position.flipV || false;
 
@@ -546,7 +553,7 @@ class ShapeHandler {
                         z-index:${zIndex};
                         width:${position.width}px; 
                         height:${position.height}px; 
-                        transform: rotate(${position.rotation}deg);
+                        transform: rotate(${position.rotation}deg) ${position.flipH ? 'scaleX(-1)' : ''} ${position.flipV ? 'scaleY(-1)' : ''}; 
                         ${opacity}; 
                         overflow:visible;">${textContent}${svgMarkup}
                     </div>`;
@@ -664,7 +671,8 @@ class ShapeHandler {
 
             case "rect":
                 caseName = "rect";
-                clipPath = "polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%);" // Normal Rectangle
+                // clipPath = "polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%);" // Normal Rectangle
+                clipPath = ""
                 break;
             case "ellipse":
                 caseName = "ellipse";
@@ -702,7 +710,9 @@ class ShapeHandler {
                     opacity: fillProps.opacity || 1
                 });
 
-                // isTextBox and transformString already declared/hoisted before the switch.
+                // Calculate transform string (same as other shapes)
+                // const isTextBox = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvSpPr"]?.[0]?.["$"]?.txBox === "1";
+                // const transformString = this.getTransformString(position, isTextBox);
 
                 return `<div class="shape" id="${caseName}" 
                             data-original-color="${originalThemeColor}" 
@@ -1815,7 +1825,8 @@ class ShapeHandler {
                 break;
         }
 
-        // isTextBox and transformString already declared before the switch (hoisted above).
+        // const isTextBox = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvSpPr"]?.[0]?.["$"]?.txBox === "1";
+        // const transformString = this.getTransformString(position, isTextBox);
 
         const borderShape = shapeBorderStyle.border;
 

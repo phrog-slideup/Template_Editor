@@ -8,6 +8,20 @@ const EMU_PER_PX = 12700; // 914400 EMU/in ÷ 72 pt/in = 12700 EMU per CSS px
 
 function getShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
     try {
+
+        const isTextBox = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvSpPr"]?.[0]?.["$"]?.txBox === "1";
+        const phType = shapeNode?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0]?.["$"]?.type;
+        const TEXT_PH_TYPES = ["ctrTitle", "title", "subTitle", "body", "obj"];
+        const isTextPlaceholder = TEXT_PH_TYPES.includes(phType);
+        const hasExplicitShapeFill =
+            shapeNode?.["p:spPr"]?.[0]?.["a:solidFill"] ||
+            shapeNode?.["p:spPr"]?.[0]?.["a:gradFill"] ||
+            shapeNode?.["p:spPr"]?.[0]?.["a:pattFill"];
+
+        if ((isTextBox || isTextPlaceholder) && !hasExplicitShapeFill) {
+            return ""; // text-shadow is handled by textHandler.js on the spans
+        }
+
         // ── Resolve effectLst (multi-level fallback) ──────────────────────────
         const effectLst =
             shapeNode?.["p:spPr"]?.[0]?.["a:effectLst"]?.[0]                                // Level A

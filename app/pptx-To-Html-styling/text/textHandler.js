@@ -56,6 +56,16 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
     const shapeName = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvPr"]?.[0]?.["$"]?.name;
     const fontColor = pptTextAllInfo.getFontColor(shapeNode, themeXML, clrMap);
     const outlineStyle = extractTextOutline(shapeNode, themeXML, clrMap, masterXML);
+    const shapeLevelShadow = (() => {
+        try {
+            const outerShdw = shapeNode?.["p:spPr"]?.[0]?.["a:effectLst"]?.[0]?.["a:outerShdw"]?.[0];
+            if (!outerShdw) return null;
+            // Re-use extractTextShadow logic with a dummy runRPrNode that has the shadow
+            // by passing a fake node that has the shape shadow as run shadow
+            const fakeRPr = { "a:effectLst": [{ "a:outerShdw": [outerShdw] }] };
+            return extractTextShadow(fakeRPr, null, themeXML, masterXML);
+        } catch (e) { return null; }
+    })();
 
     let marginTop = 0;
     let marginRight = 0;
@@ -74,10 +84,30 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
         // First try to get margins from the shape itself
         if (bodyPr && bodyPr["$"]) {
             const attributes = bodyPr["$"];
-            marginTop = Math.round(emuToPixels(attributes.tIns));
-            marginRight = Math.round(emuToPixels(attributes.rIns));
-            marginBottom = Math.round(emuToPixels(attributes.bIns));
-            marginLeft = Math.round(emuToPixels(attributes.lIns));
+
+            // OOXML defaults when attribute is ABSENT (not when explicitly "0")
+            // lIns/rIns default = 91440 EMU (~7px), tIns/bIns default = 45720 EMU (~4px)
+            marginTop = attributes.tIns !== undefined
+                ? Math.round(emuToPixels(attributes.tIns))
+                : Math.round(45720 / getEMUDivisor());
+
+            marginRight = attributes.rIns !== undefined
+                ? Math.round(emuToPixels(attributes.rIns))
+                : Math.round(91440 / getEMUDivisor());
+
+            marginBottom = attributes.bIns !== undefined
+                ? Math.round(emuToPixels(attributes.bIns))
+                : Math.round(45720 / getEMUDivisor());
+
+            marginLeft = attributes.lIns !== undefined
+                ? Math.round(emuToPixels(attributes.lIns))
+                : Math.round(91440 / getEMUDivisor());
+        } else if (bodyPr) {
+            // bodyPr exists but has no attributes — use OOXML defaults
+            marginTop = 0;
+            marginRight = 0;
+            marginBottom = 0;
+            marginLeft = 0;
         }
 
         // ✅ NEW: If margins are still 0, inherit from layout/master
@@ -419,11 +449,14 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
 
                     const marLAttr = pPrNode?.["$"]?.marL;
 
-                    if (marLAttr) {
-                        // Direct margin from slide
-                        paragraphMarginLeft = Math.round(parseInt(marLAttr) / getEMUDivisor());
-                    } else {
-                        // 🔧 FIX: Inherit from master/layout if missing (returns all 4 margins)
+                    if (marLAttr !== undefined && marLAttr !== null) {
+                        const parsedMarL = Math.round(parseInt(marLAttr) / getEMUDivisor());
+                        // marL in PPT is measured from text box edge (includes lIns)
+                        // Container already applies lIns as padding, so subtract it
+                        const additionalIndent = parsedMarL - marginLeft;
+                        paragraphMarginLeft = additionalIndent > 0 ? additionalIndent : 0;
+                    }
+                    else {
                         const inheritedMargins = getInheritedParagraphMargin(
                             shapeNode,
                             layoutXML,
@@ -433,10 +466,16 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
                         );
 
                         if (inheritedMargins !== null) {
-                            paragraphMarginLeft = inheritedMargins.left || 0;
-                            paragraphMarginTop = inheritedMargins.top || 0;
-                            paragraphMarginRight = inheritedMargins.right || 0;
-                            paragraphMarginBottom = inheritedMargins.bottom || 0;
+                            // Same logic: subtract bodyPr margins to avoid double-counting
+                            const rawLeft = inheritedMargins.left || 0;
+                            const rawTop = inheritedMargins.top || 0;
+                            const rawRight = inheritedMargins.right || 0;
+                            const rawBottom = inheritedMargins.bottom || 0;
+
+                            paragraphMarginLeft = (rawLeft - marginLeft) > 0 ? (rawLeft - marginLeft) : 0;
+                            paragraphMarginTop = (rawTop - marginTop) > 0 ? (rawTop - marginTop) : 0;
+                            paragraphMarginRight = (rawRight - marginRight) > 0 ? (rawRight - marginRight) : 0;
+                            paragraphMarginBottom = (rawBottom - marginBottom) > 0 ? (rawBottom - marginBottom) : 0;
                         }
                     }
 
@@ -560,8 +599,12 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
         htmlContent: htmlContent.join("\n"),
         estimatedContentHeight: Math.max(estimatedHeight, position?.height || 0),  // NEW LINE
         // ADD THIS:// 03/09/2026rakesh
-        verticalText: isWordArtVert ? 'wordArtVert' : isVert270 ? 'vert270' : isVert ? 'vert' : isVertEaVert ? 'eaVert' : null
-
+        verticalText: isWordArtVert ? 'wordArtVert' : isVert270 ? 'vert270' : isVert ? 'vert' : isVertEaVert ? 'eaVert' : null,
+        // ADD THESE:
+        marginLeft: marginLeft,
+        marginRight: marginRight,
+        marginTop: marginTop,
+        marginBottom: marginBottom,
     };
 
 }
@@ -885,8 +928,9 @@ function extractBulletInformation(pPrNode, shapeNode) {
 
 //MODIFIED: Update createSpanFromRun to accept outlineStyle parameter
 function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight, themeXML, shapeFontSize, masterXML, textKind, shapeNode, clrMap) {
+
     if (!runRPrNode) {
-        return `<span class="span-txt" style="white-space: pre-wrap; font-size: ${shapeFontSize}px; line-height: ${lineHeight};">${textValue}</span>`;
+        return `<span class="span-txt" style="${(textValue.trim().length <= 4 && shapeFontSize >= 20) ? 'white-space: nowrap' : 'white-space: pre-wrap'}; font-size: ${shapeFontSize}px; line-height: ${lineHeight};">${textValue}</span>`;
     }
 
     let originalTxtColor, originalLumOff, originalLumMod;
@@ -1155,7 +1199,8 @@ function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight,
 
     // NEW: Apply outline style if present
     // const outlineCSS = outlineStyle && outlineStyle.css ? outlineStyle.css : '';
-
+    const textShadow = extractTextShadow(runRPrNode, shapeNode, themeXML, masterXML);
+    const textShadowCSS = textShadow ? `text-shadow: ${textShadow}` : '';
     const styles = [
         fontWeight !== 'normal' ? `font-weight: ${fontWeight}` : '',
         fontStyle !== 'normal' ? `font-style: ${fontStyle}` : '',
@@ -1170,16 +1215,20 @@ function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight,
         positionStyle.trim() ? positionStyle.trim() : '',
         textDecorations.length > 0 ? `text-decoration: ${textDecorations.join(" ")}` : '',
         //outlineCSS, // ✅ Add outline CSS
-        'white-space: pre-wrap',
+        textShadowCSS,
+        (textValue.trim().length <= 4 && adjustedFontSize >= 20) ? 'white-space: nowrap' : 'white-space: pre-wrap',
         `line-height: ${lineHeight}`
     ].filter(s => s).join('; ');
 
+    const shadowAttr = textShadow ? `data-shadow="${textShadow.replace(/"/g, "'")}"` : '';
     const isWhitespaceOnly = textValue.trim() === "" || textValue === " ";
 
     if (isWhitespaceOnly) {
-
-        const spaceStyles = styles.replace('white-space: pre-wrap', 'white-space: normal');
-        return `<span class="span-txt" ${gradientDataAttrs} originalEA="${originalEA}" originCS="${originCS}" originSYM="${originSYM}" latinFont="${latinFont}" originalTxtColor="${originalTxtColor}" originalLumMod="${originalLumMod}" originalLumOff="${originalLumOff}" alpha="${opacity}" cap="${capValue || ''}" style="${spaceStyles};">&nbsp; </span>`;
+        // const spaceStyles = styles.replace('white-space: pre-wrap', 'white-space: normal');
+        const spaceStyles = styles
+            .replace('white-space: nowrap', 'white-space: normal')
+            .replace('white-space: pre-wrap', 'white-space: normal');
+        return `<span class="span-txt" ${gradientDataAttrs} ${shadowAttr} originalEA="${originalEA}" originCS="${originCS}" originSYM="${originSYM}" latinFont="${latinFont}" originalTxtColor="${originalTxtColor}" originalLumMod="${originalLumMod}" originalLumOff="${originalLumOff}" alpha="${opacity}" cap="${capValue || ''}" style="${spaceStyles};">&nbsp; </span>`;
     }
 
     // ✅ CRITICAL FIX: Preserve leading spaces (convert to &nbsp;)
@@ -1187,7 +1236,8 @@ function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight,
         .replace(/^ +/, match => '&nbsp;'.repeat(match.length))
         .replace(/ +$/, match => '&nbsp;'.repeat(match.length));
 
-    return `<span class="span-txt" ${gradientDataAttrs} originalEA="${originalEA}" originCS="${originCS}" originSYM="${originSYM}" latinFont="${latinFont}" originalTxtColor="${originalTxtColor}" originalLumMod="${originalLumMod}" originalLumOff="${originalLumOff}" alpha="${opacity}" cap="${capValue || ''}" style="${styles};">${preservedText}</span>`;
+    return `<span class="span-txt" ${gradientDataAttrs} ${shadowAttr} originalEA="${originalEA}" originCS="${originCS}" originSYM="${originSYM}" latinFont="${latinFont}" originalTxtColor="${originalTxtColor}" originalLumMod="${originalLumMod}" originalLumOff="${originalLumOff}" alpha="${opacity}" cap="${capValue || ''}" style="${styles};">${preservedText}</span>`;
+
 
 }
 /**
@@ -2275,6 +2325,94 @@ function getInheritedParagraphMargin(shapeNode, layoutXML, masterXML, placeholde
     }
 
     return null;
+}
+
+/**
+ * Extracts text shadow from run properties (a:rPr) or shape-level spPr.
+ * Returns a CSS text-shadow string, or null if no shadow found.
+ */
+function extractTextShadow(runRPrNode, shapeNode, themeXML, masterXML) {
+    try {
+        // 1. Check run-level effect: a:rPr > a:effectLst > a:outerShdw
+        let outerShdw = runRPrNode?.["a:effectLst"]?.[0]?.["a:outerShdw"]?.[0];
+
+        // 2. Fallback: shape-level effect: p:spPr > a:effectLst > a:outerShdw
+        if (!outerShdw) {
+            outerShdw = shapeNode?.["p:spPr"]?.[0]?.["a:effectLst"]?.[0]?.["a:outerShdw"]?.[0];
+        }
+
+        if (!outerShdw) return null;
+
+        const attrs = outerShdw["$"] || {};
+
+        // Distance in EMUs → pixels (12700 EMU per px)
+        const distEMU = parseInt(attrs.dist || "0", 10);
+        const dist = distEMU / 12700;
+
+        // Direction angle in 60000ths of a degree
+        const dirDeg = attrs.dir ? (parseInt(attrs.dir, 10) / 60000) : 0;
+        const dirRad = (dirDeg * Math.PI) / 180;
+
+        // X and Y offset from polar coords
+        const offsetX = parseFloat((dist * Math.cos(dirRad)).toFixed(2));
+        const offsetY = parseFloat((dist * Math.sin(dirRad)).toFixed(2));
+
+        // Blur radius (sx/sy are scale, blurRad is the blur)
+        const blurEMU = parseInt(attrs.blurRad || "0", 10);
+        const blur = parseFloat((blurEMU / 12700).toFixed(2));
+
+        // Shadow color
+        let shadowColor = "rgba(0,0,0,0.5)"; // default
+
+        const solidFill = outerShdw?.["a:srgbClr"] ? outerShdw : null;
+        const srgbClr = outerShdw?.["a:srgbClr"]?.[0];
+        const schemeClr = outerShdw?.["a:schemeClr"]?.[0];
+        const prstClr = outerShdw?.["a:prstClr"]?.[0];
+
+        let hexColor = null;
+        let alpha = 1;
+
+        if (srgbClr) {
+            hexColor = `#${srgbClr["$"]?.val || "000000"}`;
+            const alphaNode = srgbClr["a:alpha"]?.[0]?.["$"]?.val;
+            if (alphaNode) alpha = parseInt(alphaNode, 10) / 100000;
+        } else if (schemeClr) {
+            const schemeVal = schemeClr["$"]?.val;
+            if (schemeVal) {
+                hexColor = colorHelper.resolveThemeColorHelper(schemeVal, themeXML, masterXML);
+            }
+            const alphaNode = schemeClr["a:alpha"]?.[0]?.["$"]?.val;
+            if (alphaNode) alpha = parseInt(alphaNode, 10) / 100000;
+
+            // Apply lumMod/lumOff if present
+            const lumMod = schemeClr["a:lumMod"]?.[0]?.["$"]?.val;
+            const lumOff = schemeClr["a:lumOff"]?.[0]?.["$"]?.val;
+            if (hexColor && lumMod && lumOff) {
+                hexColor = pptBackgroundColors.applyLuminanceModifier(hexColor, lumMod, lumOff);
+            } else if (hexColor && lumMod) {
+                hexColor = colorHelper.applyLumMod(hexColor, lumMod);
+            }
+        } else if (prstClr) {
+            const prstVal = prstClr["$"]?.val;
+            hexColor = colorHelper.resolvePresetColor ? colorHelper.resolvePresetColor(prstVal) : "#000000";
+            const alphaNode = prstClr["a:alpha"]?.[0]?.["$"]?.val;
+            if (alphaNode) alpha = parseInt(alphaNode, 10) / 100000;
+        }
+
+        if (hexColor) {
+            // Convert hex to rgba
+            const r = parseInt(hexColor.slice(1, 3), 16);
+            const g = parseInt(hexColor.slice(3, 5), 16);
+            const b = parseInt(hexColor.slice(5, 7), 16);
+            shadowColor = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`;
+        }
+
+        return `${offsetX}px ${offsetY}px ${blur}px ${shadowColor}`;
+
+    } catch (err) {
+        console.warn("extractTextShadow error:", err);
+        return null;
+    }
 }
 
 function getDashStyle(prstDash) {

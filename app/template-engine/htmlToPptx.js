@@ -308,49 +308,121 @@ function convertToInches(value, unit) {
 }
 
 async function setBackground(pptx, slideElement, pptSlide, slideContext = null) {
+    // ─── Step 1: Read the solid base color from .sli-background-base ────────────
+    // This div is emitted by pptxToHtml when the slide has a semi-transparent
+    // background image (watermark). It holds the master's solid base color
+    // (e.g. white) that shows through the transparent image.
+    const baseElement = slideElement.querySelector('.sli-background-base');
+    let baseColor = 'FFFFFF'; // safe default
+
+    if (baseElement) {
+        const baseStyle = baseElement.style;
+        // .sli-background-base always uses 'background' (not background-image)
+        const baseBg = baseStyle.background || baseStyle.backgroundColor || '';
+        const parsed = extractColor(baseBg);
+        if (parsed) baseColor = parsed;
+    }
+
+    // ─── Step 2: Read .sli-background ───────────────────────────────────────────
     const backgroundElement = slideElement.querySelector('.sli-background');
 
     if (!backgroundElement) {
-        pptSlide.background = { fill: "" };
+        // No background element at all — use the base color or plain white
+        pptSlide.background = { fill: baseColor };
         return;
     }
 
     const backgroundStyle = backgroundElement.style;
-    let backgroundColor = null;
-    let backgroundOpacity = 1;
 
+    // Read opacity — applies to both solid colors AND background images
+    let backgroundOpacity = 1;
     if (backgroundStyle.opacity) {
         backgroundOpacity = parseFloat(backgroundStyle.opacity);
     }
 
-    const background = backgroundStyle.background || backgroundStyle.backgroundColor;
+    // ─── BUG FIX: read background-image in addition to background ───────────────
+    // The HTML emitted by pptxToHtml uses `background-image: url(...)` for slide
+    // background images, NOT the shorthand `background` property. The old code only
+    // checked `backgroundStyle.background`, so the url() branch was never reached
+    // and the image was silently dropped.
+    const backgroundImage = backgroundStyle.backgroundImage || '';
+    const background = backgroundStyle.background || backgroundStyle.backgroundColor || '';
 
-    if (background) {
-        if (background.includes('gradient')) {
-            const gradientColor = parseGradientBackground(background);
-            if (gradientColor) {
-                pptSlide.background = gradientColor;
-                return;
-            }
+    // ─── Step 3: Handle gradient ─────────────────────────────────────────────────
+    if (background.includes('gradient')) {
+        const gradientColor = parseGradientBackground(background);
+        if (gradientColor) {
+            pptSlide.background = gradientColor;
+            return;
         }
+    }
 
-        if (background.includes('url(')) {
-            const imageUrl = extractBackgroundImageUrl(background);
-            if (imageUrl) {
-                const resolvedImagePath = resolveImagePath(imageUrl);
-                if (resolvedImagePath) {
+    // ─── Step 4: Handle background image (url) ───────────────────────────────────
+    // Check BOTH `background` and `background-image` for url() references.
+    const imageSource = background.includes('url(') ? background : backgroundImage;
+    if (imageSource.includes('url(')) {
+        const imageUrl = extractBackgroundImageUrl(imageSource);
+        if (imageUrl) {
+            const resolvedImagePath = resolveImagePath(imageUrl);
+            if (resolvedImagePath) {
+
+                // ─── KEY FIX: Handle semi-transparent background images ──────────────
+                // pptxgenjs slide.background = { path, sizing } has NO transparency
+                // support — opacity is simply ignored. When the background image is
+                // a watermark (opacity < 1, e.g. 0.03), the correct PPTX approach is:
+                //   1. Set the slide background to the solid base color (white).
+                //   2. Add the image as a full-slide addImage() call WITH transparency,
+                //      which maps to <a:alphaModFix> in the PPTX XML.
+                // This faithfully reproduces the "semi-transparent image over white base"
+                // layering that PowerPoint uses.
+                if (backgroundOpacity < 1) {
+                    // Step 4a: solid base color as the slide background
+                    pptSlide.background = { fill: baseColor };
+
+                    // Step 4b: transparent image overlay as a full-slide addImage
+                    const slideDims = slideContext?.dimensions;
+                    const slideW = slideDims?.width || 10;
+                    const slideH = slideDims?.height || 7.5;
+                    const transparencyPct = Math.round((1 - backgroundOpacity) * 100);
+
+                    try {
+                        const fs = require('fs');
+                        if (fs.existsSync(resolvedImagePath)) {
+                            const imageBuffer = fs.readFileSync(resolvedImagePath);
+                            const ext = require('path').extname(resolvedImagePath).toLowerCase();
+                            const mimeMap = { '.jpg': 'jpeg', '.jpeg': 'jpeg', '.png': 'png', '.gif': 'gif', '.webp': 'webp' };
+                            const mime = mimeMap[ext] || 'jpeg';
+                            const base64Data = `data:image/${mime};base64,${imageBuffer.toString('base64')}`;
+
+                            pptSlide.addImage({
+                                data: base64Data,
+                                x: 0,
+                                y: 0,
+                                w: slideW,
+                                h: slideH,
+                                sizing: { type: 'cover' },
+                                transparency: transparencyPct,
+                                objectName: 'slide-background-watermark'
+                            });
+                        }
+                    } catch (imgErr) {
+                        console.warn('   ⚠️ Could not add semi-transparent background image:', imgErr.message);
+                        // Slide still has the correct base color — non-fatal
+                    }
+                } else {
+                    // Fully opaque background image — use native slide background
                     pptSlide.background = {
                         path: resolvedImagePath,
                         sizing: 'cover'
                     };
-                    return;
                 }
+                return;
             }
         }
-
-        backgroundColor = extractColor(background);
     }
 
+    // ─── Step 5: Handle solid color ──────────────────────────────────────────────
+    const backgroundColor = extractColor(background);
     if (backgroundColor) {
         const backgroundConfig = { fill: backgroundColor };
         if (backgroundOpacity < 1) {
@@ -358,7 +430,8 @@ async function setBackground(pptx, slideElement, pptSlide, slideContext = null) 
         }
         pptSlide.background = backgroundConfig;
     } else {
-        pptSlide.background = { fill: "FFFFFF" };
+        // Fall through to base color (from .sli-background-base) or white
+        pptSlide.background = { fill: baseColor };
     }
 }
 
@@ -432,6 +505,7 @@ async function processSlideContent(pptx, pptSlide, slideElement, slideContext) {
             .filter(child =>
                 child !== contentContainer &&
                 !child.classList.contains('sli-background') &&
+                !child.classList.contains('sli-background-base') &&  // FIX: exclude base layer too
                 !isMasterElement(child)
             )
             .map(el => ({
@@ -452,6 +526,7 @@ async function processSlideContent(pptx, pptSlide, slideElement, slideContext) {
         allElements = slideChildren
             .filter(child =>
                 !child.classList.contains('sli-background') &&
+                !child.classList.contains('sli-background-base') &&  // FIX: exclude base layer too
                 !isMasterElement(child)
             )
             .map(el => ({

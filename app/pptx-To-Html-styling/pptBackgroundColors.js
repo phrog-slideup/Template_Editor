@@ -1,4 +1,3 @@
-
 const path = require("path");
 const fs = require("fs");
 const colorHelper = require("../api/helper/colorHelper.js");
@@ -23,7 +22,7 @@ async function getBackgroundColor(slideXML, masterXML, themeXML, relationshipsXM
     const pattFill = bgPr?.["a:pattFill"]?.[0];
     if (pattFill) {
       const patternCSS = getPatternFillCSS(pattFill, themeXML);
-      
+
       if (patternCSS) return { backgroundCSS: patternCSS };
     }
 
@@ -622,7 +621,10 @@ function resolveThemeColor(colorKey, themeXML) {
 
 
 function getColorMappingFromMaster(masterXML) {
-  const clrMapNode = masterXML?.["p:sldMaster"]?.[0]?.["p:clrMap"]?.[0]?.["$"];
+  // FIX: xml2js parses the root element (<p:sldMaster>) as a plain object, NOT an array.
+  // The previous code had an extra [0] after "p:sldMaster" which always returned undefined,
+  // causing clrMapNode to always be null and the function to always return hardcoded defaults.
+  const clrMapNode = masterXML?.["p:sldMaster"]?.["p:clrMap"]?.[0]?.["$"];
 
   if (!clrMapNode) {
     return {

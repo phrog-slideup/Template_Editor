@@ -1,8 +1,5 @@
-
 function resolveThemeColorHelper(colorKey, themeXML, masterXML) {
     const clrMapNode = masterXML?.["p:sldMaster"]?.["p:clrMap"]?.[0];
-
-    // Log clrMapNode to check its structure
 
     let mappedColorKey = colorKey;
 
@@ -18,8 +15,12 @@ function resolveThemeColorHelper(colorKey, themeXML, masterXML) {
     // Get the color node using the mapped color key
     const colorNode = getThemeColor(themeXML, mappedColorKey);
     if (!colorNode) {
-        console.log("No colorNode found for the mapped color key:", mappedColorKey);
-        return "";
+        // FIX: return null instead of empty string so callers can distinguish
+        // "color not found" from "color is empty" and apply their own fallbacks.
+        // An empty string was previously passed to applyLuminanceModifier where it
+        // caused silent failures and missing backgrounds.
+        console.warn("No colorNode found for the mapped color key:", mappedColorKey);
+        return null;
     }
 
     return colorNode;
@@ -30,23 +31,94 @@ function getThemeColor(themeXML, schemeKey) {
 
     const colorNode = themeXML?.["a:theme"]?.["a:themeElements"]?.[0]?.["a:clrScheme"]?.[0]?.[`a:${schemeKey}`]?.[0];
 
+    if (!colorNode) return null; // FIX: explicit null instead of implicit undefined
+
     if (colorNode?.["a:sysClr"]) {
         return `#${colorNode["a:sysClr"][0]["$"].lastClr}`;
     } else if (colorNode?.["a:srgbClr"]) {
-
         return `#${colorNode["a:srgbClr"][0]["$"].val}`;
     }
+
+    return null; // FIX: explicit null fallback for unrecognized color node types
 }
 
-function applyLumMod(hexColor, lumPercent) {
+/**
+ * Apply OOXML luminance modifiers to a hex color using the HSL colorspace.
+ *
+ * WHY HSL and not RGB:
+ *   The OOXML spec defines lumMod/lumOff as operations on the HSL Luminance channel.
+ *   Applying them directly to RGB channels produces wrong results for any non-gray
+ *   color, and completely fails for black (#000000) because multiplying 0 by any
+ *   lumMod always stays 0 — lumOff is then never applied, so black never brightens.
+ *
+ *   Example (tx1=dk1=#000000, lumMod=65000, lumOff=35000 → should be #595959):
+ *     Old RGB approach:  0 * 0.65 = 0  →  #000000  ✗ (wrong — black stays black)
+ *     New HSL approach:  L=0 → L*0.65+0.35=0.35 → #595959  ✓
+ *
+ * @param {string} hexColor   - Input color as #RRGGBB
+ * @param {number} lumMod     - Luminance multiplier in OOXML units (100% = 100000)
+ * @param {number} [lumOff=0] - Luminance additive offset in OOXML units (100% = 100000)
+ * @returns {string} Modified color as #RRGGBB
+ */
+function applyLumMod(hexColor, lumMod, lumOff = 0) {
+    if (!hexColor || !hexColor.startsWith('#') || hexColor.length < 7) return hexColor;
+
     let [r, g, b] = hexColor.substring(1).match(/.{2}/g).map(hex => parseInt(hex, 16));
-    r = Math.round(r * lumPercent / 100000);
-    g = Math.round(g * lumPercent / 100000);
-    b = Math.round(b * lumPercent / 100000);
-    r = Math.min(255, r);
-    g = Math.min(255, g);
-    b = Math.min(255, b);
-    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+
+    // Convert RGB → HSL
+    const [h, s, l] = _rgbToHsl(r, g, b);
+
+    // Apply OOXML luminance modifiers on the L channel
+    let newL = l * (lumMod / 100000) + (lumOff / 100000);
+    newL = Math.max(0, Math.min(1, newL)); // Clamp to [0, 1]
+
+    // Convert HSL → RGB
+    const [nr, ng, nb] = _hslToRgb(h, s, newL);
+
+    return `#${Math.round(nr).toString(16).padStart(2, '0')}${Math.round(ng).toString(16).padStart(2, '0')}${Math.round(nb).toString(16).padStart(2, '0')}`;
+}
+
+/** @private RGB [0-255] → HSL [0-1] */
+function _rgbToHsl(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h, s, l = (max + min) / 2;
+    if (max === min) {
+        h = s = 0;
+    } else {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+            case g: h = (b - r) / d + 2; break;
+            case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+    }
+    return [h, s, l];
+}
+
+/** @private HSL [0-1] → RGB [0-255] */
+function _hslToRgb(h, s, l) {
+    if (s === 0) {
+        const v = Math.round(l * 255);
+        return [v, v, v];
+    }
+    const hue2rgb = (p, q, t) => {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1 / 6) return p + (q - p) * 6 * t;
+        if (t < 1 / 2) return q;
+        if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+        return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    return [
+        hue2rgb(p, q, h + 1 / 3) * 255,
+        hue2rgb(p, q, h) * 255,
+        hue2rgb(p, q, h - 1 / 3) * 255,
+    ];
 }
 
 // Function to resolve preset colors like "white", "black", "red", etc.

@@ -194,6 +194,36 @@ class pptxToHtml {
     return normalizePath(target);
   }
 
+  async resolveMasterBgBase(masterXML, themeXML) {
+    try {
+      const masterBg = masterXML?.["p:sldMaster"]?.["p:cSld"]?.[0]?.["p:bg"]?.[0];
+      if (!masterBg) return '#FFFFFF';
+
+      // Most common case: <p:bgRef> — references a fill style + scheme color
+      const bgRef = masterBg?.["p:bgRef"]?.[0];
+      if (bgRef) {
+        const schemeClrVal = bgRef?.["a:schemeClr"]?.[0]?.["$"]?.val;
+        if (schemeClrVal) {
+          // resolveThemeColor handles lt1/dk1 direct names
+          const resolved = pptBackgroundColors.resolveThemeColor(schemeClrVal, themeXML);
+          if (resolved && !resolved.includes('undefined')) return resolved;
+        }
+      }
+
+      // Explicit <p:bgPr> with solidFill
+      const bgPr = masterBg?.["p:bgPr"]?.[0];
+      const solidFill = bgPr?.["a:solidFill"]?.[0];
+      if (solidFill?.["a:srgbClr"]) {
+        return `#${solidFill["a:srgbClr"][0]["$"]?.val}`;
+      }
+
+      return '#FFFFFF'; // Safe fallback — white is correct for most light themes
+    } catch (e) {
+      console.warn('resolveMasterBgBase error:', e.message);
+      return '#FFFFFF';
+    }
+  }
+
   async convertSlideToHTML(slidePath, flag) {
     try {
 
@@ -348,7 +378,19 @@ class pptxToHtml {
           const opacityStyle = `opacity: ${opacityValue.toFixed(2)};`;
 
           if (slideBg.startsWith('url(')) {
-            // For background images - use consistent approach for all flags
+            if (transparency > 0) {
+              const baseColor = await this.resolveMasterBgBase(masterXML, themeXML);
+              htmlContent += `<div class="sli-background-base" 
+                    style="position:absolute; 
+                    top:0; 
+                    left:0; 
+                    width:${slideSize.width}px; 
+                    height:${slideSize.height}px;
+                    background: ${baseColor}; 
+                    z-index:1;"></div>`;
+            }
+
+            // Render the (possibly transparent) background image on top of the base
             htmlContent += `<div class="sli-background" 
                   style="position:absolute; 
                   top:0; 
@@ -360,7 +402,7 @@ class pptxToHtml {
                   background-position: center center;
                   background-repeat: no-repeat;
                   ${opacityStyle}
-                  z-index:1;"></div>`;
+                  z-index:${transparency > 0 ? 2 : 1};"></div>`;
           } else {
             // For solid colors or gradients, apply styling based on flag
             if (parseInt(flag) === 1) {

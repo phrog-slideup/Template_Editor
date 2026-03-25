@@ -514,12 +514,29 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
                     const isWordArtVert = bodyPrAttrs?.vert === "wordArtVert";
                     const wordArtVertStyle = isWordArtVert ? ' writing-mode: vertical-rl; text-orientation: upright;' : '';
 
-                    const paragraphStyle = `text-align: ${textAlign}; line-height: ${lineHeight}; margin-left: ${effectiveMarginLeft}px; margin-right: ${effectiveMarginRight}px; margin-top: ${effectiveMarginTop}px; margin-bottom: ${effectiveMarginBottom}px;${textIndent !== 0 ? ` text-indent: ${textIndent}px;` : ''}${wordArtVertStyle}`;
+                    const paragraphStyle = `text-align: ${textAlign}; 
+                                            line-height: ${lineHeight}; 
+                                            margin-left: ${effectiveMarginLeft}px; 
+                                            margin-right: ${effectiveMarginRight}px; 
+                                            margin-top: ${effectiveMarginTop}px; 
+                                            margin-bottom: ${effectiveMarginBottom}px;
+                                            ${textIndent !== 0 ? ` text-indent: ${textIndent}px;` : ''}${wordArtVertStyle}`;
 
                     htmlContent.push(`<p style="${paragraphStyle}">${runTexts.join('')}</p>`);
                 }
                 else if (runTexts.length > 0 || lineBreaks.length > 0) {
-                    htmlContent.push(`<p style="text-align: ${textAlign}; line-height: ${lineHeight}; margin-left: ${marginLeft}px; margin-right: ${marginRight}px; margin-top: ${marginTop + spaceBefore}px; margin-bottom: ${marginBottom + spaceAfter}px; min-height: ${lineHeight};${wordArtVertStyle}"><br/></p>`);
+
+                    const bodyPrAttrs = shapeNode?.["p:txBody"]?.[0]?.["a:bodyPr"]?.[0]?.["$"];
+                    const isWordArtVert = bodyPrAttrs?.vert === "wordArtVert";
+                    const wordArtVertStyle = isWordArtVert ? ' writing-mode: vertical-rl; text-orientation: upright;' : '';
+                    
+                    htmlContent.push(`<p style="text-align: ${textAlign}; 
+                                                line-height: ${lineHeight}; 
+                                                margin-left: ${marginLeft}px; 
+                                                margin-right: ${marginRight}px; 
+                                                margin-top: ${marginTop + spaceBefore}px; 
+                                                margin-bottom: ${marginBottom + spaceAfter}px; 
+                                                min-height: ${lineHeight};${wordArtVertStyle}"><br/></p>`);
                 }
             }
         });

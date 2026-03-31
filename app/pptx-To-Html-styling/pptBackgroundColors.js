@@ -135,6 +135,9 @@ async function getBackgroundColor(slideXML, masterXML, themeXML, relationshipsXM
 
     // Check for gradient fill
     const gradFill = bgPr?.["a:gradFill"]?.[0];
+
+    console.log(">>>>>>>>>>> - GRADIENT FILL CHECK - gradFill :- ", gradFill);
+
     if (gradFill) {
       const gradientCSS = getGradientFillColor(gradFill, themeXML, masterXML);
 
@@ -392,33 +395,31 @@ function hslToRgb(h, s, l) {
 }
 
 function getGradientFillColor(gradFill, themeXML, masterXML) {
+  if (!gradFill) return null;
 
   const stops = gradFill?.["a:gsLst"]?.[0]?.["a:gs"] || [];
-
-  // Extract gradient angle or default to 90 degrees (vertical gradient)
-  const angle = parseInt(gradFill?.["a:lin"]?.[0]?.["$"]?.ang, 10) || 5400000; // Default angle: 90 degrees
-
-  const gradientAngle = angle / 60000; // Convert angle to degrees
-
+  if (stops.length === 0) return null;
 
   let gradientStops = [];
 
+  // Build color stops (handles schemeClr + lumMod/lumOff, srgbClr, alpha, etc.)
   stops.forEach((stop) => {
-    const position = parseInt(stop["$"]?.pos, 10) / 1000; // Convert position to percentage
-    const schemeClr = stop?.["a:schemeClr"]?.[0]?.["$"]?.val;
-    const srgbClr = stop?.["a:srgbClr"]?.[0]?.["$"]?.val;
+    const position = parseInt(stop["$"]?.pos || "0", 10) / 1000; // 0 to 100
+
+    const schemeClrNode = stop?.["a:schemeClr"]?.[0];
+    const srgbClrVal = stop?.["a:srgbClr"]?.[0]?.["$"]?.val;
 
     let color = null;
 
-    if (srgbClr) {
-      color = `#${srgbClr}`; // Direct RGB color
-    } else if (schemeClr) {
+    if (srgbClrVal) {
+      color = `#${srgbClrVal}`;
+    } else if (schemeClrNode) {
+      const schemeVal = schemeClrNode["$"]?.val;
+      let baseColor = colorHelper.resolveThemeColorHelper(schemeVal, themeXML, masterXML);
 
-      let baseColor = colorHelper.resolveThemeColorHelper(schemeClr, themeXML, masterXML);
+      const lumMod = schemeClrNode?.["a:lumMod"]?.[0]?.["$"]?.val;
+      const lumOff = schemeClrNode?.["a:lumOff"]?.[0]?.["$"]?.val;
 
-      // Apply luminance modifiers
-      const lumMod = stop?.["a:schemeClr"]?.[0]?.["a:lumMod"]?.[0]?.["$"]?.val;
-      const lumOff = stop?.["a:schemeClr"]?.[0]?.["a:lumOff"]?.[0]?.["$"]?.val;
       color = applyLuminanceModifier(baseColor, lumMod, lumOff);
     }
 
@@ -427,14 +428,54 @@ function getGradientFillColor(gradFill, themeXML, masterXML) {
     }
   });
 
-  // Build CSS gradient
-  if (gradientStops.length > 0) {
-    const stopsCSS = gradientStops.join(", ");
+  if (gradientStops.length === 0) return null;
 
-    return `linear-gradient(${gradientAngle}deg, ${stopsCSS})`;
+  const stopsCSS = gradientStops.join(", ");
+
+  // === Determine gradient type ===
+  const linElem = gradFill?.["a:lin"]?.[0];
+  const pathElem = gradFill?.["a:path"]?.[0];
+  const pathType = pathElem?.["$"]?.path; // "circle", "rect", "shape", etc.
+
+  let gradientCSS = null;
+
+  if (linElem) {
+    // === Linear Gradient (your original case) ===
+    let angle = parseInt(linElem["$"]?.ang, 10) || 5400000; // 90 degrees default in EMUs
+    const gradientAngleDeg = angle / 60000;
+
+    gradientCSS = `linear-gradient(${gradientAngleDeg}deg, ${stopsCSS})`;
+
+  } else if (pathElem) {
+    // === Path Gradient (radial, rectangular, shape-based) ===
+    switch (pathType) {
+      case "circle":
+        // Most common for slide backgrounds with soft center shading
+        gradientCSS = `radial-gradient(circle at center, ${stopsCSS})`;
+        break;
+
+      case "rect":
+        // Rectangular gradient (less common for backgrounds)
+        gradientCSS = `radial-gradient(ellipse at center, ${stopsCSS})`; // approximate
+        break;
+
+      case "shape":
+        // Follows the shape outline — hard to perfectly replicate in CSS for backgrounds
+        // Fallback to centered radial (good enough for most slide backgrounds)
+        gradientCSS = `radial-gradient(circle at center, ${stopsCSS})`;
+        console.warn("Gradient path='shape' detected – using radial fallback for slide background");
+        break;
+
+      default:
+        // Unknown path type → safe fallback
+        gradientCSS = `radial-gradient(circle at center, ${stopsCSS})`;
+    }
+  } else {
+    // No <a:lin> and no <a:path> → fallback to vertical linear (common default)
+    gradientCSS = `linear-gradient(90deg, ${stopsCSS})`;
   }
 
-  return null; // Default if no gradient stops
+  return gradientCSS;
 }
 
 

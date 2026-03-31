@@ -1033,14 +1033,14 @@ body {
 
 /* Text boxes should float on top of other elements like Canva */
 .text-shape {
-    z-index: 1000 !important;
+    /* z-index: 1000 !important; */
     overflow: visible !important;
     position: absolute;
 }
 
 /* Ensure text boxes stay on top when selected */
 .text-shape.selected {
-    z-index: 1001 !important;
+    /* z-index: 1001 !important; */
 }
 
 /* Text box content should allow natural growth */

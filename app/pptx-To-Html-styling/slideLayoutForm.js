@@ -56,12 +56,17 @@ class slideLayoutForm {
         this.nodes = await this.getNodesInCorrectOrder(slideLayoutXML, 0);
 
         // Extract all shape types from slide layout
-        const shapeNodes = slideLayoutXML?.["p:sldLayout"]?.["p:cSld"]?.[0]?.["p:spTree"]?.[0]?.["p:sp"] || [];
+        const allShapeNodes = slideLayoutXML?.["p:sldLayout"]?.["p:cSld"]?.[0]?.["p:spTree"]?.[0]?.["p:sp"] || [];
         const lineShapeNodes = slideLayoutXML?.["p:sldLayout"]?.["p:cSld"]?.[0]?.["p:spTree"]?.[0]?.["p:cxnSp"] || [];
         const tableNodes = slideLayoutXML?.["p:sldLayout"]?.["p:cSld"]?.[0]?.["p:spTree"]?.[0]?.["p:graphicFrame"] || [];
 
+        const shapeNodes = allShapeNodes.filter(shape => {
+            const ph = shape?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0];
+            return ph?.["$"]?.hasCustomPrompt !== "1";
+        });
+
         let htmlContent = "";
-        
+
         // Create a ShapeHandler instance similar to main slide processing
         const shapeHandler = new ShapeHandler(themeXML, clrMap, this.nodes, extractor, this.layoutPath, this.layoutRelationship, 0);
 

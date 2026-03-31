@@ -48,31 +48,15 @@ class masterHtml {
 
                         const phElement = shape?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0];
 
-                        // Check if it's a placeholder (has p:ph element)
-                        const isPlaceholder = Boolean(phElement);
-
-                        // // Check placeholder attributes safely
-                        // let hasType = Boolean(phElement?.["$"]?.type);
-                        // let hasIdx = Boolean(phElement?.["$"]?.idx);
+                        // Skip layout/master placeholder shapes that carry authoring-time
+                        // prompt text (e.g. "Chapter Title Goes Here", "Subtitle Goes Here",
+                        // "Drag Image Here"). hasCustomPrompt="1" is PowerPoint's own flag
+                        // meaning: show this text only in edit mode, never in output.
+                        if (phElement?.["$"]?.hasCustomPrompt === "1") {
+                            continue;
+                        }
 
                         let shapeHtml = await shapeHandler.convertShapeToHTML(shape, this.themeXml, this.masterXml);
-
-                        if (isPlaceholder) {
-                            // IMPROVED: Better regex to handle existing styles
-                            if (shapeHtml.includes('style="')) {
-                                // Add to existing style
-                                shapeHtml = shapeHtml.replace(
-                                    /(<div[^>]*style="[^"]*)/g,
-                                    '$1; visibility: hidden'
-                                );
-                            } else {
-                                // Add new style attribute
-                                shapeHtml = shapeHtml.replace(
-                                    /<div([^>]*)>/,
-                                    '<div$1 style="visibility: hidden;">'
-                                );
-                            }
-                        }
 
                         if (shapeHtml && shapeHtml.trim() !== '') {
                             // Add master class to the shape HTML

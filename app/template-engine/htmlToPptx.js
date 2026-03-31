@@ -22,6 +22,7 @@ const gradientColor = require("../api/helper/parseGradient.js");
 const clrHelper = require("../api/helper/colorHelper.js");
 const addChartToSlide = require("../html-To-Pptx-Styling/addChartToSlide");
 const sharedCache = require('../api/shared/cache.js');
+const { extractHyperlinkFromSpan } = require("./hyperlink-pptx-patch");
 
 async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName) {
     try {
@@ -349,8 +350,9 @@ async function setBackground(pptx, slideElement, pptSlide, slideContext = null) 
     const background = backgroundStyle.background || backgroundStyle.backgroundColor || '';
 
     // ─── Step 3: Handle gradient ─────────────────────────────────────────────────
-    if (background.includes('gradient')) {
-        const gradientColor = parseGradientBackground(background);
+    const bgToCheck = (backgroundStyle.background || '') + ' ' + (backgroundStyle.backgroundImage || '');
+    if (bgToCheck.includes('gradient')) {
+        const gradientColor = parseGradientBackground(bgToCheck);
         if (gradientColor) {
             pptSlide.background = gradientColor;
             return;
@@ -437,26 +439,46 @@ async function setBackground(pptx, slideElement, pptSlide, slideContext = null) 
 
 function parseGradientBackground(gradientString) {
     try {
-        const colorMatches = gradientString.match(/#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}|rgba?\([^)]+\)|[a-zA-Z]+/g);
+        if (!gradientString || !gradientString.includes('gradient')) return null;
 
-        if (colorMatches && colorMatches.length >= 2) {
-            const color1 = extractColor(colorMatches[0]);
-            const color2 = extractColor(colorMatches[1]);
+        // Support both linear and radial gradients (your exact HTML case)
+        const gradientMatch = gradientString.match(/(linear|radial)-gradient\(([^)]+)\)/i);
+        if (!gradientMatch) return null;
 
-            if (color1 && color2) {
-                return {
-                    fill: {
-                        type: 'gradient',
-                        colors: [
-                            { color: color1, position: 0 },
-                            { color: color2, position: 100 }
-                        ],
-                        angle: 90
-                    }
-                };
+        const type = gradientMatch[1].toLowerCase();
+        const content = gradientMatch[2].trim();
+
+        // Extract color stops
+        const colorMatches = content.match(/#[0-9a-fA-F]{6,8}|#[0-9a-fA-F]{3}|rgba?\([^)]+\)|[a-zA-Z]+/g) || [];
+        const colorStops = [];
+
+        colorMatches.forEach((colorRaw, index) => {
+            const hexColor = extractColor(colorRaw);
+            if (hexColor) {
+                colorStops.push({
+                    color: hexColor,
+                    position: index === 0 ? 0 : 100
+                });
             }
+        });
+
+        if (colorStops.length < 2) return null;
+
+        const gradientConfig = {
+            type: 'gradient',
+            colors: colorStops
+        };
+
+        if (type === 'linear') {
+            // Keep existing linear behaviour
+            const angleMatch = content.match(/(\d+)(deg)?/i);
+            gradientConfig.angle = angleMatch ? parseInt(angleMatch[1], 10) : 90;
+        } else {
+            // Radial gradient (your case) → pptxgenjs best supported way
+            gradientConfig.angle = 0;   // 0 = centered radial for slide background
         }
-        return null;
+
+        return { fill: gradientConfig };
     } catch (error) {
         console.error('   ❌ Error parsing gradient:', error);
         return null;
@@ -1003,6 +1025,20 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                                         ),
                                         fontFace: spanStyle.fontFamily?.replace(/['"]/g, '') || textOptions.fontFace
                                     };
+                                    // ── Hyperlink support ──────────────────────────────────────
+                                    const hlinkData = extractHyperlinkFromSpan(node);
+                                    if (hlinkData) {
+                                        spanOptions.hyperlink = {
+                                            url: hlinkData.url || '#',
+                                            tooltip: hlinkData.tooltip || ''
+                                        };
+                                        if (hlinkData.isSlideJump || hlinkData.action) {
+                                            spanOptions._hlinkAction = hlinkData.action;
+                                            spanOptions._hlinkRId = hlinkData.rId;
+                                            spanOptions._hlinkIsSlideJump = hlinkData.isSlideJump;
+                                        }
+                                    }
+                                    // ── End hyperlink support ──────────────────────────────────
 
                                     // ✅ CRITICAL: Apply paragraph spacing to FIRST span only
                                     if (isFirstRunInParagraph) {
@@ -1088,18 +1124,67 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                         }
                     });
                 } else {
-                    // No paragraphs, just use the text content
-                    const textContent = textElement.textContent.trim();
-                    if (textContent) {
-                        textRuns.push({
-                            text: textContent,
-                            options: {
-                                bold: false,
-                                fontSize: textOptions.fontSize,
-                                color: textOptions.color,
-                                fontFace: textOptions.fontFace
+                    // FALLBACK: No <p> tags found.
+                    const listItems = textElement.querySelectorAll('li');
+                    if (listItems && listItems.length > 0) {
+                        listItems.forEach((li, liIndex) => {
+                            // Collect spans inside this li
+                            const liSpans = li.querySelectorAll('span');
+                            const liText = liSpans.length > 0
+                                ? Array.from(liSpans).map(s => s.textContent || '').join('')
+                                : (li.textContent || '').trim();
+
+                            if (!liText.trim()) return;
+
+                            // Use the first span for formatting if available
+                            const firstSpan = liSpans[0] || null;
+                            const spanStyle = firstSpan ? (firstSpan.style || {}) : {};
+
+                            // Extract line-height from the parent <ul>/<ol> or the span
+                            const ulEl = li.closest('ul, ol');
+                            const ulStyleAttr = ulEl ? (ulEl.getAttribute('style') || '') : '';
+                            const lhMatch = ulStyleAttr.match(/line-height\s*:\s*([0-9.]+)(px|pt)?/i);
+                            let lineSpacingVal = null;
+                            if (lhMatch) {
+                                lineSpacingVal = parseFloat(lhMatch[1]);   // px == pt at 72 DPI
                             }
+
+                            const liOptions = {
+                                bold: spanStyle.fontWeight === 'bold' || parseInt(spanStyle.fontWeight) >= 700,
+                                italic: spanStyle.fontStyle === 'italic',
+                                underline: spanStyle.textDecoration?.includes('underline'),
+                                fontSize: parseFloat(spanStyle.fontSize) || textOptions.fontSize,
+                                color: resolveColor(
+                                    firstSpan?.getAttribute('originaltxtcolor') || '',
+                                    firstSpan?.getAttribute('originallummod'),
+                                    firstSpan?.getAttribute('originallumoff'),
+                                    spanStyle.color || textOptions.color
+                                ),
+                                fontFace: spanStyle.fontFamily?.replace(/['"]/g, '') || textOptions.fontFace,
+                                bullet: true,           // ← key: renders <a:buChar> not <a:buNone>
+                                breakLine: liIndex < listItems.length - 1
+                            };
+
+                            if (lineSpacingVal) {
+                                liOptions.lineSpacing = lineSpacingVal;
+                            }
+
+                            textRuns.push({ text: liText.trim(), options: liOptions });
                         });
+                    } else {
+                        // No lists either — plain text fallback
+                        const textContent = textElement.textContent.trim();
+                        if (textContent) {
+                            textRuns.push({
+                                text: textContent,
+                                options: {
+                                    bold: false,
+                                    fontSize: textOptions.fontSize,
+                                    color: textOptions.color,
+                                    fontFace: textOptions.fontFace
+                                }
+                            });
+                        }
                     }
                 }
             }
@@ -1118,7 +1203,6 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
                 });
             }
 
-            // Extract color and luminosity adjustments from the span
             // Extract color and luminosity adjustments from the span
             const spanElement = textElement?.querySelector('span');
             const rawTxtColor = spanElement?.getAttribute('originaltxtcolor') || '';
@@ -1172,7 +1256,6 @@ async function processPlaceholderElement(pptx, pptSlide, element, slideContext) 
             }
 
             // ✅ CRITICAL FIX: Create margin effect by adjusting position and size
-            // Convert pixels to inches (96 DPI for screen, PowerPoint uses inches)
             const marginLeftInches = textBoxMarginLeft / 72;
             const marginRightInches = textBoxMarginRight / 72;
             const marginTopInches = textBoxMarginTop / 72;
@@ -1543,6 +1626,14 @@ async function cleanSlideXmlForSyncfusion(slideXmlsDir) {
                 slideContent = slideContent.replace(schemeTokenWithChildrenRegex, (match, token, children) => {
                     return `<a:schemeClr val="${token.toLowerCase()}">${children}</a:schemeClr>`;
                 });
+
+                slideContent = slideContent.replace(
+                    /<p:cNvPr([^>]*)\bname="__hidden__([^"]*)"([^>]*?)(\/?>)/g,
+                    (match, before, nameRest, after, closing) => {
+                        const cleanName = nameRest;
+                        return `<p:cNvPr${before} name="${cleanName}"${after} hidden="1"${closing}`;
+                    }
+                );
 
                 // Check if any changes were made
                 if (slideContent !== originalContent) {
@@ -2008,11 +2099,6 @@ async function processShapeElement(pptx, pptSlide, shapeElement, slideContext = 
         return;
     }
 
-    const elementStyle = shapeElement?.getAttribute('style');
-    if (elementStyle && elementStyle.includes('visibility: hidden')) {
-        return;
-    }
-
     // Special check for custom geometry shapes with master classes
     if (shapeElement.id === 'custGeom' || shapeElement.classList.contains('custom-shape')) {
         if (shapeElement.classList.contains('custom-shape-master') ||
@@ -2026,6 +2112,12 @@ async function processShapeElement(pptx, pptSlide, shapeElement, slideContext = 
     // Handle text boxes
     const txBox = shapeElement.querySelector(".sli-txt-box");
     if (txBox && !isMasterElement(txBox) && !isMasterElement(txBox.parentElement)) {
+
+        const shapeHidden = shapeElement.getAttribute('data-hidden');
+        if (shapeHidden) {
+            txBox.setAttribute('data-hidden', shapeHidden);
+        }
+
         if (txBox.classList.contains('placeholder-text')) {
             const placeholderType = determinePlaceholderType(txBox, 'text');
             const position = extractElementPosition(shapeElement, slideContext);

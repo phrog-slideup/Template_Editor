@@ -46,6 +46,7 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
     const position = pptTextAllInfo.getPositionFromShape(shapeNode);
     const rotation = pptTextAllInfo.getRotation(shapeNode);
     const placeholderType = shapeNode?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0]?.["$"]?.type;
+    const placeholderIdx = shapeNode?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0]?.["$"]?.idx;
     // justifyContent (vertical) comes from bodyPr anchor (t/ctr/b)
     justifyContent = getJustifyContentFromAnchor(shapeNode, layoutXML, placeholderType, masterXML);
     // getAlignItem (horizontal) will be derived from textAlign after paragraph processing — see below
@@ -54,6 +55,17 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
     // DEBUG: Add comprehensive font size debugging
     const allFontSizes = pptTextAllInfo.getAllFontSizesInShape(shapeNode);
     const shapeName = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvPr"]?.[0]?.["$"]?.name;
+
+
+    // Extract shape-level hlinkClick — must be declared BEFORE paragraphs.forEach
+    const shapeCNvPr = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvPr"]?.[0];
+    const shapeHlinkNode = shapeCNvPr?.["a:hlinkClick"]?.[0];
+    const shapeHlink = shapeHlinkNode ? {
+        tooltip: shapeHlinkNode["$"]?.tooltip || '',
+        rId: shapeHlinkNode["$"]?.["r:id"] || '',
+        action: shapeHlinkNode["$"]?.action || ''
+    } : null;
+
     const fontColor = pptTextAllInfo.getFontColor(shapeNode, themeXML, clrMap);
     const outlineStyle = extractTextOutline(shapeNode, themeXML, clrMap, masterXML);
     const shapeLevelShadow = (() => {
@@ -244,7 +256,7 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
             // Multiple bullet items in one paragraph
             for (let i = 0; i < pPrElements.length; i++) {
                 const pPr = pPrElements[i];
-                const bulletInfo = extractBulletInformation(pPr);
+                const bulletInfo = extractBulletInformation(pPr, shapeNode, layoutXML, placeholderType, placeholderIdx);
 
                 if (bulletInfo.hasListMarker) {
                     // Each pPr gets its corresponding run
@@ -261,7 +273,7 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
         } else {
             // Single bullet item or non-bullet paragraph (original logic)
             const pPrNode = pPrElements[0] || null;
-            const bulletInfo = extractBulletInformation(pPrNode);
+            const bulletInfo = extractBulletInformation(pPrNode, shapeNode, layoutXML, placeholderType, placeholderIdx);
 
             bulletItems.push({
                 pPr: pPrNode,
@@ -281,7 +293,7 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
                 pPr: pPrNode,
                 runs: runs,
                 lineBreaks: lineBreaks,
-                bulletInfo: extractBulletInformation(pPrNode)
+                bulletInfo: extractBulletInformation(pPrNode, shapeNode, layoutXML, placeholderType, placeholderIdx)
             });
         }
 
@@ -370,7 +382,7 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
 
                         if (textValue !== undefined && textValue !== null) {
                             const runRPrNode = child?.["a:rPr"]?.[0];
-                            const spanText = createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight, themeXML, fontSize, masterXML, textKind, shapeNode, clrMap);
+                            const spanText = createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight, themeXML, fontSize, masterXML, textKind, shapeNode, clrMap, shapeHlink);
                             runTexts.push(spanText);
                         }
                     } else if (childName === 'a:br') {
@@ -393,7 +405,7 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
 
                     if (textValue !== undefined && textValue !== null) {
                         const runRPrNode = run?.["a:rPr"]?.[0];
-                        const spanText = createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight, themeXML, fontSize, masterXML, textKind, shapeNode, clrMap);
+                        const spanText = createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight, themeXML, fontSize, masterXML, textKind, shapeNode, clrMap, shapeHlink);
                         runTexts.push(spanText);
                     }
                 });
@@ -529,7 +541,7 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
                     const bodyPrAttrs = shapeNode?.["p:txBody"]?.[0]?.["a:bodyPr"]?.[0]?.["$"];
                     const isWordArtVert = bodyPrAttrs?.vert === "wordArtVert";
                     const wordArtVertStyle = isWordArtVert ? ' writing-mode: vertical-rl; text-orientation: upright;' : '';
-                    
+
                     htmlContent.push(`<p style="text-align: ${textAlign}; 
                                                 line-height: ${lineHeight}; 
                                                 margin-left: ${marginLeft}px; 
@@ -819,7 +831,7 @@ function getTextAlignmentFromParagraph(pPrNode, shapeNode, placeholderType, layo
 }
 
 
-function extractBulletInformation(pPrNode, shapeNode) {
+function extractBulletInformation(pPrNode, shapeNode, layoutXML, placeholderType, placeholderIdx) {
     // --- 0️⃣ Default return object ---
     const defaultBulletInfo = {
         hasListMarker: false,
@@ -835,7 +847,7 @@ function extractBulletInformation(pPrNode, shapeNode) {
         level: 0
     };
 
-    if (!pPrNode && !shapeNode) return defaultBulletInfo;
+    if (!pPrNode && !shapeNode && !layoutXML) return defaultBulletInfo;
 
     // --- 1️⃣ Explicit bullet disabling (a:buNone) ---
     const hasBuNone =
@@ -888,7 +900,7 @@ function extractBulletInformation(pPrNode, shapeNode) {
         };
     }
 
-    // --- 5️⃣ Inherited bullets from <a:lstStyle> (if no buNone and no explicit bullet) ---
+    // --- 5️⃣ Inherited bullets from shape's own <a:lstStyle> ---
     try {
         const lstStyle = shapeNode?.["p:txBody"]?.[0]?.["a:lstStyle"]?.[0];
         if (lstStyle) {
@@ -936,7 +948,68 @@ function extractBulletInformation(pPrNode, shapeNode) {
             }
         }
     } catch (err) {
-        console.warn("Bullet inheritance check failed:", err);
+        console.warn("Bullet inheritance check (shape lstStyle) failed:", err);
+    }
+
+    // --- 6️⃣ Fallback: Inherited bullets from layout placeholder's <a:lstStyle> ---
+    // Handles the case where the shape's own <a:lstStyle> is empty but the layout
+    // placeholder (matched by ph idx first, then ph type) defines the bullet style.
+    try {
+        if (layoutXML && placeholderType) {
+            const layoutShape = findPlaceholderInLayout(placeholderType, layoutXML, placeholderIdx);
+            const layoutLstStyle = layoutShape?.["p:txBody"]?.[0]?.["a:lstStyle"]?.[0];
+            if (layoutLstStyle) {
+                const lvl1 = layoutLstStyle["a:lvl1pPr"]?.[0];
+                if (lvl1?.["a:buChar"]?.[0]?.["$"]?.char) {
+                    const inheritedChar = lvl1["a:buChar"][0]["$"].char;
+                    const inheritedFont = lvl1["a:buFont"]?.[0]?.["$"]?.typeface || "Arial";
+                    const inheritedColor = lvl1["a:buClr"]?.[0] || null;
+                    const inheritedSizeRaw = lvl1?.["a:buSzPct"]?.[0]?.["$"]?.val || null;
+                    const inheritedSize = inheritedSizeRaw ? parseInt(inheritedSizeRaw, 10) / 1000 : null;
+                    // Inherit marL/indent from layout lvl1pPr if not set on paragraph
+                    const layoutMarL = lvl1?.["$"]?.marL ? parseInt(lvl1["$"].marL) : marginLeft;
+                    const layoutIndent = lvl1?.["$"]?.indent ? parseInt(lvl1["$"].indent) : indent;
+
+                    return {
+                        hasListMarker: true,
+                        listTag: "ul",
+                        listStyle: getBulletStyleFromChar(inheritedChar, inheritedFont),
+                        bulletChar: inheritedChar,
+                        bulletFont: inheritedFont,
+                        bulletColor: inheritedColor,
+                        bulletSize: inheritedSize,
+                        marginLeft: layoutMarL,
+                        indent: layoutIndent,
+                        level
+                    };
+                }
+
+                if (lvl1?.["a:buAutoNum"]?.[0]?.["$"]?.type) {
+                    const inheritedNumType = lvl1["a:buAutoNum"][0]["$"].type;
+                    const inheritedStart = lvl1["a:buAutoNum"][0]["$"].startAt || 1;
+                    const inheritedColor = lvl1["a:buClr"]?.[0] || null;
+                    const inheritedSizeRaw = lvl1?.["a:buSzPct"]?.[0]?.["$"]?.val || null;
+                    const inheritedSize = inheritedSizeRaw ? parseInt(inheritedSizeRaw, 10) / 1000 : null;
+                    const layoutMarL = lvl1?.["$"]?.marL ? parseInt(lvl1["$"].marL) : marginLeft;
+                    const layoutIndent = lvl1?.["$"]?.indent ? parseInt(lvl1["$"].indent) : indent;
+
+                    return {
+                        hasListMarker: true,
+                        listTag: "ol",
+                        listStyle: getNumberingStyleFromType(inheritedNumType),
+                        numberingType: inheritedNumType,
+                        bulletColor: inheritedColor,
+                        bulletSize: inheritedSize,
+                        startAt: inheritedStart,
+                        marginLeft: layoutMarL,
+                        indent: layoutIndent,
+                        level
+                    };
+                }
+            }
+        }
+    } catch (err) {
+        console.warn("Bullet inheritance check (layout lstStyle) failed:", err);
     }
 
     return defaultBulletInfo;
@@ -944,7 +1017,7 @@ function extractBulletInformation(pPrNode, shapeNode) {
 
 
 //MODIFIED: Update createSpanFromRun to accept outlineStyle parameter
-function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight, themeXML, shapeFontSize, masterXML, textKind, shapeNode, clrMap) {
+function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight, themeXML, shapeFontSize, masterXML, textKind, shapeNode, clrMap, shapeHlink = null) {
 
     if (!runRPrNode) {
         return `<span class="span-txt" style="${(textValue.trim().length <= 4 && shapeFontSize >= 20) ? 'white-space: nowrap' : 'white-space: pre-wrap'}; font-size: ${shapeFontSize}px; line-height: ${lineHeight};">${textValue}</span>`;
@@ -967,16 +1040,38 @@ function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight,
     let latinFont, originalEA, originCS, originSYM, runTypeface;
     let inheritedDefRPr = null;
 
-    const hasHyperlink = runRPrNode?.["a:hlinkClick"];
+    const runHlinkNode = runRPrNode?.["a:hlinkClick"]?.[0];
+
+    // Resolve whichever hlink applies
+    const activeHlink = runHlinkNode
+        ? {
+            tooltip: runHlinkNode["$"]?.tooltip || '',
+            rId: runHlinkNode["$"]?.["r:id"] || '',
+            action: runHlinkNode["$"]?.action || ''
+        }
+        : shapeHlink;  // falls back to shape-level, or null if neither exists
+
     let hyperlinkStart = '';
     let hyperlinkEnd = '';
 
-    if (hasHyperlink) {
-        const tooltip = hasHyperlink[0]?.["$"]?.tooltip || '';
-        const rId = hasHyperlink[0]?.["$"]?.["r:id"] || '';
+    if (activeHlink) {
+        const tooltip = activeHlink.tooltip || '';
+        const action = activeHlink.action || '';
+        const rId = activeHlink.rId || '';
 
-        // You'll need to resolve rId to actual URL from slide relationships
-        hyperlinkStart = `<a href="#" title="${tooltip}" style="color: blue; text-decoration: underline;">`;
+        // Determine href: slide-jump actions have no navigable URL
+        const isSlideJump = action.startsWith('ppaction://hlinksldjump')
+            || action.startsWith('ppaction://');
+        // const href = isSlideJump ? 'javascript:void(0)' : `#${rId}`;
+        const href = tooltip ? tooltip : (isSlideJump ? 'javascript:void(0)' : `#${rId}`);
+
+        // Build <a> that carries tooltip via title — NO static color/decoration
+        // All text styling comes from the inner <span>; the <a> is transparent
+        const titleAttr = tooltip ? ` title="${tooltip.replace(/"/g, '&quot;')}"` : '';
+        const actionAttr = action ? ` data-action="${action.replace(/"/g, '&quot;')}"` : '';
+        const rIdAttr = rId ? ` data-rid="${rId}"` : '';
+
+        hyperlinkStart = `<a href="${href}"${titleAttr}${actionAttr}${rIdAttr} style="color:inherit;text-decoration:inherit;cursor:pointer;">`;
         hyperlinkEnd = '</a>';
     }
 
@@ -1245,7 +1340,7 @@ function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight,
         const spaceStyles = styles
             .replace('white-space: nowrap', 'white-space: normal')
             .replace('white-space: pre-wrap', 'white-space: normal');
-        return `<span class="span-txt" ${gradientDataAttrs} ${shadowAttr} originalEA="${originalEA}" originCS="${originCS}" originSYM="${originSYM}" latinFont="${latinFont}" originalTxtColor="${originalTxtColor}" originalLumMod="${originalLumMod}" originalLumOff="${originalLumOff}" alpha="${opacity}" cap="${capValue || ''}" style="${spaceStyles};">&nbsp; </span>`;
+        return `${hyperlinkStart}<span class="span-txt" ${gradientDataAttrs} ${shadowAttr} originalEA="${originalEA}" originCS="${originCS}" originSYM="${originSYM}" latinFont="${latinFont}" originalTxtColor="${originalTxtColor}" originalLumMod="${originalLumMod}" originalLumOff="${originalLumOff}" alpha="${opacity}" cap="${capValue || ''}" style="${spaceStyles};">&nbsp; </span>${hyperlinkEnd}`;
     }
 
     // ✅ CRITICAL FIX: Preserve leading spaces (convert to &nbsp;)
@@ -1253,7 +1348,7 @@ function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight,
         .replace(/^ +/, match => '&nbsp;'.repeat(match.length))
         .replace(/ +$/, match => '&nbsp;'.repeat(match.length));
 
-    return `<span class="span-txt" ${gradientDataAttrs} ${shadowAttr} originalEA="${originalEA}" originCS="${originCS}" originSYM="${originSYM}" latinFont="${latinFont}" originalTxtColor="${originalTxtColor}" originalLumMod="${originalLumMod}" originalLumOff="${originalLumOff}" alpha="${opacity}" cap="${capValue || ''}" style="${styles};">${preservedText}</span>`;
+    return `${hyperlinkStart}<span class="span-txt" ${gradientDataAttrs} ${shadowAttr} originalEA="${originalEA}" originCS="${originCS}" originSYM="${originSYM}" latinFont="${latinFont}" originalTxtColor="${originalTxtColor}" originalLumMod="${originalLumMod}" originalLumOff="${originalLumOff}" alpha="${opacity}" cap="${capValue || ''}" style="${styles};">${preservedText}</span>${hyperlinkEnd}`;
 
 
 }

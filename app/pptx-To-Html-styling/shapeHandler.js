@@ -349,7 +349,6 @@ class ShapeHandler {
                                                 ${combinedFilter}" />
                             </div>`;
                 }
-                // Rest of your shape rendering code...
             }
         }
 
@@ -384,6 +383,8 @@ class ShapeHandler {
         let clipPath = "";
         let extraStyles = "";
         let maskPath = "";
+
+        console.log(" >>>>>>>>>>>>>>>> borderRadius ", borderRadius);
 
         // Extracting border (stroke) properties
         const outline = shapeNode['p:spPr']?.[0]?.['a:ln']?.[0];
@@ -1110,10 +1111,23 @@ class ShapeHandler {
 
             case "roundRect":
                 caseName = "roundRect";
-                cornerRadius = this.getCornerRadius(shapeNode); // Get the radius in pixels
-                const adjustedRadius = Math.min(cornerRadius, position.width / 2, position.height / 2); // Ensure radius doesn't exceed half the width/height
-                clipPath = `inset(0% round ${adjustedRadius}px ${adjustedRadius}px ${adjustedRadius}px ${adjustedRadius}px)`; // Apply uniform rounding
-                borderRadius = `${adjustedRadius}px`; // Sync border-radius with clip-path
+
+                cornerRadius = this.getCornerRadius(shapeNode);
+
+                // Ensure radius doesn't exceed half of either dimension
+                const adjustedRadius = Math.min(cornerRadius, position.width / 2, position.height / 2);
+
+                // Get border width so clip-path inset compensates for it
+                // Without this, the border eats into the clip region and makes corners look less round
+                const outlineNode = shapeNode?.["p:spPr"]?.[0]?.["a:ln"]?.[0];
+                const borderWidthEMU = outlineNode?.["$"]?.w ? parseInt(outlineNode["$"].w, 10) : 0;
+                const borderWidthPx = borderWidthEMU / this.getEMUDivisor();
+
+                // Use negative inset equal to border width so clip-path does not cut the border corners
+                const insetOffset = borderWidthPx > 0 ? `-${borderWidthPx}px` : "0%";
+
+                clipPath = `inset(${insetOffset} round ${adjustedRadius}px)`;
+                borderRadius = `${adjustedRadius}px`;
                 break;
             case "round2SameRect":
                 caseName = "round2SameRect";
@@ -1917,6 +1931,7 @@ class ShapeHandler {
 
         return `<div class="shape" id="${caseName}" 
             data-name="${shapeName}" 
+            data-hidden="${hidden}"
             data-original-color="${originalThemeColor}" 
             originalLumMod="${originalLumMod}" 
             originalLumOff="${originalLumOff}" 
@@ -1933,7 +1948,9 @@ class ShapeHandler {
                 ${shapeBorder}
                 ${shapeBorderCSS}
                 ${shadowStyle}
-                display: ${hidden ? "none" : "flex"};
+                display: flex;
+                visibility: ${hidden ? "hidden" : "visible"};
+                pointer-events: ${hidden ? "none" : "auto"};
                 transform: ${transformString};                    
                 box-sizing: border-box;
                 overflow: ${overflowStyle};
@@ -2520,7 +2537,7 @@ class ShapeHandler {
 
         const phElement = shapeNode?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0];
         if (phElement?.["$"]?.hasCustomPrompt === "1") {
-            return true;
+            return false;
         }
 
         if (masterXML && shapeName) {
@@ -2718,18 +2735,25 @@ class ShapeHandler {
     getCornerRadius(shapeNode) {
         const geom = shapeNode?.["p:spPr"]?.[0]?.["a:prstGeom"]?.[0];
 
-        if (!geom || geom?.["$"]?.prst !== "roundRect") return 0; // Return 0 for non-roundRect shapes
+        if (!geom || geom?.["$"]?.prst !== "roundRect") return 0;
 
-        const adj = geom?.["a:avLst"]?.[0]?.["a:gd"]?.[0]?.["$"]?.fmla;
-        if (adj) {
-            const rawRadius = parseFloat(adj.replace("val ", "")) / 1000; // Convert from PowerPoint units (1/1000th of EMU)
-            const position = this.getShapePosition(shapeNode);
+        const position = this.getShapePosition(shapeNode);
+        const shorterSide = Math.min(position.width, position.height);
 
-            const scaleFactor = Math.min(position.width, position.height) / 100; // Scale relative to smaller dimension
-            return Math.round(Math.max(5, rawRadius * scaleFactor)); // Minimum 5px, scaled based on shape size
-        }
+        const adjFmla = geom?.["a:avLst"]?.[0]?.["a:gd"]?.[0]?.["$"]?.fmla;
 
-        return 12; // Default rounded corner radius if no adjustment is found
+        // OOXML default adj = 16667 when <a:avLst /> is empty or has no <a:gd> child
+        const OOXML_ADJ_MAX = 100000;
+        const OOXML_ADJ_DEFAULT = 16667;
+
+        const adjValue = adjFmla
+            ? parseFloat(adjFmla.replace("val ", ""))
+            : OOXML_ADJ_DEFAULT;
+
+        const adj = adjValue / OOXML_ADJ_MAX;
+
+        // OOXML formula: radius = adj × (shorterSide / 2)
+        return adj * (shorterSide / 2);
     }
 
     getStrokeProperties(outline, themeXML, defaultWidth = 2, defaultColor = "#000000") {
@@ -3371,45 +3395,6 @@ class ShapeHandler {
     getGlowStyle(shapeNode) {
         return getShapeGlowStyle(shapeNode, this.themeXML, this.masterXML, this.clrMap);
     }
-
-
-
-    // getShadowStyle(shapeNode) {
-    //     const shadowNode = shapeNode?.["p:spPr"]?.[0]?.["a:effectLst"]?.[0]?.["a:outerShdw"]?.[0];
-
-    //     if (!shadowNode) return "";
-
-    //     const dist = parseInt(shadowNode["$"].dist, 10) / this.getEMUDivisor(); // Convert EMU to pixels, distance will be used as border width
-    //     const dir = parseInt(shadowNode["$"].dir, 10) / 60000; // Convert 60000ths of a degree to degrees
-
-    //     // Extract color and alpha
-    //     const colorNode = shadowNode["a:prstClr"]?.[0];
-    //     let color = "#000000"; // Default black
-    //     let alpha = 1; // Default fully opaque
-
-    //     if (colorNode) {
-    //         if (colorNode["a:srgbClr"]) {
-    //             color = `#${colorNode["a:srgbClr"][0]["$"].val}`;
-    //         } else if (colorNode["a:schemeClr"]) {
-    //             // Handle scheme color mapping
-    //             color = this.resolveColor(colorNode["a:schemeClr"][0]["$"].val);
-    //         }
-
-    //         const alphaVal = colorNode["a:alpha"]?.[0]?.["$"]?.val;
-    //         if (alphaVal) {
-    //             alpha = parseInt(alphaVal, 10) / 100000; // Convert to CSS alpha range
-    //         }
-    //     }
-
-    //     // Convert color to RGB for border color
-    //     const rgbColor = this.hexToRGB(color);
-
-    //     // Determine border placement based on direction
-    //     const borderPlacement = this.calculateBorderPlacement(dir);
-    //     // return `border: ${borderPlacement}px solid rgba(${rgbColor}, ${alpha});`;
-
-    //     return `border: 2px solid rgba(${rgbColor}, ${alpha});`;
-    // }
 
     calculateBorderPlacement(directionDegrees) {
         if (directionDegrees >= 45 && directionDegrees < 135) {

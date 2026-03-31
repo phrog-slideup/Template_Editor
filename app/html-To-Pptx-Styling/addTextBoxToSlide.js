@@ -1,3 +1,5 @@
+const { extractHyperlinkFromSpan } = require('../template-engine/hyperlink-pptx-patch');
+
 function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null) {
     textBox = preprocessTextFormatting(textBox);
     const objName = textBox.getAttribute("data-name");
@@ -6,6 +8,9 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
 
     const textContent = textBox.textContent || "";
     if (!textContent.trim()) return;
+
+    const isHidden = textBox.getAttribute("data-hidden") === "true" ||
+        textBox.getAttribute("data-hidden") === "1";
 
     const style = textBox.style;
     const parentStyle = shapeTxtStyle.style;
@@ -138,6 +143,19 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
         if (lineHeightSource) {
             globalLineSpacing = convertLineHeightToPowerPoint(lineHeightSource, globalFontSize);
         }
+    } else {
+        // FALLBACK: No <p> found — textbox may contain only a <ul>/<ol>.
+        const firstListSpan = textBox.querySelector('ul span, ol span');
+        if (firstListSpan) {
+            const spanStyle = firstListSpan.getAttribute('style') || '';
+            if (firstListSpan.style.fontSize) {
+                globalFontSize = parseFloat(firstListSpan.style.fontSize);
+            }
+            const lineHeightSource = extractLineHeightFromCSS(spanStyle);
+            if (lineHeightSource) {
+                globalLineSpacing = convertLineHeightToPowerPoint(lineHeightSource, globalFontSize);
+            }
+        }
     }
 
     // Continue with normal paragraph processing...
@@ -176,8 +194,8 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
         }
     }
     const marginInches = {
-        top: pixelsToEmus(finalMargins.left),
-        left: pixelsToEmus(finalMargins.top),
+        top: pixelsToEmus(finalMargins.top),
+        left: pixelsToEmus(finalMargins.left),
         right: pixelsToEmus(finalMargins.right),
         bottom: pixelsToEmus(finalMargins.bottom)
     };
@@ -229,10 +247,12 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
         transparent: 100,
         autofit: false,
         valign: verticalAlign,
-        objectName: objName || '',
+        objectName: isHidden ? `__hidden__${objName || ''}` : (objName || ''),
+        _isHidden: isHidden,
     };
 
-    textBoxOptions.margin = [marginInches.top, marginInches.right, marginInches.bottom, marginInches.left];
+
+    textBoxOptions.margin = [marginInches.left, marginInches.right, marginInches.bottom, marginInches.top];
 
     // FIXED: Add global line spacing with correct property name
     if (globalLineSpacing) {
@@ -878,6 +898,19 @@ function extractSpanFormattingWithLineSpacing(span, defaultAlign = "left", origi
         }
     }
 
+    const hlinkData = extractHyperlinkFromSpan(span);
+    if (hlinkData) {
+        options.hyperlink = {
+            url: hlinkData.url || '#',
+            tooltip: hlinkData.tooltip || ''
+        };
+
+        if (hlinkData.isSlideJump || hlinkData.action) {
+            options._hlinkAction = hlinkData.action;
+            options._hlinkRId = hlinkData.rId;
+            options._hlinkIsSlideJump = hlinkData.isSlideJump;
+        }
+    }
     return options;
 }
 
@@ -1239,12 +1272,11 @@ function handleMixedContent(pptSlide, textBox, textBoxOptions, globalLineSpacing
                 (textContent.replace(/\u00A0/g, '').replace(/\s/g, '') === '' && hasMinHeight);
 
             if (isEmptyParagraph) {
-                // FIXED: For empty paragraphs, add a line break to the last item if it exists
-                // This maintains spacing between lists and paragraphs
+                // For empty paragraphs, add a line break to the last item if it exists
                 if (allContent.length > 0) {
                     const lastItem = allContent[allContent.length - 1];
-                    // Only add newline if the last item doesn't already end with one
-                    if (!lastItem.text.endsWith('\n')) {
+                    const lastItemHasBullet = lastItem.options && lastItem.options.bullet;
+                    if (!lastItemHasBullet && !lastItem.text.endsWith('\n')) {
                         lastItem.text += '\n';
                     }
                 }
@@ -1285,6 +1317,9 @@ function handleMixedContent(pptSlide, textBox, textBoxOptions, globalLineSpacing
         try {
             const mixedTextBoxOptions = { ...textBoxOptions };
             delete mixedTextBoxOptions.lineSpacing;  // Let individual text runs handle line spacing
+
+            // Extract and apply shadow for mixed content
+            const mixedShadow = extractShadowFromTextBox(textBox);
             if (mixedShadow) {
                 mixedTextBoxOptions.shadow = mixedShadow;
             }
@@ -1366,7 +1401,7 @@ function handleListContent(pptSlide, textBox, textBoxOptions, globalLineSpacing 
                         text: cleanText,
                         options: {
                             ...safeOptions,
-                            bullet: true,
+                            bullet: safeOptions.bullet || { indent: 17 },
                             breakLine: itemIndex < formattedListItems.length - 1
                         }
                     };
@@ -1443,8 +1478,21 @@ function processListRecursively(list, formattedListItems, indentLevel, globalLin
             if (isOrdered) {
                 itemFormatting.bullet = { type: "number" };
             } else {
-                // Use standard bullet format
-                itemFormatting.bullet = true;
+                // BULLET SPACING FIX:
+                // At 72 DPI, 1px = 1pt exactly. The <ul> padding-left (e.g. 20px)
+                // directly gives us the correct indent in pt (20pt).
+                // PptxGenJS DEF_BULLET_MARGIN = 27pt which is too wide vs the HTML.
+                // We pass only `indent` (no `type`) so PptxGenJS falls through to
+                // its final else-branch and renders the default "•" bullet char
+                // with our custom spacing instead of the 27pt default.
+                const ulPaddingLeft = getUlPaddingLeft(list); // px = pt at 72dpi
+                // Clamp: min 15pt (avoid crushing), max 27pt (PptxGenJS default)
+                // const bulletIndentPt = Math.min(Math.max(Math.round(ulPaddingLeft), 15), 27);
+                const bulletIndentPt = Math.min(Math.max(Math.round(ulPaddingLeft * 4), 10), 22);
+
+                itemFormatting.bullet = {
+                    indent: bulletIndentPt   // no `type` property — required for bullet char to render
+                };
             }
 
             // Add indentation level for nested items
@@ -1476,6 +1524,18 @@ function processListRecursively(list, formattedListItems, indentLevel, globalLin
     directChildLists.forEach(childList => {
         processListRecursively(childList, formattedListItems, indentLevel, globalLineSpacing, globalFontSize);
     });
+}
+
+// Helper: Get padding-left from <ul> in px (used to calibrate indent)
+function getUlPaddingLeft(listElement) {
+    const styleAttr = listElement.getAttribute('style') || '';
+    const match = styleAttr.match(/padding-left\s*:\s*([\d.]+)px/i);
+
+    if (match) return parseFloat(match[1]);
+    if (listElement.style && listElement.style.paddingLeft) {
+        return parseFloat(listElement.style.paddingLeft) || 0;
+    }
+    return 15; // browser default
 }
 
 // NEW: Get only direct text content from an element (excluding nested lists)

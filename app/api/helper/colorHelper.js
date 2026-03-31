@@ -15,10 +15,6 @@ function resolveThemeColorHelper(colorKey, themeXML, masterXML) {
     // Get the color node using the mapped color key
     const colorNode = getThemeColor(themeXML, mappedColorKey);
     if (!colorNode) {
-        // FIX: return null instead of empty string so callers can distinguish
-        // "color not found" from "color is empty" and apply their own fallbacks.
-        // An empty string was previously passed to applyLuminanceModifier where it
-        // caused silent failures and missing backgrounds.
         console.warn("No colorNode found for the mapped color key:", mappedColorKey);
         return null;
     }

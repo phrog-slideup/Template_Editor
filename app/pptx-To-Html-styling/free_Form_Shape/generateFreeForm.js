@@ -9,14 +9,18 @@ function generateCustomShapeSVG(custGeom, position, fillColor, stroke, flipOptio
     // already-correct SVG a second time. We handle it here via an SVG transform.
     const { flipH = false, flipV = false } = flipOptions;
     let pathTransform = "";
+    // flip issue change start
+    let pathTransformAttr = "";
     if (flipH && flipV) {
-        pathTransform = `transform="translate(${viewBoxWidth},${viewBoxHeight}) scale(-1,-1)"`;
+        pathTransform = `translate(${viewBoxWidth},${viewBoxHeight}) scale(-1,-1)`;
     } else if (flipH) {
-        pathTransform = `transform="translate(${viewBoxWidth},0) scale(-1,1)"`;
+        pathTransform = `translate(${viewBoxWidth},0) scale(-1,1)`;
     } else if (flipV) {
-        pathTransform = `transform="translate(0,${viewBoxHeight}) scale(1,-1)"`;
+        pathTransform = `translate(0,${viewBoxHeight}) scale(1,-1)`;
     }
 
+    pathTransformAttr = pathTransform ? `transform="${pathTransform}"` : "";
+    // flip issue change end
     if (!custGeom || !custGeom["a:pathLst"] || !custGeom["a:pathLst"][0] || !custGeom["a:pathLst"][0]["a:path"]) {
         return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none">
             <rect width="${viewBoxWidth}" height="${viewBoxHeight}" fill="${fillColor}" stroke="${stroke.color}" stroke-width="${stroke.width}" ${pathTransform}/>
@@ -120,14 +124,16 @@ function generateCustomShapeSVG(custGeom, position, fillColor, stroke, flipOptio
             const stopElements = svgStops
                 .map(s => `<stop offset="${s.offset}" style="stop-color:${s.color}; stop-opacity:1"/>`)
                 .join("\n               ");
-
+            //flip issue change
             return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none">
            <defs>
                <linearGradient id="${gradientId}" x1="${x1}%" y1="${y1}%" x2="${x2}%" y2="${y2}%">
                ${stopElements}
                </linearGradient>
            </defs>
-           <path d="${combinedPathData}" fill="url(#${gradientId})" stroke="${stroke.color || 'none'}" stroke-width="${stroke.width || 0}" ${pathTransform}/>
+          <g ${pathTransformAttr}>
+    <path d="${combinedPathData}" fill="url(#${gradientId})" stroke="${stroke.color || 'none'}" stroke-width="${stroke.width || 0}" />
+</g>
        </svg>`;
         }
     }
@@ -137,23 +143,26 @@ function generateCustomShapeSVG(custGeom, position, fillColor, stroke, flipOptio
         // Best approach: pass through as a CSS background on a <foreignObject> rect,
         // clipped to the path shape. We use a clipPath for correctness.
         const clipId = `clip_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        //flip issue change
         return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none">
            <defs>
                <clipPath id="${clipId}">
-                   <path d="${combinedPathData}" ${pathTransform}/>
+                   <path d="${combinedPathData}" />
                </clipPath>
            </defs>
            <foreignObject width="${viewBoxWidth}" height="${viewBoxHeight}" clip-path="url(#${clipId})">
                <div xmlns="http://www.w3.org/1999/xhtml"
                     style="width:100%;height:100%;background:${fillColor};"></div>
            </foreignObject>
-           <path d="${combinedPathData}" fill="none" stroke="${stroke.color || 'none'}" stroke-width="${stroke.width || 0}" ${pathTransform}/>
        </svg>`;
     }
 
     // Solid fill fallback
+    //flip issue change
     return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none">
-       <path d="${combinedPathData}" fill="${fillColor}" stroke="${stroke.color || 'none'}" stroke-width="${stroke.width || 0}" ${pathTransform}/>
+       <g ${pathTransformAttr}>
+    <path d="${combinedPathData}" fill="${fillColor}" stroke="${stroke.color || 'none'}" stroke-width="${stroke.width || 0}" />
+</g>
    </svg>`;
 }
 

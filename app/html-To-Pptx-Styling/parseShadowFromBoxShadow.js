@@ -18,24 +18,58 @@ function buildShadowXml(shapeElement) {
 
         if (!parsed) return null;
 
-        // Convert CSS px offsets back to OOXML dist (EMU) + dir (60000ths of a degree)
-        const { dirEmu, distEmu } = offsetToOoxmlDirDist(parsed.offsetX, parsed.offsetY, isInner);
+        // ── Spread simulation ────────────────────────────────────────────────────
+        // PowerPoint's outerShdw has no "spread" concept.  The old approach of
+        // mapping spread → sx/sy scale produced sx=0/sy=0 for negative spread
+        // (e.g. blur=4 spread=-4 → scale=0), which collapses the shadow to a
+        // point and then re-expands it symmetrically via blur — exactly the
+        // "top/bottom/right bleed" bug seen in the images.
+        //
+        // Correct approximation for NEGATIVE spread (the common "one-sided
+        // shadow" pattern):
+        //   • Reduce blurRad by |spread|  → tighten the feather so it doesn't
+        //     bleed past the shape edges on the non-offset sides.
+        //   • Increase dist by |spread|   → keep the visible shadow edge in
+        //     roughly the same visual position.
+        //
+        // For POSITIVE spread we keep the old scale approach (sx/sy > 100 000)
+        // because that faithfully enlarges the shadow footprint.
+        // ────────────────────────────────────────────────────────────────────────
+
+        let effectiveBlur = parsed.blur;
+        let effectiveDist = Math.sqrt(
+            parsed.offsetX * parsed.offsetX + parsed.offsetY * parsed.offsetY
+        );
+
+        if (!isInner && parsed.spread < -0.0001) {
+            // Negative spread: shrink blur, push dist outward to compensate
+            const shrink = Math.min(Math.abs(parsed.spread), effectiveBlur); // never go negative
+            effectiveBlur = Math.max(0, effectiveBlur - shrink);
+            effectiveDist = effectiveDist + shrink;
+        }
+
+        // Convert CSS px offsets back to OOXML dist (EMU) + dir (60000ths of a degree).
+        // When we have adjusted the effective distance we rebuild distEmu from it
+        // directly instead of re-deriving from raw offsets.
+        const { dirEmu } = offsetToOoxmlDirDist(parsed.offsetX, parsed.offsetY, isInner);
+        const distEmu = Math.round(effectiveDist * ONEPT);
 
         // CSS px = pt at 72 dpi, 1pt = ONEPT EMU
-        const blurEmu = Math.round(parsed.blur * ONEPT);
+        const blurEmu = Math.round(effectiveBlur * ONEPT);
 
         let sxVal, syVal;
         if (isInner) {
             // innerShdw has no sx/sy attributes in OOXML — leave undefined
             sxVal = undefined;
             syVal = undefined;
-        } else if (parsed.blur > 0 && Math.abs(parsed.spread) > 0.0001) {
-            // Outer shadow with non-zero spread → calculate scale from spread
-            const avgScale = 1 + (parsed.spread / parsed.blur);
-            sxVal = Math.round(avgScale * 100000);
+        } else if (!isInner && parsed.spread > 0.0001) {
+            // Positive spread only: enlarge the shadow via scale factor
+            const referenceSize = parsed.blur > 0.0001 ? parsed.blur : 1;
+            const avgScale = 1 + (parsed.spread / referenceSize);
+            sxVal = Math.round(Math.max(0, avgScale) * 100000);
             syVal = sxVal; // PowerPoint always writes sx === sy (symmetric)
         } else {
-            // Outer shadow, spread=0 → no scaling (default 100%)
+            // spread=0 or negative (already handled via blur/dist above) → no scaling
             sxVal = 100000;
             syVal = 100000;
         }
@@ -89,10 +123,29 @@ function parseShadowFromBoxShadow(shapeElement) {
         if (!parsed) return null;
 
         // FIX 2: correct angle/distance conversion for inner vs outer
-        const { angle, offset } = offsetToAngleAndDist(parsed.offsetX, parsed.offsetY, isInner);
+        const { angle, offset: rawOffset } = offsetToAngleAndDist(parsed.offsetX, parsed.offsetY, isInner);
+
+        // ── Spread compensation (negative spread = "one-sided shadow") ──────────
+        // PowerPoint has no spread concept.  A negative CSS spread (e.g. -4px)
+        // combined with a matching blur (4px) creates a directional-only shadow
+        // by clipping the feather on non-offset sides.  Without compensation the
+        // shadow bleeds to top/bottom/right in PowerPoint.
+        //
+        // Fix: reduce blur by |spread| (tighten the feather) and increase the
+        // displacement distance by the same amount (keep the visible edge in place).
+        // ────────────────────────────────────────────────────────────────────────
+        let effectiveBlurPt = parsed.blur;
+        let effectiveOffsetPt = rawOffset;
+
+        if (!isInner && parsed.spread < -0.0001) {
+            const shrinkPx = Math.min(Math.abs(parsed.spread), parsed.blur);
+            effectiveBlurPt = Math.max(0, parsed.blur - shrinkPx);
+            effectiveOffsetPt = rawOffset + shrinkPx;
+        }
 
         // blur: CSS px = pt at 72 dpi, pass directly to pptxgenjs
-        const blurPt = Math.round(parsed.blur * 10) / 10;
+        const blurPt = Math.round(effectiveBlurPt * 10) / 10;
+        const offset = Math.round(effectiveOffsetPt * 10) / 10;
 
         // FIX 3 / opacity: keep full 0-1 float, no lossy rounding
         const opacity = Math.max(0, Math.min(1, parsed.alpha));

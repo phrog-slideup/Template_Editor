@@ -213,15 +213,46 @@ function createDynamicShapeOptions(element, slideContext, points, svgStyles) {
     }
 
     // Add rotation if present
+    // flip issue change start Add rotation + flip if present
     const transform = style.transform || '';
+
+    // Also detect flip from inner SVG transform for custGeom shapes
+    let svgFlipH = false;
+    let svgFlipV = false;
+
+    const svgGroup = element.querySelector('svg g[transform], svg path[transform]');
+    if (svgGroup) {
+        const svgTransform = svgGroup.getAttribute('transform') || '';
+
+        if (/scale\(\s*-1\s*,\s*-1\s*\)/.test(svgTransform)) {
+            svgFlipH = true;
+            svgFlipV = true;
+        } else {
+            if (/scale\(\s*-1\s*,\s*1\s*\)/.test(svgTransform)) svgFlipH = true;
+            if (/scale\(\s*1\s*,\s*-1\s*\)/.test(svgTransform)) svgFlipV = true;
+        }
+    }
+
     const rotateMatch = transform.match(/rotate\((-?\d*\.?\d+)deg\)/);
     if (rotateMatch) {
         const rotation = parseFloat(rotateMatch[1]);
-        if (rotation !== 0 && Math.abs(rotation) <= 360) {
+        if (!isNaN(rotation) && rotation !== 0 && Math.abs(rotation) <= 360) {
             shapeOptions.rotate = Math.round(rotation);
         }
     }
 
+    const hasFlipH = /scaleX\(\s*-1\s*\)|scale\(\s*-1\s*,\s*1\s*\)/.test(transform);
+    const hasFlipV = /scaleY\(\s*-1\s*\)|scale\(\s*1\s*,\s*-1\s*\)/.test(transform);
+    const hasFlipBoth = /scale\(\s*-1\s*,\s*-1\s*\)/.test(transform);
+
+    if (hasFlipBoth) {
+        shapeOptions.flipH = true;
+        shapeOptions.flipV = true;
+    } else {
+        if (hasFlipH || svgFlipH) shapeOptions.flipH = true;
+        if (hasFlipV || svgFlipV) shapeOptions.flipV = true;
+    }
+    // flip issue change end
     return shapeOptions;
 }
 

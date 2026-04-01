@@ -62,7 +62,22 @@ function getShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
         }
 
         // ── 5. Spread (outerShdw sx/sy; innerShdw has no scale attrs) ─────────
-        const spread = isInner ? 0 : scaleToSpread(attrs.sx, attrs.sy, blurPx);
+        let spread = isInner ? 0 : scaleToSpread(attrs.sx, attrs.sy, blurPx);
+
+        // ── 5b. Alignment-aware clip adjustment ───────────────────────────────
+        // When algn != ctr and sx/sy < 1, PowerPoint anchors the shadow scaling
+        // to a specific edge/corner so the shadow only bleeds on the intended
+        // side(s).  Apply a negative-spread + offset compensation to match.
+        if (!isInner) {
+            const sxVal = attrs.sx ? parseInt(attrs.sx, 10) / 100000 : 1;
+            const syVal = attrs.sy ? parseInt(attrs.sy, 10) / 100000 : 1;
+            const dirDeg = (dirRaw != null) ? (dirRaw / 60000) : 0;
+            const { spreadDelta, offXDelta, offYDelta } =
+                getAlgnClipAdjustment(attrs.algn, dirDeg, blurPx, sxVal, syVal);
+            spread += spreadDelta;
+            offX += offXDelta;
+            offY += offYDelta;
+        }
 
         // ── 6. Compose final CSS ──────────────────────────────────────────────
         const rgb = hexToRgbComponents(color);
@@ -162,6 +177,35 @@ function blurRadToPx(blurRadRaw) {
     return Math.round((parseInt(blurRadRaw, 10) / EMU_PER_PX) * 10) / 10;
 }
 
+
+/**
+ * When algn is a non-center alignment AND the shadow is scaled DOWN (sx/sy < 1),
+ * PowerPoint anchors the scaling to that edge/corner of the shape.  The shadow
+ * ends up inset from the opposite sides, so it only "bleeds" out the intended
+ * side(s).  CSS box-shadow has no such concept, so we approximate it with:
+ *   • spread = −blurPx        → collapses the shadow inward, killing unwanted bleed
+ *   • offset += blurPx in dir → compensates so the intended side stays visible
+ *
+ * Returns deltas to add onto spread, offX, offY.
+ */
+function getAlgnClipAdjustment(algn, dirDeg, blurPx, sx, sy) {
+    // No adjustment needed for center alignment or no alignment
+    if (!algn || algn === "ctr") return { spreadDelta: 0, offXDelta: 0, offYDelta: 0 };
+
+    // Only clip when the shadow is actually scaled DOWN
+    const avgScale = (sx + sy) / 2;
+    if (avgScale >= 1) return { spreadDelta: 0, offXDelta: 0, offYDelta: 0 };
+
+    // Negative spread clips the unwanted bleed on all sides
+    const spreadDelta = -blurPx;
+
+    // Re-introduce blurPx in the shadow direction so the correct side stays visible
+    const rad = (dirDeg * Math.PI) / 180;
+    const offXDelta = blurPx * Math.cos(rad);
+    const offYDelta = blurPx * Math.sin(rad);
+
+    return { spreadDelta, offXDelta, offYDelta };
+}
 
 function dirDistToOffset(dirRaw, distRaw, algn) {
     const dist = (distRaw ?? 0) / EMU_PER_PX;
@@ -370,7 +414,20 @@ function getCustomShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
             ? parseInt(attrs.dir, 10)
             : null;
 
-        const { offX, offY } = dirDistToOffset(dirRaw, distRaw, attrs.algn);
+        let { offX, offY } = dirDistToOffset(dirRaw, distRaw, attrs.algn);
+
+        // ── 4b. Alignment-aware clip adjustment ───────────────────────────────
+        // drop-shadow() has no spread parameter, so we bake the compensation
+        // directly into blur and offset instead.
+        const sxVal = attrs.sx ? parseInt(attrs.sx, 10) / 100000 : 1;
+        const syVal = attrs.sy ? parseInt(attrs.sy, 10) / 100000 : 1;
+        const dirDeg = (dirRaw != null) ? (dirRaw / 60000) : 0;
+        const { spreadDelta, offXDelta, offYDelta } =
+            getAlgnClipAdjustment(attrs.algn, dirDeg, blurPx, sxVal, syVal);
+        // For drop-shadow we absorb the negative spread into a blur reduction
+        blurPx = Math.max(0, Math.round((blurPx + spreadDelta) * 10) / 10);
+        offX += offXDelta;
+        offY += offYDelta;
 
         // ── 5. Compose CSS ────────────────────────────────────────────────────
         const rgb = hexToRgbComponents(color);

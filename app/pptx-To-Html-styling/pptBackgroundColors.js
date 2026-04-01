@@ -136,7 +136,6 @@ async function getBackgroundColor(slideXML, masterXML, themeXML, relationshipsXM
     // Check for gradient fill
     const gradFill = bgPr?.["a:gradFill"]?.[0];
 
-    console.log(">>>>>>>>>>> - GRADIENT FILL CHECK - gradFill :- ", gradFill);
 
     if (gradFill) {
       const gradientCSS = getGradientFillColor(gradFill, themeXML, masterXML);

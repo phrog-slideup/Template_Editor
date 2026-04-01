@@ -384,8 +384,6 @@ class ShapeHandler {
         let extraStyles = "";
         let maskPath = "";
 
-        console.log(" >>>>>>>>>>>>>>>> borderRadius ", borderRadius);
-
         // Extracting border (stroke) properties
         const outline = shapeNode['p:spPr']?.[0]?.['a:ln']?.[0];
         // const shapeBorder = shapeNode['p:spPr']?.[0]?.['a:ln']?.[0]?.['a:solidFill'];
@@ -554,7 +552,7 @@ class ShapeHandler {
                         z-index:${zIndex};
                         width:${position.width}px; 
                         height:${position.height}px; 
-                        transform: rotate(${position.rotation}deg) ${position.flipH ? 'scaleX(-1)' : ''} ${position.flipV ? 'scaleY(-1)' : ''}; 
+                        transform: rotate(${position.rotation}deg); // flip issue changed here
                         ${opacity}; 
                         overflow:visible;">${textContent}${svgMarkup}
                     </div>`;

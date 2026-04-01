@@ -352,9 +352,18 @@ async function setBackground(pptx, slideElement, pptSlide, slideContext = null) 
     // ─── Step 3: Handle gradient ─────────────────────────────────────────────────
     const bgToCheck = (backgroundStyle.background || '') + ' ' + (backgroundStyle.backgroundImage || '');
     if (bgToCheck.includes('gradient')) {
-        const gradientColor = parseGradientBackground(bgToCheck);
-        if (gradientColor) {
-            pptSlide.background = gradientColor;
+        const gradientProps = parseGradientBackground(bgToCheck);
+        if (gradientProps) {
+            // ⚠️ CRITICAL: Do NOT use pptSlide.background = gradientProps
+            // The background setter calls addBackgroundDefinition() which does:
+            //   if (target.background.fill) target.background.color = target.background.fill
+            // This clobbers our gradient object into .color and loses the type:'gradient' at
+            // the top level, so genXmlColorSelection() falls through to solidFill.
+            //
+            // Instead, write directly to _background so the getter returns our object as-is.
+            // slideObjectToXml checks: slide.background.type === 'gradient' → calls
+            // genXmlColorSelection(slide.background) which reads .type and .gradient correctly.
+            pptSlide._background = gradientProps;
             return;
         }
     }
@@ -441,46 +450,128 @@ function parseGradientBackground(gradientString) {
     try {
         if (!gradientString || !gradientString.includes('gradient')) return null;
 
-        // Support both linear and radial gradients (your exact HTML case)
-        const gradientMatch = gradientString.match(/(linear|radial)-gradient\(([^)]+)\)/i);
+        // ── Extract gradient type and full content ────────────────────────────────
+        // Use greedy match to handle nested parens like "radial-gradient(circle at center, ...)"
+        const gradientMatch = gradientString.match(/(linear|radial)-gradient\(([\s\S]+)\)/i);
         if (!gradientMatch) return null;
 
-        const type = gradientMatch[1].toLowerCase();
+        const type    = gradientMatch[1].toLowerCase(); // 'linear' | 'radial'
         const content = gradientMatch[2].trim();
 
-        // Extract color stops
-        const colorMatches = content.match(/#[0-9a-fA-F]{6,8}|#[0-9a-fA-F]{3}|rgba?\([^)]+\)|[a-zA-Z]+/g) || [];
-        const colorStops = [];
+        // ── Split content by commas NOT inside parentheses ────────────────────────
+        // Needed because rgba(r, g, b, a) contains inner commas
+        const parts = [];
+        let depth = 0, current = '';
+        for (const ch of content) {
+            if      (ch === '(')               { depth++; current += ch; }
+            else if (ch === ')')               { depth--; current += ch; }
+            else if (ch === ',' && depth === 0){ parts.push(current.trim()); current = ''; }
+            else                               { current += ch; }
+        }
+        if (current.trim()) parts.push(current.trim());
 
-        colorMatches.forEach((colorRaw, index) => {
-            const hexColor = extractColor(colorRaw);
-            if (hexColor) {
-                colorStops.push({
-                    color: hexColor,
-                    position: index === 0 ? 0 : 100
-                });
-            }
-        });
+        // ── Parse each part into { color, stop } ─────────────────────────────────
+        // First part may be a direction/keyword with no color — skip it
+        const colorStops = [];
+        for (const part of parts) {
+            const colorMatch = part.match(/#[0-9a-fA-F]{3,8}|rgba?\([^)]+\)/i);
+            if (!colorMatch) continue; // direction token, e.g. "circle at center", "to right"
+
+            const hexColor = extractColor(colorMatch[0]);
+            if (!hexColor) continue;
+
+            // Explicit percentage position after the color, e.g. "#ffffff 0%"
+            const pctMatch = part.match(/(\d+(?:\.\d+)?)\s*%/);
+            colorStops.push({
+                color: hexColor.toUpperCase(),
+                stop : pctMatch ? parseFloat(pctMatch[1]) / 100 : null
+            });
+        }
 
         if (colorStops.length < 2) return null;
 
-        const gradientConfig = {
-            type: 'gradient',
-            colors: colorStops
-        };
-
-        if (type === 'linear') {
-            // Keep existing linear behaviour
-            const angleMatch = content.match(/(\d+)(deg)?/i);
-            gradientConfig.angle = angleMatch ? parseInt(angleMatch[1], 10) : 90;
-        } else {
-            // Radial gradient (your case) → pptxgenjs best supported way
-            gradientConfig.angle = 0;   // 0 = centered radial for slide background
+        // ── Fill in missing stop positions (browser rules: distribute evenly) ─────
+        if (colorStops[0].stop === null) colorStops[0].stop = 0;
+        if (colorStops[colorStops.length - 1].stop === null) colorStops[colorStops.length - 1].stop = 1;
+        for (let i = 1; i < colorStops.length - 1; i++) {
+            if (colorStops[i].stop !== null) continue;
+            let next = i + 1;
+            while (next < colorStops.length - 1 && colorStops[next].stop === null) next++;
+            const span = next - (i - 1);
+            for (let j = i; j < next; j++) {
+                colorStops[j].stop = colorStops[i - 1].stop +
+                    ((colorStops[next].stop - colorStops[i - 1].stop) * (j - (i - 1))) / span;
+            }
         }
 
-        return { fill: gradientConfig };
+        const gradientColors = colorStops.map(s => s.color);
+        const gradientStops  = colorStops.map(s => s.stop);
+
+        // ── Build the object that genXmlColorSelection() expects ──────────────────
+        //
+        //   genXmlColorSelection(props) reads:
+        //     props.type          → 'gradient'   triggers the gradient branch
+        //     props.gradient.type → 'linear' | 'radial' | 'rectangular'
+        //     props.gradient.colors   → ['RRGGBB', ...]   (hex, no #)
+        //     props.gradient.stops    → [0..1, ...]
+        //     props.gradient.angleDeg → degrees (linear only)
+        //     props.gradient.focusX/Y → 0-100 (radial only)
+        //     props.gradient.path     → 'circle' | 'rect' (radial only)
+        //
+        // NOTE: This object is written to pptSlide._background directly (not via
+        // the background setter) to avoid addBackgroundDefinition() mapping
+        // .fill → .color which would lose the type:'gradient' at the top level.
+        // ─────────────────────────────────────────────────────────────────────────
+
+        if (type === 'linear') {
+            // Parse CSS angle: explicit "Ndeg" or named direction
+            let angleDeg = 180; // CSS default: top → bottom
+            const degMatch = content.match(/(\d+(?:\.\d+)?)\s*deg/i);
+            if (degMatch) {
+                angleDeg = parseFloat(degMatch[1]);
+            } else {
+                const dirMap = {
+                    'to bottom':       180,
+                    'to top':            0,
+                    'to right':         90,
+                    'to left':         270,
+                    'to bottom right': 135,
+                    'to bottom left':  225,
+                    'to top right':     45,
+                    'to top left':     315,
+                };
+                const lower = content.toLowerCase();
+                for (const [key, val] of Object.entries(dirMap)) {
+                    if (lower.includes(key)) { angleDeg = val; break; }
+                }
+            }
+            return {
+                type: 'gradient',
+                gradient: { type: 'linear', colors: gradientColors, stops: gradientStops, angleDeg }
+            };
+
+        } else {
+            // Radial — parse "circle at X Y" / "ellipse at X Y" focus point
+            let focusX = 50, focusY = 50, pathType = 'circle';
+            const atMatch = content.match(/at\s+([\w.%]+)\s+([\w.%]+)/i);
+            if (atMatch) {
+                const toNum = (tok) => {
+                    const kw = { center: 50, left: 0, right: 100, top: 0, bottom: 100 };
+                    const l = tok.toLowerCase();
+                    if (kw[l] !== undefined) return kw[l];
+                    return parseFloat(tok); // "50%" → 50, "50" → 50
+                };
+                focusX = toNum(atMatch[1]);
+                focusY = toNum(atMatch[2]);
+            }
+            return {
+                type: 'gradient',
+                gradient: { type: 'radial', colors: gradientColors, stops: gradientStops, focusX, focusY, path: pathType }
+            };
+        }
+
     } catch (error) {
-        console.error('   ❌ Error parsing gradient:', error);
+        console.error('   ❌ Error parsing gradient background:', error);
         return null;
     }
 }

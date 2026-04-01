@@ -137,8 +137,6 @@ function postProcessChartXML(chartXML, chartType, chartData) {
  * Converts HTML charts to PPTX charts using pptxgenjs
  * Node.js/JSDOM compatible version - FIXED FOR BOTH BAR AND LINE CHARTS
  */
-
-// ✅ FIXED: Chart-type-specific options
 function createChartOptions(chartData, position, styling) {
     const baseOptions = {
         x: position.x,
@@ -149,12 +147,9 @@ function createChartOptions(chartData, position, styling) {
         title: chartData.title || '',
         showLegend: true,
         legendPos: 'r',
-        showValue: false,
     };
 
-    // ✅ Apply chart-type-specific options
     if (chartData.type === 'line') {
-        // Line chart specific options
         return {
             ...baseOptions,
             catAxisOptions: {
@@ -171,16 +166,36 @@ function createChartOptions(chartData, position, styling) {
             }
         };
     } else if (chartData.type === 'bar' || chartData.type === 'column') {
-        // Bar/Column chart specific options
-        return {
-            ...baseOptions,
-            barDir: 'col',
-            barGrouping: 'clustered',
-            barGapWidthPct: 150,
-            barOverlapPct: -25,
-        };
-    } else {
-        // Default options for other chart types
+    const isHorizontal = chartData.isHorizontal === true;
+    const axisMax = Math.ceil(chartData.maxValue * 10) / 10 + 1;
+
+    // For horizontal bar in pptxgenjs:
+    //   catAxisTitle = the LEFT axis (Y) = where categories are = XML's catAx = "NR Axis Title"
+    //   valAxisTitle = the BOTTOM axis (X) = where values are  = XML's valAx = ""
+    // So pass catAxisTitle directly to catAxisTitle — NO swap needed
+    return {
+        ...baseOptions,
+        barDir: isHorizontal ? 'bar' : 'col',
+        barGrouping: 'clustered',
+        barGapWidthPct: 150,
+        barOverlapPct: -25,
+        legendPos: 'b',
+        valAxisMinVal: 0,
+        valAxisMaxVal: axisMax,
+        showValue: true,
+        dataLabelPosition: 'outEnd',
+        dataLabelFontSize: 11,
+        dataLabelColor: '666666',
+        dataLabelFormatCode: 'General',       // ✅ FIX: no trailing dots
+        showTitle: !!chartData.title,         // ✅ FIX: ensure chart title shows
+        title: chartData.title || '',
+        // ✅ FIX: catAxisTitle in pptxgenjs = left/Y axis for horizontal = XML catAx
+        showCatAxisTitle: !!chartData.catAxisTitle,
+        catAxisTitle: chartData.catAxisTitle || '',
+        showValAxisTitle: !!chartData.valAxisTitle,
+        valAxisTitle: chartData.valAxisTitle || '',
+    };
+} else {
         return baseOptions;
     }
 }
@@ -192,6 +207,7 @@ function addChartToSlide(pptx, pptSlide, element, slideContext) {
             return false;
         }
 
+        // Extract chart type
         // Extract chart type
         const chartType = element.getAttribute('data-chart-type') || 'bar';
 
@@ -209,6 +225,10 @@ function addChartToSlide(pptx, pptSlide, element, slideContext) {
 
         // Add type to chartData for options generation
         chartData.type = chartType;
+
+        // Detect horizontal bar chart from data-chart-direction attribute
+        // (set this attribute in barChartHandler.js when isHorizontal=true)
+        chartData.isHorizontal = element.getAttribute('data-chart-direction') === 'horizontal';
 
         // Extract position and styling
         const position = extractChartPosition(element, slideContext);
@@ -362,6 +382,9 @@ function extractLineChartData(chartContainer) {
 }
 
 function extractBarChartData(chartContainer) {
+
+     const titleEl = chartContainer.querySelector('.chart-title');
+    const chartTitle = titleEl ? titleEl.textContent.trim() : '';
     const categories = [];
     const seriesMap = new Map();
     const seriesColors = new Map();
@@ -380,6 +403,11 @@ function extractBarChartData(chartContainer) {
                 }
             }
         }
+
+        // Horizontal bar charts render categories bottom-up in the DOM
+        // (Cat4 appears first in DOM, Cat1 last). Reverse to restore natural order
+        // so PPTX receives Cat1, Cat2, Cat3, Cat4.
+
 
         // Extract bars and their data
         const bars = chartContainer.querySelectorAll('.bar[data-value][data-series][data-category]');
@@ -425,13 +453,21 @@ function extractBarChartData(chartContainer) {
         const series = [];
         const sortedSeriesIndices = Array.from(seriesMap.keys()).sort((a, b) => a - b);
 
+        // Detect if this is a horizontal bar chart
+        // In horizontal mode, HTML renders categories bottom-up (Cat4 at top DOM position)
+        // but data-category indices still go 0,1,2,3 = Cat1,Cat2,Cat3,Cat4
+        // PPT expects categories in natural order (Cat1 first), so no reversal needed for values.
+        // However, series in HTML are rendered reversed (S3 on top, S1 on bottom),
+        // so data-series indices 0,1,2 = S1,S2,S3 — this is already correct natural order.
+        // No reversal needed: pptxgenjs receives S1,S2,S3 and renders them correctly.
+
         sortedSeriesIndices.forEach(seriesIndex => {
             const categoryMap = seriesMap.get(seriesIndex);
             const values = [];
 
-            // Fill values array in category order
+            // Fill values in natural category order (Cat1=0, Cat2=1, ...)
             for (let catIndex = 0; catIndex < categories.length; catIndex++) {
-                values.push(categoryMap.get(catIndex) || 0);
+                values.push(categoryMap.get(catIndex) !== undefined ? categoryMap.get(catIndex) : 0);
             }
 
             series.push({
@@ -446,11 +482,17 @@ function extractBarChartData(chartContainer) {
         const maxValue = allValues.length > 0 ? Math.max(...allValues) : 10;
         const minValue = allValues.length > 0 ? Math.min(...allValues, 0) : 0;
 
+        const catAxisTitle = chartContainer.getAttribute('data-cat-axis-title') || '';
+        const valAxisTitle = chartContainer.getAttribute('data-val-axis-title') || '';
+
         return {
             categories,
             series,
             maxValue,
-            minValue
+            minValue,
+            catAxisTitle,
+            valAxisTitle,
+            title: chartTitle
         };
 
     } catch (error) {
@@ -496,121 +538,73 @@ function extractPieChartData(chartContainer) {
 
 function extractChartPosition(chartContainer, slideContext) {
     try {
-        // First, try to get the actual chart area dimensions if available
-        const chartArea = chartContainer.querySelector('.chart-area');
-        let left = 0, top = 0, width = 400, height = 300;
+        let left = 0, top = 0, width = 600, height = 400;
 
-        // Extract container position
         const containerStyle = chartContainer.getAttribute('style');
         if (containerStyle) {
             const leftMatch = containerStyle.match(/left:\s*([0-9]*\.?[0-9]+)px/i);
             const topMatch = containerStyle.match(/top:\s*([0-9]*\.?[0-9]+)px/i);
-
-            if (leftMatch) left = parseFloat(leftMatch[1]) || 0;
-            if (topMatch) top = parseFloat(topMatch[1]) || 0;
-        }
-
-        // Use the full container dimensions for better sizing
-        if (containerStyle) {
             const widthMatch = containerStyle.match(/width:\s*([0-9]*\.?[0-9]+)px/i);
             const heightMatch = containerStyle.match(/height:\s*([0-9]*\.?[0-9]+)px/i);
 
-            if (widthMatch) width = parseFloat(widthMatch[1]) || 400;
-            if (heightMatch) height = parseFloat(heightMatch[1]) || 300;
+            if (leftMatch) left = parseFloat(leftMatch[1]);
+            if (topMatch) top = parseFloat(topMatch[1]);
+            if (widthMatch) width = parseFloat(widthMatch[1]);
+            if (heightMatch) height = parseFloat(heightMatch[1]);
         }
 
-        // COMPLETELY REVISED APPROACH: Use proportional sizing instead of exact pixel conversion
-        // Get slide dimensions - try to detect from HTML structure
-        let slideWidthPx = 960;
-        let slideHeightPx = 540;
+        // ✅ FIX: Try multiple selectors to find the actual slide container
+        let slideWidthPx = 0;
+        let slideHeightPx = 0;
 
-        const slideElement = chartContainer.closest('.sli-slide');
-        if (slideElement) {
-            const slideStyle = slideElement.getAttribute('style');
-            if (slideStyle) {
-                const slideWidthMatch = slideStyle.match(/width:\s*([0-9]*\.?[0-9]+)px/i);
-                const slideHeightMatch = slideStyle.match(/height:\s*([0-9]*\.?[0-9]+)px/i);
-                if (slideWidthMatch) slideWidthPx = parseFloat(slideWidthMatch[1]);
-                if (slideHeightMatch) slideHeightPx = parseFloat(slideHeightMatch[1]);
+        const slideSelectors = ['.sli-slide', '.slide', '.slide-container', '[class*="slide"]'];
+        for (const selector of slideSelectors) {
+            const el = chartContainer.closest(selector);
+            if (el) {
+                const s = el.getAttribute('style') || '';
+                const sw = s.match(/width:\s*([0-9]*\.?[0-9]+)px/i);
+                const sh = s.match(/height:\s*([0-9]*\.?[0-9]+)px/i);
+                if (sw && sh) {
+                    slideWidthPx = parseFloat(sw[1]);
+                    slideHeightPx = parseFloat(sh[1]);
+                    break;
+                }
             }
         }
 
-        // Calculate proportions of the chart relative to the slide
-        const widthRatio = width / slideWidthPx;
-        const heightRatio = height / slideHeightPx;
-        const leftRatio = left / slideWidthPx;
-        const topRatio = top / slideHeightPx;
-
-        // FIXED: Use standard PowerPoint slide dimensions (10" x 7.5" for 4:3 or 13.33" x 7.5" for 16:9)
-        // Most modern presentations use 16:9, so let's use that
-        const pptSlideWidthIn = 13.33;
-        const pptSlideHeightIn = 7.5;
-
-        // Apply the same proportions to PowerPoint slide
-        let pptX = leftRatio * pptSlideWidthIn;
-        let pptY = topRatio * pptSlideHeightIn;
-        let pptW = widthRatio * pptSlideWidthIn;
-        let pptH = heightRatio * pptSlideHeightIn;
-
-        // CRITICAL FIX: Apply size multiplier if chart is still too small
-        // Based on your screenshots, we need to make it significantly larger
-        const minVisibleWidth = 4.5;  // Minimum 4.5 inches to be clearly visible
-        const minVisibleHeight = 3.0; // Minimum 3 inches to be clearly visible
-
-        if (pptW < minVisibleWidth) {
-            const scaleFactor = minVisibleWidth / pptW;
-            pptW = minVisibleWidth;
-            pptH *= scaleFactor; // Scale height proportionally
-        }
-
-        if (pptH < minVisibleHeight) {
-            const scaleFactor = minVisibleHeight / pptH;
-            pptH = minVisibleHeight;
-            pptW *= scaleFactor; // Scale width proportionally  
-        }
-
-        // Ensure chart fits within slide boundaries after scaling
-        if (pptX + pptW > pptSlideWidthIn) {
-            if (pptW > pptSlideWidthIn - 1) {
-                // Chart is wider than slide, scale down
-                const scale = (pptSlideWidthIn - 1) / pptW;
-                pptW = pptSlideWidthIn - 1;
-                pptH *= scale;
-                pptX = 0.5;
+        // ✅ FIX: If no slide container found, infer from chart position + size
+        // The chart at left:48, width:858 implies slide width ≈ 48+858+~54 = ~960
+        if (!slideWidthPx || !slideHeightPx) {
+            // Use slideContext if passed, otherwise infer from chart bounds
+            if (slideContext && slideContext.slideWidth && slideContext.slideHeight) {
+                slideWidthPx = slideContext.slideWidth;
+                slideHeightPx = slideContext.slideHeight;
             } else {
-                // Just reposition
-                pptX = pptSlideWidthIn - pptW - 0.5;
+                // Infer: chart occupies most of slide, so slide ≈ chart + margins
+                // left:48 + width:858 + ~54 right margin = 960
+                slideWidthPx = Math.round((left + width) / 0.9); // assume chart is ~90% of slide
+                slideHeightPx = Math.round((top + height) / 0.9);
             }
         }
 
-        if (pptY + pptH > pptSlideHeightIn) {
-            if (pptH > pptSlideHeightIn - 1) {
-                // Chart is taller than slide, scale down
-                const scale = (pptSlideHeightIn - 1) / pptH;
-                pptH = pptSlideHeightIn - 1;
-                pptW *= scale;
-                pptY = 0.5;
-            } else {
-                // Just reposition
-                pptY = pptSlideHeightIn - pptH - 0.5;
-            }
-        }
+        const pptW_in = 13.33;
+        const pptH_in = 7.5;
 
-        // Final positioning with safety margins
-        const finalPosition = {
-            x: Math.max(0.25, pptX),
-            y: Math.max(0.25, pptY),
-            w: pptW,
-            h: pptH
+        const pptX = (left / slideWidthPx) * pptW_in;
+        const pptY = (top / slideHeightPx) * pptH_in;
+        const pptW = (width / slideWidthPx) * pptW_in;
+        const pptH = (height / slideHeightPx) * pptH_in;
+
+        return {
+            x: Math.max(0, parseFloat(pptX.toFixed(3))),
+            y: Math.max(0, parseFloat(pptY.toFixed(3))),
+            w: parseFloat(pptW.toFixed(3)),
+            h: parseFloat(pptH.toFixed(3))
         };
-
-        // Additional debugging info
-        return finalPosition;
 
     } catch (error) {
         console.error("Error extracting position:", error);
-        // Return a large, visible fallback
-        return { x: 2, y: 2, w: 7, h: 4.5 };
+        return { x: 0.5, y: 0.5, w: 12, h: 6.5 };
     }
 }
 

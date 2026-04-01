@@ -55,6 +55,12 @@ class BarChartHandler {
         const chart = chartXML["c:chartSpace"]?.["c:chart"]?.[0];
         const title = this.getChartTitle(chart) || shapeName || "Chart";
 
+        // Extract axis titles
+        const catAxNode = (plotArea["c:catAx"] || [])[0];
+        const valAxNode = (plotArea["c:valAx"] || [])[0];
+        const catAxisTitle = this.getAxisTitle(catAxNode);  // vertical label (Y-axis for horizontal charts)
+        const valAxisTitle = this.getAxisTitle(valAxNode);  // horizontal label (X-axis for horizontal charts)
+
         // Create sample data structure
         const series = [
             {
@@ -143,6 +149,7 @@ class BarChartHandler {
             // Get axis info and data extents
             let yAxis = this.getValueAxis(plotArea);
 
+
             // Apply axis preferences if provided (allows manual override)
             if (axisPreferences) {
                 yAxis = {
@@ -155,13 +162,20 @@ class BarChartHandler {
             const dataMin = allValues.length ? Math.min(...allValues) : 0;
             const dataMax = allValues.length ? Math.max(...allValues) : 5;
 
+            const catAxNode = (plotArea["c:catAx"] || [])[0];
+            const valAxNode = (plotArea["c:valAx"] || [])[0];
+            const catAxisTitle = this.getAxisTitle(catAxNode); // Y-axis title for horizontal charts
+            const valAxisTitle = this.getAxisTitle(valAxNode); // X-axis title for horizontal charts
+
             const result = {
                 type: "bar",
                 isHorizontal,
                 title,
                 series: chartSeries,
                 categories: chartSeries.length ? chartSeries[0].categories : [],
-                axes: { yAxis, dataMin, dataMax, allValues }, // Include allValues for analysis
+                axes: { yAxis, dataMin, dataMax, allValues },
+                catAxisTitle,  // ✅ NOW included
+                valAxisTitle,  // ✅ NOW included
             };
 
 
@@ -261,10 +275,16 @@ class BarChartHandler {
                 if (val[0]["c:numRef"]) {
                     const numCache = val[0]["c:numRef"][0]["c:numCache"];
                     if (numCache && numCache[0]["c:pt"]) {
-                        const values = numCache[0]["c:pt"].map((pt) => {
+                        // Use idx attribute to place values in correct positions (sparse-safe)
+                        const ptCount = parseInt(numCache[0]["c:ptCount"]?.[0]?.["$"]?.val || numCache[0]["c:pt"].length);
+                        const values = new Array(ptCount).fill(0);
+                        numCache[0]["c:pt"].forEach((pt) => {
+                            const idx = parseInt(pt["$"]?.idx ?? 0);
                             const v = pt["c:v"]?.[0];
-                            return v !== undefined ? parseFloat(v) : 0;
-                        }).filter(v => !isNaN(v));
+                            if (v !== undefined && !isNaN(parseFloat(v))) {
+                                values[idx] = parseFloat(v);
+                            }
+                        });
                         return values;
                     }
                 }
@@ -272,10 +292,16 @@ class BarChartHandler {
                 if (val[0]["c:numLit"]) {
                     const numLit = val[0]["c:numLit"][0];
                     if (numLit["c:pt"]) {
-                        return numLit["c:pt"].map((pt) => {
+                        const ptCount = parseInt(numLit["c:ptCount"]?.[0]?.["$"]?.val || numLit["c:pt"].length);
+                        const values = new Array(ptCount).fill(0);
+                        numLit["c:pt"].forEach((pt) => {
+                            const idx = parseInt(pt["$"]?.idx ?? 0);
                             const v = pt["c:v"]?.[0];
-                            return v !== undefined ? parseFloat(v) : 0;
-                        }).filter(v => !isNaN(v));
+                            if (v !== undefined && !isNaN(parseFloat(v))) {
+                                values[idx] = parseFloat(v);
+                            }
+                        });
+                        return values;
                     }
                 }
             }
@@ -293,7 +319,12 @@ class BarChartHandler {
                 if (cat[0]["c:strRef"]) {
                     const strCache = cat[0]["c:strRef"][0]["c:strCache"];
                     if (strCache && strCache[0]["c:pt"]) {
-                        const categories = strCache[0]["c:pt"].map((pt) => pt["c:v"]?.[0] || "");
+                        const ptCount = parseInt(strCache[0]["c:ptCount"]?.[0]?.["$"]?.val || strCache[0]["c:pt"].length);
+                        const categories = new Array(ptCount).fill("");
+                        strCache[0]["c:pt"].forEach((pt) => {
+                            const idx = parseInt(pt["$"]?.idx ?? 0);
+                            categories[idx] = pt["c:v"]?.[0] || "";
+                        });
                         return categories;
                     }
                 }
@@ -428,7 +459,10 @@ class BarChartHandler {
             // Round min/max to align with step for clean axis
             min = Math.floor(min / step) * step;
             max = Math.ceil(max / step) * step;
-
+            // PPT always adds one extra majorUnit beyond data max for breathing room
+            if (max <= dataMax + step * 0.01) {
+                max = max + step;
+            }
         }
 
         const span = max - min || step;
@@ -577,8 +611,8 @@ class BarChartHandler {
             }
 
             const defaultColors = [
-                "#A5C249", "#7CCA62", "#10CF9B", "#5B9BD5", "#70AD47",
-                "#FFC000", "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4"
+                "#4472C4", "#ED7D31", "#1F6B3A", "#FFC000", "#5B9BD5",
+                "#70AD47", "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4"
             ];
             return defaultColors[index % defaultColors.length];
         } catch {
@@ -589,8 +623,8 @@ class BarChartHandler {
 
     resolveThemeColor(colorName) {
         const themeColors = {
-            accent1: "#5B9BD5", accent2: "#70AD47", accent3: "#FFC000",
-            accent4: "#10CF9B", accent5: "#7CCA62", accent6: "#A5C249",
+            accent1: "#4472C4", accent2: "#ED7D31", accent3: "#1F6B3A",
+            accent4: "#FFC000", accent5: "#5B9BD5", accent6: "#70AD47",
         };
         return themeColors[colorName] || "#5B9BD5";
     }
@@ -602,6 +636,30 @@ class BarChartHandler {
                 const rich = title[0]["c:tx"][0]["c:rich"][0];
                 if (rich["a:p"] && rich["a:p"][0] && rich["a:p"][0]["a:r"]) {
                     return rich["a:p"][0]["a:r"][0]["a:t"][0];
+                }
+            }
+            return "";
+        } catch {
+            return "";
+        }
+    }
+
+    getAxisTitle(axisXML) {
+        try {
+            const title = axisXML?.["c:title"];
+            if (title && title[0] && title[0]["c:tx"] && title[0]["c:tx"][0]["c:rich"]) {
+                const rich = title[0]["c:tx"][0]["c:rich"][0];
+                if (rich["a:p"]) {
+                    for (const p of rich["a:p"]) {
+                        if (p["a:r"]) {
+                            for (const r of p["a:r"]) {
+                                if (r["a:t"] && r["a:t"][0]) {
+                                    const text = this.extractTextValue(r["a:t"][0]);
+                                    if (text) return text;  // ✅ Return first non-empty text
+                                }
+                            }
+                        }
+                    }
                 }
             }
             return "";
@@ -628,62 +686,113 @@ class BarChartHandler {
     }
 
     generateChartHTML(chartData, position, shapeName, shapeId, relationshipId, zIndex = 0) {
-        // Create deterministic chartId using shapeId
-        const chartId = "chart_" + shapeId;
+    const chartId = "chart_" + shapeId;
+    const { yAxis, dataMin, dataMax, allValues = [] } = chartData.axes || {};
+    const tickInfo = this.computeValueTicks(yAxis, dataMin, dataMax, 10, allValues);
 
-        const { yAxis, dataMin, dataMax, allValues = [] } = chartData.axes || {};
-        const tickInfo = this.computeValueTicks(yAxis, dataMin, dataMax, 10, allValues);
+    let html = `<div class="chart-container" 
+         data-name="${shapeName}" 
+         data-shape-id="${shapeId}"
+         data-rel-id="${relationshipId}"
+         data-chart-type="bar"
+         data-chart-direction="${chartData.isHorizontal ? 'horizontal' : 'vertical'}"
+         data-cat-axis-title="${chartData.catAxisTitle || ''}"
+         data-val-axis-title="${chartData.valAxisTitle || ''}"
+         id="${chartId}"
+         style="...your existing styles...">`;
 
-        let html = `<div class="chart-container" 
-                 data-name="${shapeName}" 
-                 data-shape-id="${shapeId}"
-                 data-rel-id="${relationshipId}"
-                 id="${chartId}" 
-                 style="
-                     position: absolute; 
-                     top: ${position.top}px;
-                     left: ${position.left}px;
-                     width: ${position.width}px;
-                     height: ${position.height}px;
-                     padding: 20px;
-                     border: 1px solid #ddd;
-                     border-radius: 4px;
-                     background: white;
-                     font-family: Arial, sans-serif;
-                     z-index: ${zIndex};  
-                     cursor: pointer;
-                     box-sizing: border-box;">`;
+    if (chartData.title) {
+        html += `<div class="chart-title" style="
+            text-align: center; font-weight: bold;
+            font-size: 16px; margin-bottom: 20px; color: #333;">
+            ${chartData.title}</div>`;
+    }
 
-        if (chartData.title) {
-            html += `<div class="chart-title" style="
-                        text-align: center;
-                        font-weight: bold;
-                        font-size: 16px;
-                        margin-bottom: 20px;
-                        color: #333;">
-                            ${chartData.title}</div>`;
-        }
+    const chartAreaHeight = position.height - 140;
+    const chartAreaWidth = position.width - 140;
 
-        const chartAreaHeight = position.height - 100;
-        const chartAreaWidth = position.width - 100;
+    // ✅ ADD: Y-axis title for horizontal charts (rotated, on the left)
+    if (chartData.isHorizontal && chartData.catAxisTitle) {
+        html += `<div class="cat-axis-title" style="
+            position: absolute;
+            left: 10px;
+            top: ${position.height / 2}px;
+            transform: rotate(-90deg) translateX(-50%);
+            transform-origin: left center;
+            font-size: 12px;
+            color: #666;
+            font-family: Arial, sans-serif;
+            white-space: nowrap;
+            z-index: 4;">
+            ${chartData.catAxisTitle}</div>`;
+    }
 
-        html += `<div class="chart-area" style="
-                        position: relative;
-                        height: ${chartAreaHeight}px;
-                        width: ${chartAreaWidth}px;
-                        margin-left: 60px;
-                        margin-top: 20px;">`;
+    html += `<div class="chart-area" style="
+        position: relative;
+        height: ${chartAreaHeight}px;
+        width: ${chartAreaWidth}px;
+        margin-left: 100px;
+        margin-top: 20px;
+        overflow: visible;
+        padding-bottom: 30px;">`;
 
-        if (chartData.isHorizontal) {
-            html += this.generateHorizontalBars(chartData, chartAreaWidth, chartAreaHeight, tickInfo);
-        } else {
-            html += this.generateVerticalBars(chartData, chartAreaWidth, chartAreaHeight, tickInfo);
-        }
+    // ✅ ADD: X-axis title for horizontal charts (below the axis)
+    if (chartData.isHorizontal && chartData.valAxisTitle) {
+        html += `<div class="val-axis-title" style="
+            position: absolute;
+            bottom: -25px;
+            width: 100%;
+            text-align: center;
+            font-size: 12px;
+            color: #666;
+            font-family: Arial, sans-serif;
+            z-index: 4;">
+            ${chartData.valAxisTitle}</div>`;
+    }
 
-        html += this.generateAxes(chartData, chartAreaWidth, chartAreaHeight, tickInfo);
-        html += "</div>";
-        html += "</div>";
+    if (chartData.isHorizontal) {
+        html += this.generateHorizontalBars(chartData, chartAreaWidth, chartAreaHeight, tickInfo);
+    } else {
+        html += this.generateVerticalBars(chartData, chartAreaWidth, chartAreaHeight, tickInfo);
+    }
 
+    html += this.generateAxes(chartData, chartAreaWidth, chartAreaHeight, tickInfo);
+    html += "</div>";
+    html += this.generateLegend(chartData);
+    html += "</div>";
+
+    return html;
+}
+    generateLegend(chartData) {
+        // Show legend in PPT order: Series 3, Series 2, Series 1 (reversed from data order)
+        const legendSeries = [...chartData.series].reverse();
+
+        let html = `<div class="chart-legend" style="
+        display: flex;
+        flex-direction: row;
+        justify-content: center;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-top: 12px;
+        font-family: Arial, sans-serif;
+        font-size: 12px;
+        color: #333;">`;
+
+        legendSeries.forEach((series) => {
+            html += `<div style="display: flex; align-items: center; gap: 5px;">
+            <div style="
+                width: 12px;
+                height: 12px;
+                background-color: ${series.color};
+                flex-shrink: 0;
+                border-radius: 1px;">
+            </div>
+            <span>${series.name}</span>
+        </div>`;
+        });
+
+        html += `</div>`;
         return html;
     }
 
@@ -757,42 +866,66 @@ class BarChartHandler {
 
         const min = tickInfo.min;
         const span = tickInfo.span || tickInfo.max - tickInfo.min || 1;
-        const innerW = width - 60;
+        const innerW = width;
 
-        const valueToX = (v) => 40 + ((v - min) / span) * innerW;
+        const valueToX = (v) => ((v - min) / span) * innerW;
         const zeroX = valueToX(0);
 
         chartData.categories.forEach((category, categoryIndex) => {
+            // PPT renders categories bottom-up, so reverse the visual index
+            const visualIndex = (categoryCount - 1) - categoryIndex;
             chartData.series.forEach((series, seriesIndex) => {
+                // Reverse series draw order to match PPT (Series 3 on top, Series 1 on bottom)
+                const visualSeriesIndex = (seriesCount - 1) - seriesIndex;
                 const value = series.values[categoryIndex] ?? 0;
                 const xVal = valueToX(value);
                 const left = Math.round(Math.min(xVal, zeroX));
                 const bWidth = Math.round(Math.max(1, Math.abs(xVal - zeroX)));
-                const y = Math.round(categoryIndex * categoryHeight + barSpacing + seriesIndex * barHeight);
+                const y = Math.round(visualIndex * categoryHeight + barSpacing + visualSeriesIndex * barHeight);
 
-                html += `<div class="bar" style="
-                                position: absolute;
-                                left: ${left}px;
-                                top: ${y}px;
-                                width: ${bWidth}px;
-                                height: ${barHeight - 2}px;
-                                background-color: ${series.color};
-                                border-radius: 2px;
-                                transition: opacity 0.3s;
-                                z-index: 2;
-                                " title="${series.name}: ${value}"></div>`;
+                html += `<div class="bar"
+                data-value="${value}"
+                data-series="${seriesIndex}"
+                data-category="${categoryIndex}"
+                style="
+                position: absolute;
+                left: ${left}px;
+                top: ${y}px;
+                width: ${bWidth}px;
+                height: ${barHeight - 2}px;
+                background-color: ${series.color};
+                border-radius: 2px;
+                transition: opacity 0.3s;
+                z-index: 2;
+                " title="${series.name}: ${value}"></div>`;
+                // Add data label
+                if (value !== 0) {
+                    const labelX = left + bWidth + 5;
+                    html += `<div class="data-label" style="
+        position: absolute;
+        left: ${labelX}px;
+        top: ${y + (barHeight - 2) / 2 - 6}px;
+        font-size: 11px;
+        color: #666;
+        z-index: 5;
+        white-space: nowrap;
+    ">${value}</div>`;
+                }
             });
 
             html += `<div class="category-label" style="
-                                position: absolute;
-                                left: 5px;
-                                top: ${categoryIndex * categoryHeight + categoryHeight / 2 - 8}px;
-                                width: 35px;
-                                text-align: right;
-                                font-size: 12px;
-                                color: #666;
-                                z-index: 4;
-                            ">${category}</div>`;
+                    position: absolute;
+                    left: -85px;
+                    top: ${visualIndex * categoryHeight + categoryHeight / 2 - 8}px;
+                    width: 80px;
+                    text-align: right;
+                    font-size: 12px;
+                    color: #666;
+                    z-index: 4;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                ">${category}</div>`;
         });
 
         return html;
@@ -806,9 +939,9 @@ class BarChartHandler {
 
         if (chartData.isHorizontal) {
             ticks.forEach((t) => {
-                const x = 40 + ((t - min) / span) * innerW;
+                const x = ((t - min) / span) * innerW;
                 html += `<div style="position:absolute; left:${x}px; top:0; width:1px; height:${height - 20}px; background:#eee; z-index:1; pointer-events:none;"></div>`;
-                html += `<div class="axis-label" style="position:absolute; left:${x - 15}px; top:${height + 5}px; width:30px; text-align:center; font-size:10px; color:#666; z-index:4;">${this.formatTick(t, numFmt, step)}</div>`;
+                html += `<div class="axis-label" style="position:absolute; left:${x - 15}px; top:${height + 8}px; width:30px; text-align:center; font-size:10px; color:#666; z-index:4;">${this.formatTick(t, numFmt, step)}</div>`;
             });
         } else {
             ticks.forEach((t) => {

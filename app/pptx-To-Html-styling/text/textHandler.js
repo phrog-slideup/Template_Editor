@@ -1316,8 +1316,8 @@ function createSpanFromRun(runRPrNode, fallbackTxtWeight, textValue, lineHeight,
     const styles = [
         fontWeight !== 'normal' ? `font-weight: ${fontWeight}` : '',
         fontStyle !== 'normal' ? `font-style: ${fontStyle}` : '',
-        `font-family: ${getFontFallbackStack(fontFamily)}`,
-        // `font-family: ${fontFamily}`,
+        // `font-family: ${getFontFallbackStack(fontFamily)}`,
+        `font-family: ${fontFamily}`,
         `font-size: ${adjustedFontSize}px`,
         // `color: ${finalColor}`,
         finalColor ? `color: ${finalColor}` : '', // Only add color if not using gradient

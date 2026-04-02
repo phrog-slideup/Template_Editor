@@ -4,9 +4,6 @@ function generateCustomShapeSVG(custGeom, position, fillColor, stroke, flipOptio
     const viewBoxHeight = position.height;
 
     // ✅ FIX 1: Build SVG-level flip transform for the <path> element.
-    // PowerPoint's flipH/flipV mirrors the custGeom path within its own bounding box.
-    // The outer HTML div must NOT carry scaleX(-1)/scaleY(-1) — that would flip an
-    // already-correct SVG a second time. We handle it here via an SVG transform.
     const { flipH = false, flipV = false } = flipOptions;
     let pathTransform = "";
     // flip issue change start
@@ -84,11 +81,6 @@ function generateCustomShapeSVG(custGeom, position, fillColor, stroke, flipOptio
     combinedPathData = combinedPathData.trim();
 
     // ✅ FIX 3: Convert CSS linear-gradient angle to correct SVG linearGradient vector.
-    // The old code hardcoded x1="100%" y1="0%" x2="0%" y2="0%" (always left→right).
-    // Now we extract the actual angle from the CSS string and compute the correct
-    // SVG x1/y1/x2/y2 using the standard formula:
-    //   start = (0.5 - 0.5·sinθ, 0.5 + 0.5·cosθ), end = (0.5 + 0.5·sinθ, 0.5 - 0.5·cosθ)
-    // The regex also now tolerates N gradient stops (not just exactly 2), and handles
     // radial-gradient pass-through for non-linear fills.
     const isLinearGradient = /^linear-gradient\(/.test(fillColor);
     const isRadialGradient = /^radial-gradient\(/.test(fillColor);

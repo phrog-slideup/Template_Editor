@@ -1017,7 +1017,6 @@ body {
     /* cursor: move; */
     /* transition: all 0.2s; — removed: caused grow/shrink flicker on click/select */
     box-sizing: border-box;
-    overflow: visible !important;
 }
 
 .shape-inner {
@@ -1563,6 +1562,10 @@ body {
     outline-offset: 2px;
 }
 
+#pptxList{
+    height: 93%;
+    overflow-y: auto;
+}
 /* Context Menu for Images */
 .image-context-menu {
     position: absolute;
@@ -1715,8 +1718,6 @@ body {
 /* Prevent handles from being clipped */
 .shape.hover,
 .shape.selected,
-.custom-shape.hover,
-.custom-shape.selected,
 .sli-slide .image-container.hover,
 .sli-slide .image-container.selected {
     overflow: visible;
@@ -1729,8 +1730,6 @@ body {
 /* Handles often sit slightly outside the element; avoid clipping */
 .shape.hover,
 .shape.selected,
-.custom-shape.hover,
-.custom-shape.selected,
 .shape-group.hover,
 .shape-group.selected,
 .sli-slide .image-container.hover,

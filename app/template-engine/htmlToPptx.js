@@ -335,22 +335,25 @@ async function setBackground(pptx, slideElement, pptSlide, slideContext = null) 
 
     const backgroundStyle = backgroundElement.style;
 
+    // ─── Extract background values from style attribute (JSDOM doesn't parse inline styles properly) ───────────────
+    const styleAttr = backgroundElement.getAttribute('style') || '';
+    const backgroundMatch = styleAttr.match(/background:\s*([^;]+)/);
+    const backgroundImageMatch = styleAttr.match(/background-image:\s*([^;]+)/);
+    const opacityMatch = styleAttr.match(/opacity:\s*([^;]+)/);
+
+    const background = backgroundMatch ? backgroundMatch[1].trim() : (backgroundStyle.background || backgroundStyle.backgroundColor || '');
+    const backgroundImage = backgroundImageMatch ? backgroundImageMatch[1].trim() : (backgroundStyle.backgroundImage || '');
+
     // Read opacity — applies to both solid colors AND background images
     let backgroundOpacity = 1;
-    if (backgroundStyle.opacity) {
+    if (opacityMatch) {
+        backgroundOpacity = parseFloat(opacityMatch[1].trim());
+    } else if (backgroundStyle.opacity) {
         backgroundOpacity = parseFloat(backgroundStyle.opacity);
     }
 
-    // ─── BUG FIX: read background-image in addition to background ───────────────
-    // The HTML emitted by pptxToHtml uses `background-image: url(...)` for slide
-    // background images, NOT the shorthand `background` property. The old code only
-    // checked `backgroundStyle.background`, so the url() branch was never reached
-    // and the image was silently dropped.
-    const backgroundImage = backgroundStyle.backgroundImage || '';
-    const background = backgroundStyle.background || backgroundStyle.backgroundColor || '';
-
     // ─── Step 3: Handle gradient ─────────────────────────────────────────────────
-    const bgToCheck = (backgroundStyle.background || '') + ' ' + (backgroundStyle.backgroundImage || '');
+    const bgToCheck = background + ' ' + backgroundImage;
     if (bgToCheck.includes('gradient')) {
         const gradientProps = parseGradientBackground(bgToCheck);
         if (gradientProps) {
@@ -3348,5 +3351,6 @@ async function fixTableCellAlignment(slideXmlsDir) {
 }
 
 module.exports = {
-    convertHTMLToPPTX
+    convertHTMLToPPTX,
+    parseGradientBackground
 };

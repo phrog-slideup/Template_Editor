@@ -4,6 +4,39 @@ const { parseShadowFromBoxShadow } = require('./parseShadowFromBoxShadow.js');
 const { extractGlowFromWrapperHTML } = require('./handleShapeGlow.js');
 
 
+function extractSvgPresentationProps(shapeElement) {
+    const svgEl = shapeElement.querySelector('svg');
+    if (!svgEl) return null;
+
+    const shapeNode = svgEl.querySelector('polygon, path, rect, ellipse, circle');
+    if (!shapeNode) return null;
+
+    const fill = shapeNode.getAttribute('fill');
+    const stroke = shapeNode.getAttribute('stroke');
+    const strokeWidthRaw = shapeNode.getAttribute('stroke-width');
+    const opacityRaw = shapeNode.getAttribute('opacity');
+
+    let strokeWidth = 0;
+    if (strokeWidthRaw !== null && strokeWidthRaw !== undefined && strokeWidthRaw !== '') {
+        strokeWidth = parseFloat(strokeWidthRaw);
+        if (isNaN(strokeWidth)) strokeWidth = 0;
+    }
+
+    let opacity = 1;
+    if (opacityRaw !== null && opacityRaw !== undefined && opacityRaw !== '') {
+        const parsedOpacity = parseFloat(opacityRaw);
+        if (!isNaN(parsedOpacity)) opacity = parsedOpacity;
+    }
+
+    return {
+        fill,
+        stroke,
+        strokeWidth,
+        opacity
+    };
+}
+
+
 // ========== CORRECTED Connector ==========
 
 function convertConnectorToPPTX(pptx, pptSlide, connectorData) {
@@ -651,8 +684,14 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
 
     const hasBorder = checkForValidBorder(style);
 
+    const hasPatternFill = !!(
+        shapeElement.getAttribute('data-pattern-prst') &&
+        shapeElement.getAttribute('data-pattern-fg') &&
+        shapeElement.getAttribute('data-pattern-bg')
+    );
+
     // Skip ONLY if it's a text box with no background AND no border
-    if (textBox && textBox.textContent.trim() && !hasVisibleBackground && !hasBorder) {
+    if (textBox && textBox.textContent.trim() && !hasVisibleBackground && !hasBorder && !hasPatternFill) {
         return;
     }
 
@@ -989,7 +1028,32 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
         calculatedTransparency = Math.round((1 - opacityValue) * 100);
     }
 
-    if (gradient) {
+    // ✅ PATTERN FILL: Check for pattern data attributes first
+    const patternPrst = shapeElement.getAttribute('data-pattern-prst');
+    const patternFg = shapeElement.getAttribute('data-pattern-fg');
+    const patternBg = shapeElement.getAttribute('data-pattern-bg');
+
+    // Around line where patternFillStore.set() is called
+    if (patternPrst && patternFg && patternBg) {
+        if (!global.patternFillStore) global.patternFillStore = new Map();
+
+        // Use objName if available, otherwise use position-based key as fallback
+        const storeKey = objName || `shape_${x.toFixed(2)}_${y.toFixed(2)}`;
+
+        global.patternFillStore.set(storeKey, {
+            prst: patternPrst,
+            fg: patternFg.replace('#', '').toUpperCase(),
+            bg: patternBg.replace('#', '').toUpperCase(),
+            shapeName: objName,  // keep original name for XML matching
+            x: x,
+            y: y,
+            w: w,
+            h: h
+        });
+        shapeOptions.fill = { color: patternFg.replace('#', '').toUpperCase() };
+    }
+
+    else if (gradient) {
         const gradientInfo = parseGradient(bgStyle);
 
         if (gradientInfo && gradientInfo.stops && gradientInfo.stops.length >= 2) {
@@ -1156,6 +1220,48 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
 
 
     try {
+
+        // ======= SVG FALLBACK FOR STANDARD SHAPES ======== hexagon shape not visible issue resolved.
+
+        const svgProps = extractSvgPresentationProps(shapeElement);
+
+        if (svgProps) {
+
+            // ✅ FIX FILL (important)
+            if (
+                !shapeOptions.fill &&
+                svgProps.fill &&
+                svgProps.fill !== 'none' &&
+                svgProps.fill !== 'transparent'
+            ) {
+                shapeOptions.fill = {
+                    color: rgbToHex(svgProps.fill)
+                };
+            }
+
+            // ✅ FIX STROKE (critical for your issue)
+            if (
+                !shapeOptions.line &&
+                svgProps.stroke &&
+                svgProps.stroke !== 'none' &&
+                svgProps.stroke !== 'transparent' &&
+                svgProps.strokeWidth > 0
+            ) {
+                shapeOptions.line = {
+                    color: rgbToHex(svgProps.stroke),
+                    width: svgProps.strokeWidth
+                };
+            }
+
+            // ✅ FIX OPACITY
+            if (
+                shapeOptions.transparency === undefined &&
+                svgProps.opacity !== undefined &&
+                svgProps.opacity < 1
+            ) {
+                shapeOptions.transparency = Math.round((1 - svgProps.opacity) * 100);
+            }
+        }
         // All the existing switch cases remain the same...
         switch (shapeId) {
             // ========== CONNECTORS (These are elbow/bent/curved connectors) ==========

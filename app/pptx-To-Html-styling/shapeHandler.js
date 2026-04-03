@@ -63,6 +63,44 @@ class ShapeHandler {
         return Boolean(phElement);
     }
 
+    applyOpacityToBackground(color, opacity) {
+        if (!color || opacity === 1 || opacity === undefined) return color;
+        if (opacity === 0) return 'transparent';
+
+        // Handle hex colors (#RGB or #RRGGBB)
+        if (color.startsWith('#')) {
+            const hex = color.slice(1);
+            let r, g, b;
+            if (hex.length === 3) {
+                r = parseInt(hex[0] + hex[0], 16);
+                g = parseInt(hex[1] + hex[1], 16);
+                b = parseInt(hex[2] + hex[2], 16);
+            } else {
+                r = parseInt(hex.slice(0, 2), 16);
+                g = parseInt(hex.slice(2, 4), 16);
+                b = parseInt(hex.slice(4, 6), 16);
+            }
+            return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+        }
+
+        // Handle existing rgb() → convert to rgba()
+        if (color.startsWith('rgb(')) {
+            return color.replace('rgb(', 'rgba(').replace(')', `, ${opacity})`);
+        }
+
+        // Handle existing rgba() → replace the alpha channel
+        if (color.startsWith('rgba(')) {
+            return color.replace(/,\s*[\d.]+\)$/, `, ${opacity})`);
+        }
+
+        // Gradients (linear-gradient, radial-gradient) — opacity must be
+        // applied per-stop. Wrap the whole thing in a background-color trick
+        // using a pseudo-element isn't possible here, so just return as-is
+        // and let the caller handle it separately if needed.
+        return color;
+    }
+
+
     async convertAllShapesToHTML(shapeNodes, lineShapeTag, graphicNodes, themeXML, masterXML, zIndexMap = null) {
 
         this.zIndexMap = zIndexMap;
@@ -274,6 +312,23 @@ class ShapeHandler {
         };
     }
 
+    getVerticalTextCSS(vertValue) {
+        if (!vertValue) return '';
+        switch (vertValue) {
+            case 'vert':
+                // In CSS: writing-mode vertical-rl = bottom-to-top (reads upward)
+                return 'writing-mode: vertical-rl;';
+            case 'vert270':
+                return 'writing-mode: vertical-rl; transform: rotate(180deg);';
+            case 'eaVert':
+                return 'writing-mode: vertical-lr;';
+            case 'wordArtVert':
+                return 'writing-mode: vertical-rl;';
+            default:
+                return '';
+        }
+    }
+
     async convertShapeToHTML(shapeNode, themeXML, masterXML) {
         // Add this helper function at the top
         const sanitizeShapeName = (name) => {
@@ -296,7 +351,7 @@ class ShapeHandler {
         const isPlaceholder = this.isPlaceholder(shapeNode);
         const placeholderClass = isPlaceholder ? ' placeholder-picture' : '';
 
-        if (blip && blip["$"] && blip["$"]["r:embed"] || blip === undefined) {
+        if (blip && blip["$"] && blip["$"]["r:embed"]) {
             const imageId = blip?.["$"]?.["r:embed"];
             const imageInfo = await this.getImageFromPicture(shapeNode, this.slidePath, this.relationshipsXML);
 
@@ -319,6 +374,49 @@ class ShapeHandler {
                 // Apply cropping styles if available
                 const containerCroppingStyles = croppingStyles ? croppingStyles.containerStyles : 'overflow: hidden;';
                 const imageCroppingStyles = croppingStyles ? croppingStyles.imageStyles : 'width: 100%; height: 100%; object-fit: cover; position: absolute; left: 0; top: 0;';
+
+                // ✅ ADD THIS BLOCK - Extract text content for texture/image fill shapes
+                let imageTextContent = "";
+                if (pptTextAllInfo.isTextShape(shapeNode)) {
+                    const imgShapeInfo = textHandler.getAllTextInformationFromShape(
+                        shapeNode, this.themeXML, this.clrMap, this.masterXML, this.layoutXML
+                    );
+                    const cleanedText = this.stripPlaceholderPrompts(imgShapeInfo.text || "");
+                    if (this.hasMeaningfulText(cleanedText)) {
+                        const marginLeft = imgShapeInfo.marginLeft || 0;
+                        const marginRight = imgShapeInfo.marginRight || 0;
+                        const marginTop = imgShapeInfo.marginTop || 0;
+                        const marginBottom = imgShapeInfo.marginBottom || 0;
+                        imageTextContent = `<div class="sli-txt-box"
+                            contenteditable="true"
+                            spellcheck="false"
+                            data-editable="text"
+                            data-name="${shapeName}"
+                            style="
+                                position: absolute;
+                                top: 0; left: 0;
+                                width: 100%; height: 100%;
+                                color: ${imgShapeInfo.fontColor};
+                                font-size: ${imgShapeInfo.fontSize}px;
+                                display: flex;
+                                flex-direction: column;
+                                justify-content: ${imgShapeInfo.justifyContent};
+                                text-align: ${imgShapeInfo.textAlign};
+                                padding-left: ${marginLeft}px;
+                                padding-right: ${marginRight}px;
+                                padding-top: ${marginTop}px;
+                                padding-bottom: ${marginBottom}px;
+                                box-sizing: border-box;
+                                pointer-events: auto;
+                                user-select: text;
+                                outline: none;
+                                z-index: 1;
+                            ">
+                            ${cleanedText}
+                        </div>`;
+                    }
+                }
+
 
                 if (imageInfo) {
                     return `<div class="shape image-container${placeholderClass}"
@@ -343,10 +441,11 @@ class ShapeHandler {
                                                 style="${imageCroppingStyles}
                                                 transform: ${imgcss.flipH} ${imgcss.flipV} rotate(${rotation}deg);
                                                 opacity:${imgcss.opacity};
-                                                z-index:${zIndex};
+                                                z-index:0;
                                                 object-fit: cover;
                                                 ${boxShadowCSS}
                                                 ${combinedFilter}" />
+                                                ${imageTextContent} 
                             </div>`;
                 }
             }
@@ -369,7 +468,9 @@ class ShapeHandler {
         const originalLumOff = fillProps?.originalLumOff || null;
         const originalAlpha = fillProps?.originalAlpha || null;
 
-        const opacity = `opacity : ${fillProps.opacity ? fillProps.opacity : 1}`;
+        // const opacity = `opacity : ${fillProps.opacity ? fillProps.opacity : 1}`;
+        const shapefillopacity = `opacity : ${fillProps.opacity ? fillProps.opacity : 1}`;
+        const opacity = ``;
 
         // const borderStyle = "solid";
         let cornerRadius = this.getCornerRadius ? this.getCornerRadius(shapeNode) : 0;
@@ -475,7 +576,7 @@ class ShapeHandler {
             // NEW: Calculate if we need dynamic height
             const useHeightauto = shapeInfo.estimatedContentHeight && shapeInfo.estimatedContentHeight > position.height;
             const effectiveHeight = useHeightauto ? shapeInfo.estimatedContentHeight : position.height;
-
+            const vertCSS = this.getVerticalTextCSS(shapeInfo.verticalText);
             if (this.hasMeaningfulText(cleanedText)) {
                 textContent = `<div class="sli-txt-box${textPlaceholderClass}"
                     contenteditable="true"
@@ -511,6 +612,7 @@ class ShapeHandler {
                         pointer-events:auto;
                         user-select:text;
                         outline:none;
+                        ${vertCSS}
                     ">
                     ${cleanedText}
                 </div>`;
@@ -552,6 +654,7 @@ class ShapeHandler {
                         z-index:${zIndex};
                         width:${position.width}px; 
                         height:${position.height}px; 
+                        display:flex;
                         transform: rotate(${position.rotation}deg); // flip issue changed here
                         ${opacity}; 
                         overflow:visible;">${textContent}${svgMarkup}
@@ -770,6 +873,176 @@ class ShapeHandler {
                 caseName = "star";
                 clipPath = "polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)";
                 break;
+
+            // callout shape is not visible resolved start.
+            case "wedgeRoundRectCallout": {
+                caseName = "speechBubble";
+
+                const w = position.width;
+                const h = position.height;
+
+                // ✅ Correct names
+                let adj1 = 69889;
+                let adj2 = -21186;
+                let adj3 = 16667;
+
+                const avLst = shapeNode?.["p:spPr"]?.[0]?.["a:prstGeom"]?.[0]?.["a:avLst"]?.[0];
+                const gdList = avLst?.["a:gd"] || [];
+
+                gdList.forEach(gd => {
+                    const name = gd.$?.name;
+                    const val = parseInt(gd.$?.fmla.replace("val ", ""), 10);
+
+                    if (name === "adj1") adj1 = val;
+                    if (name === "adj2") adj2 = val;
+                    if (name === "adj3") adj3 = val;
+                });
+
+                // Rounded corner
+                const r = Math.min((adj3 / 100000) * h, 20);
+
+                // Tail vertical position
+                const tailY = h / 2 + (adj2 / 100000) * h;
+
+                // Tail size (controlled, not directly adj1)
+                const tailWidth = Math.min(18, w * 0.2);
+                const tailHeight = 10;
+
+                const svg = `
+                                <svg width="${w + tailWidth}" height="${h}" viewBox="0 0 ${w + tailWidth} ${h}"
+                                    style="position:absolute;left:0;top:0;overflow:visible;">
+                                    <path d="
+                                        M ${r},0
+                                        H ${w - r}
+                                        Q ${w},0 ${w},${r}
+                                        V ${tailY - tailHeight}
+                                        L ${w + tailWidth},${tailY}
+                                        L ${w},${tailY + tailHeight}
+                                        V ${h - r}
+                                        Q ${w},${h} ${w - r},${h}
+                                        H ${r}
+                                        Q 0,${h} 0,${h - r}
+                                        V ${r}
+                                        Q 0,0 ${r},0
+                                        Z
+                                    "
+                                    fill="${fillColor}"
+                                    stroke="none"/>
+                                </svg>`;
+
+                return `
+                    <div class="shape"
+                        data-name="${shapeName}"
+                        style="
+                            position:absolute;
+                            left:${position.x}px;
+                            top:${position.y}px;
+                            width:${w}px;
+                            height:${h}px;
+                            ${opacity};
+                            transform:${transformString};
+                            z-index:${zIndex};
+                            display:flex;
+                            justify-content:center;
+                            align-items:center;
+                            overflow:visible;
+                        ">
+                        ${svg}
+                        ${textContent}
+                    </div>`;
+            }
+                break;
+
+            case "wedgeRectCallout": {
+                caseName = "speechBubbleRect";
+
+                const w = position.width;
+                const h = position.height;
+
+                let adj1 = -50000;
+                let adj2 = 0;
+
+                const avLst = shapeNode?.["p:spPr"]?.[0]?.["a:prstGeom"]?.[0]?.["a:avLst"]?.[0];
+                const gdList = avLst?.["a:gd"] || [];
+
+                gdList.forEach(gd => {
+                    const name = gd.$?.name;
+                    const val = parseInt(gd.$?.fmla.replace("val ", ""), 10);
+
+                    if (name === "adj1") adj1 = val;
+                    if (name === "adj2") adj2 = val;
+                });
+
+                const tailY = h / 2 + (adj2 / 100000) * h;
+
+                const tailWidth = Math.min(20, w * 0.2);
+                const tailHeight = 10;
+
+                const isLeft = adj1 < 0;
+
+                let svg;
+
+                if (isLeft) {
+                    // 🔴 LEFT TAIL
+                    svg = `
+                        <svg width="${w + tailWidth}" height="${h}" viewBox="0 0 ${w + tailWidth} ${h}"
+                            style="position:absolute;left:-${tailWidth}px;top:0;overflow:visible;">
+                            <path d="
+                                M ${tailWidth},0
+                                H ${w + tailWidth}
+                                V ${h}
+                                H ${tailWidth}
+                                V ${tailY + tailHeight}
+                                L 0,${tailY}
+                                L ${tailWidth},${tailY - tailHeight}
+                                Z
+                            "
+                            fill="${fillColor}" stroke="none"/>
+                        </svg>`;
+                } else {
+                    // 🔵 RIGHT TAIL
+                    svg = `
+                        <svg width="${w + tailWidth}" height="${h}" viewBox="0 0 ${w + tailWidth} ${h}"
+                            style="position:absolute;left:0;top:0;overflow:visible;">
+                            <path d="
+                                M 0,0
+                                H ${w}
+                                V ${tailY - tailHeight}
+                                L ${w + tailWidth},${tailY}
+                                L ${w},${tailY + tailHeight}
+                                V ${h}
+                                H 0
+                                Z
+                            "
+                            fill="${fillColor}" stroke="none"/>
+                        </svg>`;
+                }
+
+                return `
+                    <div class="shape"
+                        data-name="${shapeName}"
+                        style="
+                            position:absolute;
+                            left:${position.x}px;
+                            top:${position.y}px;
+                            width:${w}px;
+                            height:${h}px;
+                            ${opacity};
+                            transform:${transformString};
+                            z-index:${zIndex};
+                            display:flex;
+                            justify-content:center;
+                            align-items:center;
+                            overflow:visible;
+                        ">
+                        ${svg}
+                        ${textContent}
+                    </div>`;
+                break;
+            }
+            // callout shape is not visible resolved end.    
+
+
             case "rightArrow": {
                 caseName = "rightArrow";
 
@@ -1018,7 +1291,7 @@ class ShapeHandler {
                 const adjValue = parseInt(adj1.replace("val ", ""), 10); // 4278
 
                 // Dynamically get shape dimensions from XML
-                // const xfrm = shapeNode?.["p:spPr"]?.[0]?.["a:xfrm"]?.[0];
+                const xfrm = shapeNode?.["p:spPr"]?.[0]?.["a:xfrm"]?.[0];
                 const shapeWidth = parseInt(xfrm?.["a:ext"]?.[0]?.["$"]?.cx || xfrm?.["ext"]?.[0]?.["$"]?.cx || "12192000", 10);
                 const shapeHeight = parseInt(xfrm?.["a:ext"]?.[0]?.["$"]?.cy || xfrm?.["ext"]?.[0]?.["$"]?.cy || "6858000", 10);
 
@@ -1930,6 +2203,9 @@ class ShapeHandler {
         return `<div class="shape" id="${caseName}" 
             data-name="${shapeName}" 
             data-hidden="${hidden}"
+            data-pattern-prst="${fillProps.patternPrst || ''}"
+            data-pattern-fg="${fillProps.patternFg || ''}"
+            data-pattern-bg="${fillProps.patternBg || ''}"
             data-original-color="${originalThemeColor}" 
             originalLumMod="${originalLumMod}" 
             originalLumOff="${originalLumOff}" 
@@ -1940,8 +2216,10 @@ class ShapeHandler {
                 top: ${adjustedTop}px;
                 width: ${position.width}px;
                 height: ${effectiveHeight}px;
-                background: ${fillColor};
-                ${opacity};
+                ${fillColor.startsWith('url(')
+                ? `background-image: ${fillColor}; background-repeat: repeat; background-size: auto;`
+                : `background: ${this.applyOpacityToBackground(fillColor, fillProps.opacity)};`
+            }
                 border-radius: ${borderRadius};
                 ${shapeBorder}
                 ${shapeBorderCSS}
@@ -3149,6 +3427,43 @@ class ShapeHandler {
                 }
             }
 
+            // Handle Pattern Fill (pattFill)
+            const pattFill = shapeFill?.["a:pattFill"]?.[0];
+            let patternPrst = '';
+            let patternFg = '';
+            let patternBg = '';
+            if (pattFill) {
+                console.log("Pattern fill found for shapeeeeeeeeeeeeeee:", shapeName, "prst:", prst);
+                const prst = pattFill["$"]?.prst || "pct5";
+
+                // Resolve foreground color
+                let fgColor = "#000000";
+                const fgClr = pattFill["a:fgClr"]?.[0];
+                if (fgClr?.["a:schemeClr"]?.[0]) {
+                    fgColor = colorHelper.resolveThemeColorHelper(
+                        fgClr["a:schemeClr"][0]["$"].val, themeXML, masterXML
+                    );
+                } else if (fgClr?.["a:srgbClr"]?.[0]) {
+                    fgColor = `#${fgClr["a:srgbClr"][0]["$"].val}`;
+                }
+
+                // Resolve background color
+                let bgColor = "#ffffff";
+                const bgClr = pattFill["a:bgClr"]?.[0];
+                if (bgClr?.["a:schemeClr"]?.[0]) {
+                    bgColor = colorHelper.resolveThemeColorHelper(
+                        bgClr["a:schemeClr"][0]["$"].val, themeXML, masterXML
+                    );
+                } else if (bgClr?.["a:srgbClr"]?.[0]) {
+                    bgColor = `#${bgClr["a:srgbClr"][0]["$"].val}`;
+                }
+
+                fillColor = shapeFillColor.generatePatternFillCSS(prst, fgColor, bgColor);
+                patternPrst = prst;
+                patternFg = fgColor;
+                patternBg = bgColor;
+            }
+
             // Return both fill and stroke properties
             return {
                 originalThemeColor, // NEW: return original theme color for reference
@@ -3158,9 +3473,12 @@ class ShapeHandler {
                 originalAlpha,      // NEW: return original alpha value
                 fillColor,
                 opacity: fillOpacity,           // For backward compatibility
-                fillOpacity: fillOpacity,       // Explicit fill opacity
+                fillOpacity: fillOpacity,          // Explicit fill opacity
                 strokeColor: strokeColor,       // NEW: stroke color
-                strokeOpacity: strokeOpacity    // NEW: stroke opacity
+                strokeOpacity: strokeOpacity,    // NEW: stroke opacity
+                patternPrst,
+                patternFg,
+                patternBg
             };
 
         } catch (error) {

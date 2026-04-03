@@ -11,6 +11,7 @@ function getShapeFillColor(shapeNode, themeXML, masterXML = null) {
 
     try {
         const shapeFill = shapeNode?.["p:spPr"]?.[0];
+        const pattFill = shapeFill?.["a:pattFill"]?.[0];
         let originalThemeColor = '', originalLumMod = '', originalLumOff = '';
         // let txtPhType = shapeNode?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0]?.["$"]?.type || '';
 
@@ -176,6 +177,41 @@ function getShapeFillColor(shapeNode, themeXML, masterXML = null) {
             }
         }
 
+        // Handle Pattern Fill (pattFill)
+        let patternPrst = '';
+        let patternFg = '';
+        let patternBg = '';
+        if (pattFill) {
+            console.log("osadksa");
+            const prst = pattFill["$"]?.prst || "pct5";
+
+            let fgColor = "#000000";
+            const fgClr = pattFill["a:fgClr"]?.[0];
+            if (fgClr?.["a:schemeClr"]?.[0]) {
+                fgColor = colorHelper.resolveThemeColorHelper(
+                    fgClr["a:schemeClr"][0]["$"].val, themeXML, masterXML
+                );
+            } else if (fgClr?.["a:srgbClr"]?.[0]) {
+                fgColor = `#${fgClr["a:srgbClr"][0]["$"].val}`;
+            }
+
+            let bgColor = "#ffffff";
+            const bgClr = pattFill["a:bgClr"]?.[0];
+            if (bgClr?.["a:schemeClr"]?.[0]) {
+                bgColor = colorHelper.resolveThemeColorHelper(
+                    bgClr["a:schemeClr"][0]["$"].val, themeXML, masterXML
+                );
+            } else if (bgClr?.["a:srgbClr"]?.[0]) {
+                bgColor = `#${bgClr["a:srgbClr"][0]["$"].val}`;
+            }
+
+            fillColor = generatePatternFillCSS(prst, fgColor, bgColor);
+            // ✅ Store in outer variables so return can access them
+            patternPrst = prst;
+            patternFg = fgColor;
+            patternBg = bgColor;
+        }
+
         return {
             originalThemeColor,
             originalLumMod,
@@ -185,7 +221,10 @@ function getShapeFillColor(shapeNode, themeXML, masterXML = null) {
             opacity: fillOpacity,
             fillOpacity: fillOpacity,
             strokeColor: strokeColor,
-            strokeOpacity: strokeOpacity
+            strokeOpacity: strokeOpacity,
+            patternPrst,
+            patternFg,
+            patternBg
         };
 
     } catch (error) {
@@ -198,6 +237,172 @@ function getShapeFillColor(shapeNode, themeXML, masterXML = null) {
             strokeOpacity: 1.0
         };
     }
+}
+
+function generatePatternFillCSS(prst, fgColor, bgColor) {
+    const patternMap = {
+        'pct5': { type: 'dots', size: 1, spacing: 6 },
+        'pct10': { type: 'dots', size: 1, spacing: 4 },
+        'pct20': { type: 'dots', size: 2, spacing: 5 },
+        'pct25': { type: 'dots', size: 2, spacing: 4 },
+        'pct30': { type: 'dots', size: 2, spacing: 3 },
+        'pct40': { type: 'dots', size: 3, spacing: 4 },
+        'pct50': { type: 'checker', size: 4 },
+        'pct60': { type: 'dots', size: 3, spacing: 2 },
+        'pct75': { type: 'dots', size: 4, spacing: 2 },
+        'pct80': { type: 'dots', size: 5, spacing: 2 },
+        'pct90': { type: 'dots', size: 6, spacing: 2 },
+        'horz': { type: 'hlines', gap: 4 },
+        'vert': { type: 'vlines', gap: 4 },
+        'ltHorz': { type: 'hlines', gap: 2 },
+        'ltVert': { type: 'vlines', gap: 2 },
+        'dkHorz': { type: 'hlines', gap: 8 },
+        'dkVert': { type: 'vlines', gap: 8 },
+        'narHorz': { type: 'hlines', gap: 1 },
+        'narVert': { type: 'vlines', gap: 1 },
+        'dashHorz': { type: 'dashH' },
+        'dashVert': { type: 'dashV' },
+        'dnDiag': { type: 'diagDown', gap: 6 },
+        'upDiag': { type: 'diagUp', gap: 6 },
+        'ltDnDiag': { type: 'diagDown', gap: 4 },
+        'ltUpDiag': { type: 'diagUp', gap: 4 },
+        'dkDnDiag': { type: 'diagDown', gap: 8 },
+        'dkUpDiag': { type: 'diagUp', gap: 8 },
+        'wdDnDiag': { type: 'diagDown', gap: 12 },
+        'wdUpDiag': { type: 'diagUp', gap: 12 },
+        'cross': { type: 'cross', gap: 8 },
+        'ltGrid': { type: 'cross', gap: 4 },
+        'dkGrid': { type: 'cross', gap: 12 },
+        'diagCross': { type: 'diagCross', gap: 8 },
+        'smGrid': { type: 'cross', gap: 2 },
+        'lgGrid': { type: 'cross', gap: 16 },
+        'diagBrick': { type: 'brick', gap: 8 },
+        'horzBrick': { type: 'horzBrick', gap: 8 },
+        'smCheck': { type: 'checker', size: 2 },
+        'lgCheck': { type: 'checker', size: 8 },
+        'smConfetti': { type: 'dots', size: 1, spacing: 3 },
+        'lgConfetti': { type: 'dots', size: 2, spacing: 5 },
+        'zigZag': { type: 'diagCross', gap: 6 },
+        'wave': { type: 'hlines', gap: 4 },
+        'divot': { type: 'diagCross', gap: 4 },
+        'shingle': { type: 'diagDown', gap: 6 },
+        'trellis': { type: 'cross', gap: 4 },
+        'sphere': { type: 'checker', size: 6 },
+        'dotGrid': { type: 'cross', gap: 4 },
+        'dotDmnd': { type: 'diagCross', gap: 4 },
+        'plaid': { type: 'cross', gap: 6 },
+        'weave': { type: 'diagCross', gap: 6 },
+        'openDmnd': { type: 'diagCross', gap: 8 },
+        'solidDmnd': { type: 'checker', size: 4 },
+        'dkTrellis': { type: 'cross', gap: 8 },
+        'smDmnd': { type: 'diagCross', gap: 4 },
+        'dkDmnd': { type: 'diagCross', gap: 8 },
+    };
+
+    const pattern = patternMap[prst] || { type: 'dots', size: 1, spacing: 6 };
+
+    // ✅ FIX: Encode colors BEFORE embedding in SVG
+    // This handles # in hex colors and any other special chars
+    const fg = fgColor || 'black';
+    const bg = bgColor || 'white';
+
+    // ✅ FIX: Use encodeURIComponent-safe SVG builder
+    // All SVG attributes use double quotes — these will be %22 encoded at the end
+    const makeSVG = (width, height, content) =>
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${content}</svg>`;
+
+    let svgContent = '';
+
+    switch (pattern.type) {
+        case 'dots': {
+            const s = pattern.size || 1;
+            const sp = pattern.spacing || 6;
+            const total = s + sp;
+            svgContent = makeSVG(total, total,
+                `<rect width="${total}" height="${total}" fill="${bg}"/>` +
+                `<circle cx="${s / 2}" cy="${s / 2}" r="${s / 2}" fill="${fg}"/>`
+            );
+            break;
+        }
+        case 'hlines': {
+            const gap = pattern.gap || 4;
+            svgContent = makeSVG(gap, gap,
+                `<rect width="${gap}" height="${gap}" fill="${bg}"/>` +
+                `<line x1="0" y1="0" x2="${gap}" y2="0" stroke="${fg}" stroke-width="1"/>`
+            );
+            break;
+        }
+        case 'vlines': {
+            const gap = pattern.gap || 4;
+            svgContent = makeSVG(gap, gap,
+                `<rect width="${gap}" height="${gap}" fill="${bg}"/>` +
+                `<line x1="0" y1="0" x2="0" y2="${gap}" stroke="${fg}" stroke-width="1"/>`
+            );
+            break;
+        }
+        case 'diagDown': {
+            const gap = pattern.gap || 6;
+            svgContent = makeSVG(gap, gap,
+                `<rect width="${gap}" height="${gap}" fill="${bg}"/>` +
+                `<line x1="0" y1="0" x2="${gap}" y2="${gap}" stroke="${fg}" stroke-width="1"/>` +
+                `<line x1="${-gap / 2}" y1="${gap / 2}" x2="${gap / 2}" y2="${gap * 1.5}" stroke="${fg}" stroke-width="1"/>` +
+                `<line x1="${gap / 2}" y1="${-gap / 2}" x2="${gap * 1.5}" y2="${gap / 2}" stroke="${fg}" stroke-width="1"/>`
+            );
+            break;
+        }
+        case 'diagUp': {
+            const gap = pattern.gap || 6;
+            svgContent = makeSVG(gap, gap,
+                `<rect width="${gap}" height="${gap}" fill="${bg}"/>` +
+                `<line x1="0" y1="${gap}" x2="${gap}" y2="0" stroke="${fg}" stroke-width="1"/>` +
+                `<line x1="${-gap / 2}" y1="${gap / 2}" x2="${gap / 2}" y2="${-gap / 2}" stroke="${fg}" stroke-width="1"/>` +
+                `<line x1="${gap / 2}" y1="${gap * 1.5}" x2="${gap * 1.5}" y2="${gap / 2}" stroke="${fg}" stroke-width="1"/>`
+            );
+            break;
+        }
+        case 'cross': {
+            const gap = pattern.gap || 8;
+            svgContent = makeSVG(gap, gap,
+                `<rect width="${gap}" height="${gap}" fill="${bg}"/>` +
+                `<line x1="${gap / 2}" y1="0" x2="${gap / 2}" y2="${gap}" stroke="${fg}" stroke-width="1"/>` +
+                `<line x1="0" y1="${gap / 2}" x2="${gap}" y2="${gap / 2}" stroke="${fg}" stroke-width="1"/>`
+            );
+            break;
+        }
+        case 'diagCross': {
+            const gap = pattern.gap || 8;
+            svgContent = makeSVG(gap, gap,
+                `<rect width="${gap}" height="${gap}" fill="${bg}"/>` +
+                `<line x1="0" y1="0" x2="${gap}" y2="${gap}" stroke="${fg}" stroke-width="1"/>` +
+                `<line x1="${gap}" y1="0" x2="0" y2="${gap}" stroke="${fg}" stroke-width="1"/>`
+            );
+            break;
+        }
+        case 'checker': {
+            const s = pattern.size || 4;
+            const d = s * 2;
+            svgContent = makeSVG(d, d,
+                `<rect width="${d}" height="${d}" fill="${bg}"/>` +
+                `<rect x="0" y="0" width="${s}" height="${s}" fill="${fg}"/>` +
+                `<rect x="${s}" y="${s}" width="${s}" height="${s}" fill="${fg}"/>`
+            );
+            break;
+        }
+        default: {
+            // dots fallback
+            const s = 1, sp = 6, total = s + sp;
+            svgContent = makeSVG(total, total,
+                `<rect width="${total}" height="${total}" fill="${bg}"/>` +
+                `<circle cx="${s / 2}" cy="${s / 2}" r="${s / 2}" fill="${fg}"/>`
+            );
+            break;
+        }
+    }
+
+    // ✅ FIX: Use encodeURIComponent for the entire SVG string
+    // This is the most reliable encoding for data URIs used in CSS
+    const encoded = encodeURIComponent(svgContent);
+    return `url(data:image/svg+xml,${encoded})`;
 }
 
 /**

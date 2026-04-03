@@ -229,14 +229,21 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
     // 03/09/2026rakesh In the addTextBoxToSlide function, use the following logic to detect vertical alignment
     const vertValue = textBox.getAttribute('data-vert') || '';
 
-    // Map to PptxGenJS vert values
-    const pptxVertMap = {
-        'wordArtVert': 'wordArtVert',
-        'vert270': 'vert270',
-        'vert': 'vert',
-        'eaVert': 'eaVert'
-    };
-    const pptxVert = pptxVertMap[vertValue] || null;
+    const parentTransformStyle = parentStyle.transform || '';
+    const hasRotate270 = parentTransformStyle.includes('rotate(270') ||
+        parentTransformStyle.includes('rotate(-90');
+    const hasRotate90 = parentTransformStyle.includes('rotate(90');
+
+    let pptxVert = null;
+    if (vertValue) {
+        const pptxVertMap = {
+            'vert': 'vert270',   // CSS bottom-to-top → PPTX vert270
+            'vert270': 'vert',      // CSS top-to-bottom → PPTX vert
+            'wordArtVert': 'wordArtVert',
+            'eaVert': 'eaVert'
+        };
+        pptxVert = pptxVertMap[vertValue] || null;
+    }
     // Text box options with margin support
 
     const textBoxOptions = {
@@ -249,6 +256,7 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
         valign: verticalAlign,
         objectName: isHidden ? `__hidden__${objName || ''}` : (objName || ''),
         _isHidden: isHidden,
+        ...(pptxVert ? { vert: pptxVert } : {}),
     };
 
 
@@ -804,6 +812,38 @@ function extractSpanFormattingWithLineSpacing(span, defaultAlign = "left", origi
         ))
     ) {
         finalColor = rgbToHex(style.color || '#000000');
+    }
+
+
+    // ✅ Apply alpha/transparency by blending color with white background
+    const alphaAttr = span.getAttribute('alpha');
+    if (alphaAttr && alphaAttr !== 'undefined') {
+        const alphaValue = parseFloat(alphaAttr);
+        if (!isNaN(alphaValue) && alphaValue >= 0 && alphaValue < 1) {
+            // Get the hex color string to blend
+            let hexToBlend = null;
+
+            if (typeof finalColor === 'string' && finalColor.startsWith('#')) {
+                hexToBlend = finalColor.replace('#', '');
+            } else if (typeof finalColor === 'string' && /^[0-9A-Fa-f]{6}$/.test(finalColor)) {
+                hexToBlend = finalColor;
+            }
+
+            if (hexToBlend && hexToBlend.length === 6) {
+                const r = parseInt(hexToBlend.substring(0, 2), 16);
+                const g = parseInt(hexToBlend.substring(2, 4), 16);
+                const b = parseInt(hexToBlend.substring(4, 6), 16);
+
+                // Blend with white (255, 255, 255) using alpha
+                const blendedR = Math.round(r * alphaValue + 255 * (1 - alphaValue));
+                const blendedG = Math.round(g * alphaValue + 255 * (1 - alphaValue));
+                const blendedB = Math.round(b * alphaValue + 255 * (1 - alphaValue));
+
+                finalColor = '#' + [blendedR, blendedG, blendedB]
+                    .map(v => v.toString(16).padStart(2, '0').toUpperCase())
+                    .join('');
+            }
+        }
     }
 
     const options = {

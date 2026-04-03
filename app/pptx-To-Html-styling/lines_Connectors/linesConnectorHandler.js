@@ -294,7 +294,9 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
             } else if (solidFill[0]["a:schemeClr"]) {
                 strokeColor = resolveColor(solidFill[0]["a:schemeClr"][0]["$"].val, clrMap, themeXML);
                 const lumMod = solidFill[0]["a:schemeClr"][0]["a:lumMod"]?.[0]?.["$"]?.val;
+                const lumOff = solidFill[0]["a:schemeClr"][0]["a:lumOff"]?.[0]?.["$"]?.val;
                 if (lumMod) strokeColor = colorHelper.applyLumMod(strokeColor, lumMod);
+                if (lumOff) strokeColor = colorHelper.applyLumOff(strokeColor, lumOff);
             }
         }
         else {
@@ -304,9 +306,11 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
 
                 // Apply lumMod if present
                 const lumMod = lnRef["a:schemeClr"][0]["a:lumMod"]?.[0]?.["$"]?.val;
+                const lumOff = lnRef["a:schemeClr"][0]["a:lumOff"]?.[0]?.["$"]?.val;
                 if (lumMod) {
                     strokeColor = colorHelper.applyLumMod(strokeColor, lumMod);
                 }
+                if (lumOff) strokeColor = colorHelper.applyLumOff(strokeColor, lumOff);
             } else if (lnRef?.["a:srgbClr"]) {
                 strokeColor = `#${lnRef["a:srgbClr"][0]["$"].val}`;
             }
@@ -320,7 +324,9 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
         if (lnRef?.["a:schemeClr"]) {
             strokeColor = resolveColor(lnRef["a:schemeClr"][0]["$"].val, clrMap, themeXML);
             const lumMod = lnRef["a:schemeClr"][0]["a:lumMod"]?.[0]?.["$"]?.val;
+            const lumOff = lnRef["a:schemeClr"][0]["a:lumOff"]?.[0]?.["$"]?.val;
             if (lumMod) strokeColor = colorHelper.applyLumMod(strokeColor, lumMod);
+            if (lumOff) strokeColor = colorHelper.applyLumOff(strokeColor, lumOff);
         } else if (lnRef?.["a:srgbClr"]) {
             strokeColor = `#${lnRef["a:srgbClr"][0]["$"].val}`;
         }

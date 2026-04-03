@@ -602,13 +602,22 @@ class pptxToHtml {
         // Process pictures and SVGs
         const picNodesImg = slideXML?.["p:sld"]?.["p:cSld"]?.[0]?.["p:spTree"]?.[0]?.["p:pic"] || [];
 
+        // ✅ ADD THIS: Extract and flatten group shapes
+        const spTree = slideXML?.["p:sld"]?.["p:cSld"]?.[0]?.["p:spTree"]?.[0];
+        const flattenedGroups = this.flattenGroupShapes(spTree);
+
+        // Merge flattened group children into existing arrays
+        const allShapeNodes = [...shapeNodes, ...flattenedGroups.sp];
+        const allPicNodes = [...picNodesImg, ...flattenedGroups.pic];
+        const allLineNodes = [...lineShapeTag, ...flattenedGroups.cxnSp];
+
         // Create a ShapeHandler instance
         const shapeHandler = new ShapeHandler(themeXML, clrMap, nodes, this, slidePath, relationshipsXML, masterXML, layoutXML, flag);
 
-        htmlContent += await shapeHandler.convertAllShapesToHTML(shapeNodes, lineShapeTag, tableNodes, themeXML, layoutXML, zIndexMap);
+        htmlContent += await shapeHandler.convertAllShapesToHTML(allShapeNodes, lineShapeTag, tableNodes, themeXML, layoutXML, zIndexMap);
 
         // ==================== FIXED IMAGE PROCESSING LOOP ====================
-        for (const picNode of picNodesImg) {
+        for (const picNode of allPicNodes) {
           const nodeName = picNode["p:nvPicPr"][0]["p:cNvPr"][0].$.name;
 
           if (!this.shapeNameOccurrences) {
@@ -1206,6 +1215,82 @@ class pptxToHtml {
 
     return await svgFile.async("string");
   }
+
+  flattenGroupShapes(spTree) {
+    const result = {
+      sp: [],
+      pic: [],
+      cxnSp: [],
+      graphicFrame: []
+    };
+
+    const processGrpSp = (grpSpNode) => {
+      // Get group's own transform for position offset
+      const grpXfrm = grpSpNode?.["p:grpSpPr"]?.[0]?.["a:xfrm"]?.[0];
+      const grpOffX = parseInt(grpXfrm?.["a:off"]?.[0]?.["$"]?.x || 0);
+      const grpOffY = parseInt(grpXfrm?.["a:off"]?.[0]?.["$"]?.y || 0);
+      const grpChOffX = parseInt(grpXfrm?.["a:chOff"]?.[0]?.["$"]?.x || 0);
+      const grpChOffY = parseInt(grpXfrm?.["a:chOff"]?.[0]?.["$"]?.y || 0);
+      const grpExtCx = parseInt(grpXfrm?.["a:ext"]?.[0]?.["$"]?.cx || 1);
+      const grpChExtCx = parseInt(grpXfrm?.["a:chExt"]?.[0]?.["$"]?.cx || 1);
+      const grpExtCy = parseInt(grpXfrm?.["a:ext"]?.[0]?.["$"]?.cy || 1);
+      const grpChExtCy = parseInt(grpXfrm?.["a:chExt"]?.[0]?.["$"]?.cy || 1);
+
+      const scaleX = grpChExtCx !== 0 ? grpExtCx / grpChExtCx : 1;
+      const scaleY = grpChExtCy !== 0 ? grpExtCy / grpChExtCy : 1;
+
+      const processChild = (child, nodeType) => {
+        // Deep clone to avoid mutating original
+        const cloned = JSON.parse(JSON.stringify(child));
+
+        // Adjust child coordinates relative to group transform
+        const xfrmKey = nodeType === "p:pic" ? "p:spPr" : "p:spPr";
+        const xfrm = cloned?.[xfrmKey]?.[0]?.["a:xfrm"]?.[0];
+
+        if (xfrm) {
+          const childX = parseInt(xfrm?.["a:off"]?.[0]?.["$"]?.x || 0);
+          const childY = parseInt(xfrm?.["a:off"]?.[0]?.["$"]?.y || 0);
+          const childCx = parseInt(xfrm?.["a:ext"]?.[0]?.["$"]?.cx || 0);
+          const childCy = parseInt(xfrm?.["a:ext"]?.[0]?.["$"]?.cy || 0);
+
+          // Apply group transform: translate from child coords to slide coords
+          const newX = Math.round(grpOffX + (childX - grpChOffX) * scaleX);
+          const newY = Math.round(grpOffY + (childY - grpChOffY) * scaleY);
+          const newCx = Math.round(childCx * scaleX);
+          const newCy = Math.round(childCy * scaleY);
+
+          xfrm["a:off"][0]["$"].x = String(newX);
+          xfrm["a:off"][0]["$"].y = String(newY);
+          xfrm["a:ext"][0]["$"].cx = String(newCx);
+          xfrm["a:ext"][0]["$"].cy = String(newCy);
+        }
+
+        return cloned;
+      };
+
+      // Process p:sp children
+      const childSp = grpSpNode["p:sp"] || [];
+      childSp.forEach(sp => result.sp.push(processChild(sp, "p:sp")));
+
+      // Process p:pic children
+      const childPic = grpSpNode["p:pic"] || [];
+      childPic.forEach(pic => result.pic.push(processChild(pic, "p:pic")));
+
+      // Process p:cxnSp children
+      const childCxn = grpSpNode["p:cxnSp"] || [];
+      childCxn.forEach(cxn => result.cxnSp.push(processChild(cxn, "p:cxnSp")));
+
+      // Recurse into nested groups
+      const nestedGroups = grpSpNode["p:grpSp"] || [];
+      nestedGroups.forEach(nested => processGrpSp(nested));
+    };
+
+    const grpSpNodes = spTree["p:grpSp"] || [];
+    grpSpNodes.forEach(grp => processGrpSp(grp));
+
+    return result;
+  }
+
 }
 
 module.exports = pptxToHtml;

@@ -627,9 +627,7 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
         outlineStyle: outlineStyle,
         htmlContent: htmlContent.join("\n"),
         estimatedContentHeight: Math.max(estimatedHeight, position?.height || 0),  // NEW LINE
-        // ADD THIS:// 03/09/2026rakesh
-        verticalText: isWordArtVert ? 'wordArtVert' : isVert270 ? 'vert270' : isVert ? 'vert' : isVertEaVert ? 'eaVert' : null,
-        // ADD THESE:
+        verticalText: isVert ? 'vert' : isVert270 ? 'vert270' : isWordArtVert ? 'wordArtVert' : isVertEaVert ? 'eaVert' : null,
         marginLeft: marginLeft,
         marginRight: marginRight,
         marginTop: marginTop,

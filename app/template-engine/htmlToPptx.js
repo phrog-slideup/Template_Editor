@@ -26,6 +26,7 @@ const { extractHyperlinkFromSpan } = require("./hyperlink-pptx-patch");
 
 async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName) {
     try {
+        global.patternFillStore = new Map();
         clearGradientMetadata();
         clearReflectionStore();
         const dom = new JSDOM(htmlString);
@@ -164,6 +165,14 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         // 🎨 STEP 6.5: INJECT TEXT GRADIENTS HERE
         // ========================================
         const gradientResult = await injectTextGradientsIntoSlideXML(slideXmlsDir);
+
+        // ========================================
+        // 🔲 STEP 6.5A: INJECT PATTERN FILLS
+        // ========================================
+        const patternFillResult = await injectPatternFillsIntoSlideXML(slideXmlsDir);
+        if (patternFillResult.injected > 0) {
+            console.log(`   ✅ Injected pattern fills into ${patternFillResult.injected} shape(s)`);
+        }
 
         // ========================================
         // 🪞 STEP 6.5B: INJECT SHAPE REFLECTIONS
@@ -458,7 +467,7 @@ function parseGradientBackground(gradientString) {
         const gradientMatch = gradientString.match(/(linear|radial)-gradient\(([\s\S]+)\)/i);
         if (!gradientMatch) return null;
 
-        const type    = gradientMatch[1].toLowerCase(); // 'linear' | 'radial'
+        const type = gradientMatch[1].toLowerCase(); // 'linear' | 'radial'
         const content = gradientMatch[2].trim();
 
         // ── Split content by commas NOT inside parentheses ────────────────────────
@@ -466,10 +475,10 @@ function parseGradientBackground(gradientString) {
         const parts = [];
         let depth = 0, current = '';
         for (const ch of content) {
-            if      (ch === '(')               { depth++; current += ch; }
-            else if (ch === ')')               { depth--; current += ch; }
-            else if (ch === ',' && depth === 0){ parts.push(current.trim()); current = ''; }
-            else                               { current += ch; }
+            if (ch === '(') { depth++; current += ch; }
+            else if (ch === ')') { depth--; current += ch; }
+            else if (ch === ',' && depth === 0) { parts.push(current.trim()); current = ''; }
+            else { current += ch; }
         }
         if (current.trim()) parts.push(current.trim());
 
@@ -487,7 +496,7 @@ function parseGradientBackground(gradientString) {
             const pctMatch = part.match(/(\d+(?:\.\d+)?)\s*%/);
             colorStops.push({
                 color: hexColor.toUpperCase(),
-                stop : pctMatch ? parseFloat(pctMatch[1]) / 100 : null
+                stop: pctMatch ? parseFloat(pctMatch[1]) / 100 : null
             });
         }
 
@@ -508,7 +517,7 @@ function parseGradientBackground(gradientString) {
         }
 
         const gradientColors = colorStops.map(s => s.color);
-        const gradientStops  = colorStops.map(s => s.stop);
+        const gradientStops = colorStops.map(s => s.stop);
 
         // ── Build the object that genXmlColorSelection() expects ──────────────────
         //
@@ -534,14 +543,14 @@ function parseGradientBackground(gradientString) {
                 angleDeg = parseFloat(degMatch[1]);
             } else {
                 const dirMap = {
-                    'to bottom':       180,
-                    'to top':            0,
-                    'to right':         90,
-                    'to left':         270,
+                    'to bottom': 180,
+                    'to top': 0,
+                    'to right': 90,
+                    'to left': 270,
                     'to bottom right': 135,
-                    'to bottom left':  225,
-                    'to top right':     45,
-                    'to top left':     315,
+                    'to bottom left': 225,
+                    'to top right': 45,
+                    'to top left': 315,
                 };
                 const lower = content.toLowerCase();
                 for (const [key, val] of Object.entries(dirMap)) {
@@ -716,6 +725,11 @@ async function processSlideContent(pptx, pptSlide, slideElement, slideContext) {
                         await processShapeElement(pptx, pptSlide, element, slideContext);
                         processedElements.add(element);
                     }
+                    // ✅ ADD THIS BLOCK — process text layered over the image
+                    const textOverlay = element.querySelector(".sli-txt-box");
+                    if (textOverlay && !isMasterElement(textOverlay)) {
+                        addTextBox.addTextBoxToSlide(pptSlide, textOverlay, element, slideContext);
+                    }
                 } else {
                     await processShapeElement(pptx, pptSlide, element, slideContext);
                     processedElements.add(element);
@@ -737,6 +751,11 @@ async function processSlideContent(pptx, pptSlide, slideElement, slideContext) {
                         await addImage.addImageToSlide(pptx, pptSlide, imgElement, slideContext, element);
                     }
                     processedElements.add(element);
+                    // ✅ ADD THIS BLOCK HERE TOO
+                    const textOverlay = element.querySelector(".sli-txt-box");
+                    if (textOverlay && !isMasterElement(textOverlay)) {
+                        addTextBox.addTextBoxToSlide(pptSlide, textOverlay, element, slideContext);
+                    }
                 }
             }
             else if (element.tagName === "IMG") {
@@ -1748,6 +1767,90 @@ async function cleanSlideXmlForSyncfusion(slideXmlsDir) {
 
     } catch (error) {
         console.error('   ❌ Error in cleanSlideXmlForSyncfusion:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+
+async function injectPatternFillsIntoSlideXML(slideXmlsDir) {
+    try {
+        if (!global.patternFillStore || global.patternFillStore.size === 0) {
+            return { success: true, injected: 0 };
+        }
+
+        const slidesDir = path.join(slideXmlsDir, 'slides');
+        if (!await checkDirectoryExists(slidesDir)) {
+            return { success: true, injected: 0 };
+        }
+
+        const slideFiles = await fsPromises.readdir(slidesDir);
+        const slideXmlFiles = slideFiles.filter(f => f.match(/^slide\d+\.xml$/));
+        let totalInjected = 0;
+
+        for (const slideFile of slideXmlFiles) {
+            const slidePath = path.join(slidesDir, slideFile);
+            let xml = await fsPromises.readFile(slidePath, 'utf8');
+            let modified = false;
+            xml = xml.replace(/<p:cNvPr([^>]*)>\s*<\/p:cNvPr>/g, '<p:cNvPr$1/>');
+            for (const [storeKey, patternData] of global.patternFillStore.entries()) {
+                const shapeName = patternData.shapeName || storeKey;
+                if (!shapeName) continue;
+
+                const escapedName = shapeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+                const pattFillXml =
+                    `<a:pattFill prst="${patternData.prst}">` +
+                    `<a:fgClr><a:srgbClr val="${patternData.fg}"/></a:fgClr>` +
+                    `<a:bgClr><a:srgbClr val="${patternData.bg}"/></a:bgClr>` +
+                    `</a:pattFill>`;
+
+                // More robust: match shape block, then find spPr, replace any fill
+                const shapeBlockRegex = new RegExp(
+                    `(<p:sp>[\\s\\S]*?<p:cNvPr[^>]*name="${escapedName}"[^>]*/>[\\s\\S]*?<p:spPr[^>]*>)([\\s\\S]*?)(</p:spPr>)`,
+                    'g'
+                );
+
+                const newXml = xml.replace(shapeBlockRegex, (match, before, spPrContent, after) => {
+                    let newSpPrContent = spPrContent;
+
+                    // Replace any existing fill (solidFill, gradFill, noFill, blipFill)
+                    const fillReplaced = newSpPrContent.replace(
+                        /<a:(solidFill|gradFill|noFill|blipFill)>[\s\S]*?<\/a:\1>|<a:noFill\/>/,
+                        pattFillXml
+                    );
+
+                    if (fillReplaced !== newSpPrContent) {
+                        newSpPrContent = fillReplaced;
+                    } else {
+                        // No fill found — insert after xfrm or at start of spPr
+                        newSpPrContent = newSpPrContent.replace(
+                            /(<\/a:xfrm>)/,
+                            `$1${pattFillXml}`
+                        );
+                        // If still no xfrm, insert at very beginning
+                        if (newSpPrContent === spPrContent) {
+                            newSpPrContent = pattFillXml + newSpPrContent;
+                        }
+                    }
+
+                    modified = true;
+                    totalInjected++;
+                    return before + newSpPrContent + after;
+                });
+
+                xml = newXml;
+            }
+
+            if (modified) {
+                await fsPromises.writeFile(slidePath, xml, 'utf8');
+                console.log(`   ✅ Pattern fills injected into ${slideFile}`);
+            }
+        }
+
+        return { success: true, injected: totalInjected };
+
+    } catch (error) {
+        console.error('   ❌ Error in injectPatternFillsIntoSlideXML:', error);
         return { success: false, error: error.message };
     }
 }

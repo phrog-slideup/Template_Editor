@@ -360,7 +360,7 @@ function validateShapeOptions(shapeOptions) {
             width: 0.5       // Use thinner line
         };
     } else if (hasFill && !hasStroke) {
-        console.log('   ✅ Shape has fill but no stroke - this is valid, no stroke added');
+        // console.log('   ✅ Shape has fill but no stroke - this is valid, no stroke added');
     }
 
     return true;

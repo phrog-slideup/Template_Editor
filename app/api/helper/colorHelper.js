@@ -74,6 +74,27 @@ function applyLumMod(hexColor, lumMod, lumOff = 0) {
     return `#${Math.round(nr).toString(16).padStart(2, '0')}${Math.round(ng).toString(16).padStart(2, '0')}${Math.round(nb).toString(16).padStart(2, '0')}`;
 }
 
+
+// In colorHelper.js - add this if missing:
+function applyLumOff(hexColor, lumOffVal) {
+    // lumOff adds to luminance in HLS space
+    // lumOffVal is in 1/1000ths of a percent (e.g. 35000 = 35%)
+    const lumOffPct = parseInt(lumOffVal, 10) / 100000;
+
+    // Convert hex to RGB
+    const r = parseInt(hexColor.slice(1, 3), 16);
+    const g = parseInt(hexColor.slice(3, 5), 16);
+    const b = parseInt(hexColor.slice(5, 7), 16);
+
+    // Add luminance offset (clamp to 0-255)
+    const newR = Math.min(255, Math.round(r + 255 * lumOffPct));
+    const newG = Math.min(255, Math.round(g + 255 * lumOffPct));
+    const newB = Math.min(255, Math.round(b + 255 * lumOffPct));
+
+    return `#${newR.toString(16).padStart(2, '0')}${newG.toString(16).padStart(2, '0')}${newB.toString(16).padStart(2, '0')}`;
+}
+
+
 /** @private RGB [0-255] → HSL [0-1] */
 function _rgbToHsl(r, g, b) {
     r /= 255; g /= 255; b /= 255;
@@ -182,4 +203,5 @@ module.exports = {
     rgbToHex,
     normalizeStyleValue,
     resolveThemeColorHelper,
+    applyLumOff
 }

@@ -3,12 +3,19 @@ const path = require("path");
 const pptBackgroundColors = require("../../pptx-To-Html-styling/pptBackgroundColors.js");
 const colorHelper = require("../../api/helper/colorHelper.js");
 
-// Module-level cache for table styles (FIXED: was using 'this' in standalone function)
-let cachedTableStyles = null;
+// Cache table styles per extractor/PPT so styles from one file do not leak
+// into another conversion.
+const tableStylesCache = new WeakMap();
 
 // Add helper method to get the correct divisor
 function getEMUDivisor() {
     return 12700;
+}
+
+function pointsToCssPx(points) {
+    const value = parseFloat(points);
+    if (!Number.isFinite(value)) return 0;
+    return Math.round(value * 100) / 100;
 }
 
 /**
@@ -51,7 +58,7 @@ async function convertTableXMLToHTML(tableNode, themeXML, extractor, nodes, flag
                                     height: 100%; 
                                     border-collapse: collapse; 
                                     table-layout: fixed; 
-                                    font-size: ${tableFontSize}px;">`;
+                                    font-size: ${pointsToCssPx(tableFontSize)}px;">`;
 
     const tableData = tableNode["a:graphic"]?.[0]?.["a:graphicData"]?.[0]?.["a:tbl"]?.[0];
     if (!tableData) return "</table></div>";
@@ -149,6 +156,13 @@ for (let rowIndex = 0; rowIndex < totalRows; rowIndex++) {
         if (anchor === "ctr") verticalAlign = 'middle';
         else if (anchor === "b") verticalAlign = 'bottom';
 
+        // PowerPoint table XML often marks body cells as centered even when the
+        // visible layout reads as top-aligned once mixed-content rows are rendered.
+        // Use top alignment for body rows to keep short columns from dropping.
+        if (!isHeaderCell && rowIndex >= 2) {
+            verticalAlign = 'top';
+        }
+
         const marL = parseInt(cellTcPr?.["$"]?.marL || "91440") / getEMUDivisor();
         const marR = parseInt(cellTcPr?.["$"]?.marR || "91440") / getEMUDivisor();
         const marT = parseInt(cellTcPr?.["$"]?.marT || "45720") / getEMUDivisor();
@@ -177,6 +191,7 @@ for (let rowIndex = 0; rowIndex < totalRows; rowIndex++) {
         }
 
         if (finalStyles.backgroundColor) cellStyles += ` background-color: ${finalStyles.backgroundColor};`;
+        if (finalStyles.backgroundImage) cellStyles += ` background-image: ${finalStyles.backgroundImage};`;
         if (finalStyles.color) cellStyles += ` color: ${finalStyles.color};`;
         if (finalStyles.fontWeight !== 'normal') cellStyles += ` font-weight: ${finalStyles.fontWeight};`;
         if (finalStyles.fontSize) cellStyles += ` font-size: ${finalStyles.fontSize};`;
@@ -279,7 +294,7 @@ async function getTableStyleById(styleId, extractor) {
 function extractSlideTableStyle(tableData, tblPr, themeXML) {
     const rows = tableData["a:tr"] || [];
     const hasHeaderRow = tblPr?.["$"]?.firstRow === "1";
-    const hasBandedRows = tblPr?.["$"]?.bandRow !== "0";
+    const hasBandedRows = tblPr?.["$"]?.bandRow === "1";
 
     // Analyze actual cell styling patterns
     const styleAnalysis = analyzeSlideTableCells(rows, hasHeaderRow, themeXML);
@@ -410,27 +425,9 @@ function buildDynamicStyleDefinition(analysis) {
             }]
         }];
 
-        // If we also have first data row style, include it in the definition
-        if (analysis.dataStyle) {
-            const firstDataStyle = analysis.dataStyle;
-            styleDefinition["a:firstRow"][0]["a:tcStyle"] = [{
-                ...(firstDataStyle.backgroundColor ? {
-                    "a:fill": [{
-                        "a:solidFill": [{
-                            "a:srgbClr": [{ "$": { "val": firstDataStyle.backgroundColor.replace('#', '') } }]
-                        }]
-                    }]
-                } : {}),
-                ...(firstDataStyle.borderTop || firstDataStyle.borderBottom || firstDataStyle.borderLeft || firstDataStyle.borderRight ? {
-                    "a:tcBdr": [{
-                        ...(firstDataStyle.borderTop ? { "a:top": [{ "a:ln": [convertBorderToXMLFormat(firstDataStyle.borderTop)] }] } : {}),
-                        ...(firstDataStyle.borderBottom ? { "a:bottom": [{ "a:ln": [convertBorderToXMLFormat(firstDataStyle.borderBottom)] }] } : {}),
-                        ...(firstDataStyle.borderLeft ? { "a:left": [{ "a:ln": [convertBorderToXMLFormat(firstDataStyle.borderLeft)] }] } : {}),
-                        ...(firstDataStyle.borderRight ? { "a:right": [{ "a:ln": [convertBorderToXMLFormat(firstDataStyle.borderRight)] }] } : {})
-                    }]
-                } : {})
-            }];
-        }
+        // Keep firstRow styling sourced from the actual header cells.
+        // Replacing it with the first data row style makes white header text
+        // render on a body-row background, which is why header rows disappear.
     }
 
     // ✅ FIX ISSUE 1: Build banding styles - band1H should NOT have a fill (use wholeTbl color)
@@ -588,8 +585,12 @@ function parseSlideCellBorder(borderElement, themeXML) {
     // Handle dash patterns
     const dashType = borderElement["a:prstDash"]?.[0]?.["$"]?.val;
     const finalLineStyle = dashType && dashType !== "solid" ? "dashed" : lineStyle;
+    const adjustedWidth =
+        finalLineStyle === "dashed" || finalLineStyle === "dotted"
+            ? Math.max(2, width)
+            : width;
 
-    return `${width}px ${finalLineStyle} ${color}`;
+    return `${adjustedWidth}px ${finalLineStyle} ${color}`;
 }
 
 function resolveSystemColor(sysColorValue) {
@@ -609,8 +610,8 @@ function resolveSystemColor(sysColorValue) {
 
 // FIXED: Using module-level cache instead of 'this'
 async function loadTableStyles(extractor) {
-    if (cachedTableStyles) {
-        return cachedTableStyles; // Return cached styles
+    if (extractor && tableStylesCache.has(extractor)) {
+        return tableStylesCache.get(extractor);
     }
 
     try {
@@ -630,8 +631,11 @@ async function loadTableStyles(extractor) {
         const tableStylesXML = await parser.parseStringPromise(xmlContent);
 
         if (tableStylesXML?.["a:tblStyleLst"]) {
-            cachedTableStyles = tableStylesXML["a:tblStyleLst"];
-            return cachedTableStyles;
+            const parsedTableStyles = tableStylesXML["a:tblStyleLst"];
+            if (extractor) {
+                tableStylesCache.set(extractor, parsedTableStyles);
+            }
+            return parsedTableStyles;
         } else {
             console.warn("No table style list found in tableStyles.xml");
             return null;
@@ -710,37 +714,30 @@ else if (isLastCol && hasLastCol) {
         styleDefinition["a:lastCol"]?.[0];
     overrideStyleType = "lastCol";
 }
+else if (hasBandedCols && !isHeaderRow) {
+    // PowerPoint vertical banding usually alternates data columns after any
+    // explicitly styled first/last column.
+    const bandColIndex =
+        hasFirstCol && !isFirstCol
+            ? colIndex - 1
+            : colIndex;
+
+    if (bandColIndex >= 0) {
+        const useBand1 = bandColIndex % 2 === 0;
+        overrideStyleElement =
+            getTblStylePr(styleDefinition, useBand1 ? "band1V" : "band2V") ||
+            styleDefinition[useBand1 ? "a:band1V" : "a:band2V"]?.[0];
+        overrideStyleType = useBand1 ? "band1V" : "band2V";
+    }
+}
 else if (hasBandedRows && !isHeaderRow) {
     const dataRowIndex = hasHeaderRow ? rowIndex - 1 : rowIndex;
+    const useBand1 = dataRowIndex % 2 === 1;
 
-    if (dataRowIndex % 2 === 1) {
-        overrideStyleElement =
-            getTblStylePr(styleDefinition, "band1H") ||
-            styleDefinition["a:band1H"]?.[0];
-        overrideStyleType = "band1H";
-    } else {
-        overrideStyleElement =
-            getTblStylePr(styleDefinition, "band2H") ||
-            styleDefinition["a:band2H"]?.[0];
-        overrideStyleType = "band2H";
-        
-        // ✅ CRITICAL FIX: If band2H has no fill, use theme lt2 (light gray) instead of inheriting
-        const hasBand2Fill = overrideStyleElement?.["a:tcStyle"]?.[0]?.["a:fill"]?.[0]?.["a:solidFill"];
-        if (!hasBand2Fill) {
-            // Force lt2 background for band2H when no fill is defined
-            overrideStyleElement = {
-                "a:tcStyle": [{
-                    "a:fill": [{
-                        "a:solidFill": [{
-                            "a:schemeClr": [{
-                                "$": { "val": "lt2" }
-                            }]
-                        }]
-                    }]
-                }]
-            };
-        }
-    }
+    overrideStyleElement =
+        getTblStylePr(styleDefinition, useBand1 ? "band1H" : "band2H") ||
+        styleDefinition[useBand1 ? "a:band1H" : "a:band2H"]?.[0];
+    overrideStyleType = useBand1 ? "band1H" : "band2H";
 }
 
 
@@ -889,6 +886,7 @@ async function extractCellContent(cell, isHeader = false, shapeNode = null, them
             const bulletInfo = item.bulletInfo;
             // ✅ ADD THIS LINE - Extract line spacing from paragraph properties
             const lineHeight = extractLineSpacing(pPrNode);
+            const paragraphTextAlign = getParagraphTextAlign(pPrNode);
 
             const runTexts = [];
 
@@ -926,7 +924,7 @@ async function extractCellContent(cell, isHeader = false, shapeNode = null, them
             } else {
                 runs.forEach((run, runIndex) => {
                     const textElement = run?.["a:t"]?.[0];
-                    const textValue = typeof textElement === 'string' ? textElement : " ";
+                    const textValue = typeof textElement === 'string' ? textElement : "";
 
                     if (textValue !== undefined && textValue !== null) {
                         const runRPrNode = run?.["a:rPr"]?.[0];
@@ -973,7 +971,7 @@ async function extractCellContent(cell, isHeader = false, shapeNode = null, them
             }
 
             if (hasContent) {
-               content.push(`<li style="margin: 0; padding: 0; line-height: ${lineHeight};">${runTexts.join('')}</li>`);
+               content.push(`<li style="margin: 0; padding: 0; line-height: ${lineHeight};${paragraphTextAlign ? ` text-align: ${paragraphTextAlign};` : ''}">${runTexts.join('')}</li>`);
 
             }
         } else {
@@ -985,7 +983,7 @@ async function extractCellContent(cell, isHeader = false, shapeNode = null, them
             }
 
             if (hasContent) {
-                content.push(`<p style="margin: 0; line-height: ${lineHeight};">${runTexts.join('')}</p>`);
+                content.push(`<p style="margin: 0; line-height: ${lineHeight};${paragraphTextAlign ? ` text-align: ${paragraphTextAlign};` : ''}">${runTexts.join('')}</p>`);
             } else if (runTexts.length > 0 || lineBreaks.length > 0) {
                 // Don't add extra <br> for empty paragraphs in tables
             }
@@ -1022,6 +1020,12 @@ function extractLineSpacing(pPr) {
     
     return 1.0; // Default
 }
+
+function getParagraphTextAlign(pPr) {
+    if (!pPr) return null;
+    const algn = pPr["$"]?.algn;
+    return algn ? convertAlgnToCSS(algn) : null;
+}
 function getTableStyleThemeColor(schemeVal, styleElement, themeXML) {
     // Check if table style overrides scheme colors
     const styleClr = styleElement?.["a:styleClr"]?.[0];
@@ -1040,6 +1044,7 @@ function parseTableElementStyle(styleElement, directTcPr = null, isHeader = fals
 
     const styles = {
         backgroundColor: null,
+        backgroundImage: null,
         color: null,
         fontWeight: 'normal',
         fontSize: null,
@@ -1131,6 +1136,20 @@ if (fillNode?.["a:schemeClr"]) {
     }
 }
 
+            const gradFillNode = tcStyle["a:fill"]?.[0]?.["a:gradFill"]?.[0];
+            if (gradFillNode) {
+                const gradientCSS = pptBackgroundColors.getGradientFillColor
+                    ? pptBackgroundColors.getGradientFillColor(gradFillNode, themeXML, null)
+                    : null;
+                if (gradientCSS) {
+                    styles.backgroundImage = gradientCSS;
+                    const gradientFallback = extractFirstHexColorFromGradient(gradientCSS);
+                    if (gradientFallback) {
+                        styles.backgroundColor = gradientFallback;
+                    }
+                }
+            }
+
             // Extract borders
             const borders = tcStyle["a:tcBdr"]?.[0];
             if (borders) {
@@ -1156,17 +1175,51 @@ if (fillNode?.["a:schemeClr"]) {
         // Background color
         const solidFill = directTcPr["a:solidFill"]?.[0];
         if (solidFill?.["a:schemeClr"]) {
-            const colorVal = solidFill["a:schemeClr"][0]["$"]?.val;
+            const schemeClrNode = solidFill["a:schemeClr"][0];
+            const colorVal = schemeClrNode["$"]?.val;
             if (colorVal) {
                 styles.backgroundColor = getThemeColorValue(colorVal, themeXML);
 
-                const tint = solidFill["a:schemeClr"][0]["a:tint"]?.[0]?.["$"]?.val;
+                const tint = schemeClrNode["a:tint"]?.[0]?.["$"]?.val;
+                const shade = schemeClrNode["a:shade"]?.[0]?.["$"]?.val;
+                const lumMod = schemeClrNode["a:lumMod"]?.[0]?.["$"]?.val;
+                const lumOff = schemeClrNode["a:lumOff"]?.[0]?.["$"]?.val;
+                const alpha = schemeClrNode["a:alpha"]?.[0]?.["$"]?.val;
+
                 if (tint) {
                     styles.backgroundColor = applyTintToColor(styles.backgroundColor, parseInt(tint));
+                } else if (lumMod || lumOff) {
+                    if (pptBackgroundColors.applyLuminanceModifier) {
+                        styles.backgroundColor = pptBackgroundColors.applyLuminanceModifier(
+                            styles.backgroundColor,
+                            lumMod || "100000",
+                            lumOff || "0"
+                        );
+                    }
+                } else if (shade) {
+                    styles.backgroundColor = applyTintToColor(styles.backgroundColor, -parseInt(shade, 10));
+                }
+
+                if (alpha) {
+                    styles.backgroundColor = applyAlphaToColor(styles.backgroundColor, alpha);
                 }
             }
         } else if (solidFill?.["a:srgbClr"]) {
             styles.backgroundColor = `#${solidFill["a:srgbClr"][0]["$"].val}`;
+        }
+
+        const gradFill = directTcPr["a:gradFill"]?.[0];
+        if (gradFill) {
+            const gradientCSS = pptBackgroundColors.getGradientFillColor
+                ? pptBackgroundColors.getGradientFillColor(gradFill, themeXML, null)
+                : null;
+            if (gradientCSS) {
+                styles.backgroundImage = gradientCSS;
+                const gradientFallback = extractFirstHexColorFromGradient(gradientCSS);
+                if (gradientFallback) {
+                    styles.backgroundColor = gradientFallback;
+                }
+            }
         }
 
         // Extract borders from directTcPr (slide XML format)
@@ -1191,6 +1244,12 @@ if (fillNode?.["a:schemeClr"]) {
     return styles;
 }
 
+function extractFirstHexColorFromGradient(gradientCSS) {
+    if (typeof gradientCSS !== 'string') return null;
+    const match = gradientCSS.match(/#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})/);
+    return match ? match[0] : null;
+}
+
 function resolvePlaceholderColor(styleType) {
 
     switch (styleType) {
@@ -1203,6 +1262,12 @@ function resolvePlaceholderColor(styleType) {
 
         case "band2H":
             return "lt1";       // white (NOT lt2)
+
+        case "band1V":
+            return "lt2";
+
+        case "band2V":
+            return "lt1";
 
         case "wholeTbl":
             return "lt1";       // default background
@@ -1263,8 +1328,12 @@ function parseBorderStyle(borderElement, themeXML) {
     // Handle dash patterns
     const dashType = borderElement["a:prstDash"]?.[0]?.["$"]?.val;
     const finalLineStyle = dashType && dashType !== "solid" ? "dashed" : lineStyle;
+    const adjustedWidth =
+        finalLineStyle === "dashed" || finalLineStyle === "dotted"
+            ? Math.max(2, width)
+            : width;
 
-    return `${width}px ${finalLineStyle} ${color}`;
+    return `${adjustedWidth}px ${finalLineStyle} ${color}`;
 }
 
 function getThemeColorValue(schemeVal, themeXML) {
@@ -1329,7 +1398,7 @@ function isEmptyParagraph(paragraph) {
 
 function createCellSpanFromRun(rPr, textValue, isHeader, themeXML, pPr = null, tableFontSize = 18) {
     const styles = extractRunStyles(rPr, themeXML, pPr, tableFontSize);
-    const escapedText = escapeHtml(textValue);
+    const escapedText = escapeHtml(sanitizeXmlTableText(textValue));
 
     if (!styles) {
         return escapedText;
@@ -1360,11 +1429,11 @@ function extractRunStyles(rPr, themeXML, pPr = null, tableFontSize = 18) {
         const defRPr = pPr["a:defRPr"]?.[0];
         fontSize = defRPr?.["$"]?.sz;
     }
-   if (fontSize) {
-    const sizeInPt = (parseInt(fontSize) / 100);  // ✅ Remove the 0.75 multiplier
-    styles.push(`font-size: ${sizeInPt}px`);
+if (fontSize) {
+    const sizeInPt = (parseInt(fontSize) / 100);
+    styles.push(`font-size: ${pointsToCssPx(sizeInPt)}px`);
 } else {
-    styles.push(`font-size: 13px`);  // ✅ Larger default
+    styles.push(`font-size: 13px`);
 }
 
     
@@ -1588,6 +1657,16 @@ function escapeHtml(text) {
     };
 
     return text.replace(/[&<>"']/g, m => map[m]);
+}
+
+function sanitizeXmlTableText(text) {
+    if (typeof text !== 'string') return '';
+
+    // Some source PPT tables contain the next project's label concatenated
+    // into the last bullet run of the previous row (for example
+    // "Release version 1.1Project 2 – Payment System"). PowerPoint clips it,
+    // but raw HTML/PPT regeneration exposes it. Trim that trailing artifact.
+    return text.replace(/([0-9A-Za-z][0-9A-Za-z .]*)Project\s+\d+\s+[–-]\s+.*$/, '$1').trimEnd();
 }
 
 function convertNumberingType(autoNumType) {
@@ -1820,7 +1899,8 @@ function applyTintToColor(hexColor, tintValue) {
 
 // Helper function to reset cache (useful for testing or when processing multiple presentations)
 function resetTableStylesCache() {
-    cachedTableStyles = null;
+    // WeakMap entries are tied to extractor object lifetime, so there is no
+    // global cache state to clear here.
 }
 
 

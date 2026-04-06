@@ -710,7 +710,10 @@ async function processSlideContent(pptx, pptSlide, slideElement, slideContext) {
             }
 
 
-            if (element.classList.contains("shape") || element.classList.contains("custom-shape") || element.id === "custGeom" || element.classList.contains("sli-svg-connector")) {
+            // FIX Bug 4: sli-svg-container (e.g. isometric inline graphics) must also route
+            // through processShapeElement so their SVG paths are converted to custGeom shapes.
+            // Previously these elements were completely skipped — all inline graphics were lost.
+            if (element.classList.contains("shape") || element.classList.contains("custom-shape") || element.id === "custGeom" || element.classList.contains("sli-svg-connector") || element.classList.contains("sli-svg-container")) {
 
                 // CASE 2: shape + image-container — shape-type image with crop offsets
                 if (

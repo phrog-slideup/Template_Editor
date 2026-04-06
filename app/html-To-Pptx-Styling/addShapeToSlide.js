@@ -696,13 +696,15 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
     }
 
 
-    // ✅ Freeform / SVG-based shapes (custGeom, custom-shape, svg connectors)
+    // ✅ Freeform / SVG-based shapes (custGeom, custom-shape, svg connectors, inline graphics)
     // Route these to addSvgToSlide so we actually create a real custGeom in PPTX.
+    // FIX Bug 4: sli-svg-container added — inline isometric/graphic SVGs were previously skipped.
     if (
         shapeElement.classList.contains('custom-shape') ||
         shapeElement.id === 'custGeom' ||
         shapeId === 'custGeom' ||
-        shapeElement.classList.contains('sli-svg-connector')
+        shapeElement.classList.contains('sli-svg-connector') ||
+        shapeElement.classList.contains('sli-svg-container')
     ) {
         const ok = svgAddToSlide.processSvgElement(pptSlide, shapeElement, slideContext);
         if (ok) return;

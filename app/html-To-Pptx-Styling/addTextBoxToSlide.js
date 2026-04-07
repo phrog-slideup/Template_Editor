@@ -1492,24 +1492,40 @@ function processListRecursively(list, formattedListItems, indentLevel, globalLin
         let itemFormatting = null;
         let hasValidContent = false;
 
+        // Add this helper ONCE at the top of processListRecursively
+        const resolveListAlign = (spanEl, liEl, ulEl) => {
+            for (const el of [spanEl, liEl, ulEl]) {
+                if (!el) continue;
+                const raw = (el.getAttribute && el.getAttribute('style')) || '';
+                const m = raw.match(/(?:^|;)\s*text-align\s*:\s*([a-z]+)/i);
+                if (m) return m[1].toLowerCase();
+                try {
+                    if (el.style && el.style.textAlign && el.style.textAlign !== '')
+                        return el.style.textAlign.toLowerCase();
+                } catch (e) { }
+            }
+            return 'left';
+        };
+
+        // Then in the spans block:
         if (directSpans.length > 0) {
             directSpans.forEach((span) => {
                 const spanText = getCleanTextContent(span);
-
                 if (spanText && spanText.trim().length > 0) {
                     combinedText += spanText;
-
-                    // Use formatting from the first span, including line spacing
                     if (!itemFormatting) {
                         itemFormatting = extractSpanFormattingFromListWithLineSpacing(span, globalLineSpacing, globalFontSize);
+                        // ✅ Overwrite align from ul/li/span hierarchy
+                        itemFormatting.align = resolveListAlign(span, item, list);
                     }
-
                     hasValidContent = true;
                 }
             });
         } else {
             combinedText = directTextContent;
             itemFormatting = extractListItemFormattingWithLineSpacing(item, globalLineSpacing, globalFontSize);
+            // ✅ Overwrite align from li/ul hierarchy
+            itemFormatting.align = resolveListAlign(null, item, list);
             hasValidContent = !!combinedText.trim();
         }
 
@@ -1518,18 +1534,8 @@ function processListRecursively(list, formattedListItems, indentLevel, globalLin
             if (isOrdered) {
                 itemFormatting.bullet = { type: "number" };
             } else {
-                // BULLET SPACING FIX:
-                // At 72 DPI, 1px = 1pt exactly. The <ul> padding-left (e.g. 20px)
-                // directly gives us the correct indent in pt (20pt).
-                // PptxGenJS DEF_BULLET_MARGIN = 27pt which is too wide vs the HTML.
-                // We pass only `indent` (no `type`) so PptxGenJS falls through to
-                // its final else-branch and renders the default "•" bullet char
-                // with our custom spacing instead of the 27pt default.
-                const ulPaddingLeft = getUlPaddingLeft(list); // px = pt at 72dpi
-                // Clamp: min 15pt (avoid crushing), max 27pt (PptxGenJS default)
-                // const bulletIndentPt = Math.min(Math.max(Math.round(ulPaddingLeft), 15), 27);
+                const ulPaddingLeft = getUlPaddingLeft(list);
                 const bulletIndentPt = Math.min(Math.max(Math.round(ulPaddingLeft * 4), 10), 22);
-
                 itemFormatting.bullet = {
                     indent: bulletIndentPt   // no `type` property — required for bullet char to render
                 };

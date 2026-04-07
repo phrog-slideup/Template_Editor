@@ -614,6 +614,7 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
     const originalLumMod = shapeElement.getAttribute("originallummod");
     const originalLumOff = shapeElement.getAttribute("originallumoff");
     const originalAlpha = shapeElement.getAttribute("originalalpha");
+    const softEdgeRad = parseInt(shapeElement.getAttribute('data-soft-edge-rad') || '0', 10);
 
     // Helper function to create proper theme color object
     // NEW: Detect if originalThemeColor is srgbClr (hex) or schemeClr; add alpha when provided
@@ -2096,7 +2097,17 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
         if (!pptSlide.shapes) pptSlide.shapes = [];
 
         pptSlide.shapes.push(shapeData);
-
+        // After pptSlide.shapes.push(shapeData)
+        if (softEdgeRad > 0) {
+            if (!global.softEdgeStore) global.softEdgeStore = new Map();
+            const storeKey = objName || `shape_${x.toFixed(2)}_${y.toFixed(2)}`;
+            global.softEdgeStore.set(storeKey, {
+                radEMU: softEdgeRad,
+                shapeName: objName,
+                x, y, w, h
+            });
+            console.log(`   🌫️ Queued soft edge: shape="${objName}", rad=${softEdgeRad} EMU`);
+        }
         // // Log successful shape addition with flip information
         // if (flipHorizontal || flipVertical) {
         // }

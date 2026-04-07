@@ -1,15 +1,14 @@
-function resolveThemeColorHelper(colorKey, themeXML, masterXML) {
-    const clrMapNode = masterXML?.["p:sldMaster"]?.["p:clrMap"]?.[0];
+function resolveThemeColorHelper(colorKey, themeXML, masterXML, clrMap = null) {
+    const masterClrMap = masterXML?.["p:sldMaster"]?.["p:clrMap"]?.[0]?.["$"] || null;
 
     let mappedColorKey = colorKey;
 
-    if (clrMapNode && clrMapNode['$']) {
-        const dynamicColorMap = clrMapNode['$'];
-
-        // If the color key exists in the map, use the mapped value
-        if (dynamicColorMap[colorKey]) {
-            mappedColorKey = dynamicColorMap[colorKey];
-        }
+    // Prefer the active clrMap passed down by the slide pipeline. This lets shape
+    // rendering respect the resolved master/layout mapping consistently.
+    if (clrMap && typeof clrMap === "object" && clrMap[colorKey]) {
+        mappedColorKey = clrMap[colorKey];
+    } else if (masterClrMap && masterClrMap[colorKey]) {
+        mappedColorKey = masterClrMap[colorKey];
     }
 
     // Get the color node using the mapped color key

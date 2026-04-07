@@ -1,7 +1,32 @@
-function generateCustomShapeSVG(custGeom, position, fillColor, stroke, flipOptions = {}) {
+const { getCustomShapeShadowStyle, getCustomShapeShadowData } = require("../shapes_Properties/getShapeShadowStyle");
+
+function generateCustomShapeSVG(shapeNode, custGeom, position, fillColor, stroke, flipOptions = {}) {
 
     const viewBoxWidth = position.width;
     const viewBoxHeight = position.height;
+
+    // Shadow routing:
+    //   Outer shadows  -> filter: drop-shadow() on <svg>  (clips to path outline)
+    //   Inner shadows  -> box-shadow: inset on <foreignObject><div> for radial branches
+    //                     (CSS drop-shadow has no inset, so inner shadows on solid/linear
+    //                      branches are approximated as a zero-offset glow on <svg>)
+    const shadowData = getCustomShapeShadowData(shapeNode, this.themeXML, this.masterXML, this.clrMap);
+
+    // Outer shadow style for <svg> element (used by all branches)
+    const svgFilterStyle = (!shadowData || shadowData.isInner)
+        ? ""
+        : ` style="${shadowData.svgFilter}"`;
+
+    // Inner shadow approximation for solid/linear branches (zero-offset drop-shadow glow)
+    const svgInnerApproxStyle = (shadowData?.isInner)
+        ? (() => {
+            const blurMatch = shadowData.boxShadow.match(/(\d+(?:\.\d+)?)px\s+rgba/);
+            const rgbaMatch = shadowData.boxShadow.match(/rgba\([^)]+\)/);
+            const blur = blurMatch ? blurMatch[1] : "0";
+            const rgba = rgbaMatch ? rgbaMatch[0] : "rgba(0,0,0,1)";
+            return ` style="filter: drop-shadow(0px 0px ${blur}px ${rgba});"`;
+        })()
+        : "";
 
     // ✅ FIX 1: Build SVG-level flip transform for the <path> element.
     const { flipH = false, flipV = false } = flipOptions;
@@ -19,7 +44,8 @@ function generateCustomShapeSVG(custGeom, position, fillColor, stroke, flipOptio
     pathTransformAttr = pathTransform ? `transform="${pathTransform}"` : "";
     // flip issue change end
     if (!custGeom || !custGeom["a:pathLst"] || !custGeom["a:pathLst"][0] || !custGeom["a:pathLst"][0]["a:path"]) {
-        return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none">
+        const _rectSvgStyle = svgFilterStyle || svgInnerApproxStyle;
+        return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none"${_rectSvgStyle}>
             <rect width="${viewBoxWidth}" height="${viewBoxHeight}" fill="${fillColor}" stroke="${stroke.color}" stroke-width="${stroke.width}" ${pathTransform}/>
         </svg>`;
     }
@@ -117,7 +143,8 @@ function generateCustomShapeSVG(custGeom, position, fillColor, stroke, flipOptio
                 .map(s => `<stop offset="${s.offset}" style="stop-color:${s.color}; stop-opacity:1"/>`)
                 .join("\n               ");
             //flip issue change
-            return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none">
+            const _linSvgStyle = svgFilterStyle || svgInnerApproxStyle;
+            return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none"${_linSvgStyle}>
            <defs>
                <linearGradient id="${gradientId}" x1="${x1}%" y1="${y1}%" x2="${x2}%" y2="${y2}%">
                ${stopElements}
@@ -136,7 +163,13 @@ function generateCustomShapeSVG(custGeom, position, fillColor, stroke, flipOptio
         // clipped to the path shape. We use a clipPath for correctness.
         const clipId = `clip_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         //flip issue change
-        return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none">
+        // For inner shadows on radial-gradient shapes we apply box-shadow:inset on
+        // the clipped <div> — the only element that can honour "inset" here.
+        // For outer shadows we keep filter:drop-shadow on <svg> as usual.
+        const _radDivExtra = (shadowData?.isInner)
+            ? `box-shadow:${shadowData.boxShadow};`
+            : "";
+        return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none"${svgFilterStyle}>
            <defs>
                <clipPath id="${clipId}">
                    <path d="${combinedPathData}" />
@@ -144,18 +177,24 @@ function generateCustomShapeSVG(custGeom, position, fillColor, stroke, flipOptio
            </defs>
            <foreignObject width="${viewBoxWidth}" height="${viewBoxHeight}" clip-path="url(#${clipId})">
                <div xmlns="http://www.w3.org/1999/xhtml"
-                    style="width:100%;height:100%;background:${fillColor};"></div>
+                    style="width:100%;height:100%;${_radDivExtra}background:${fillColor};"></div>
            </foreignObject>
        </svg>`;
     }
 
     // Solid fill fallback
     //flip issue change
-    return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none">
+    const _solidSvgStyle = svgFilterStyle || svgInnerApproxStyle;
+    return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none"${_solidSvgStyle}>
        <g ${pathTransformAttr}>
     <path d="${combinedPathData}" fill="${fillColor}" stroke="${stroke.color || 'none'}" stroke-width="${stroke.width || 0}" />
 </g>
    </svg>`;
+}
+
+
+function getShadowStyle(shapeNode) {
+    return getShapeShadowStyle(shapeNode, this.themeXML, this.masterXML, this.clrMap);
 }
 
 // Evaluate DrawingML formulas used in guide definitions

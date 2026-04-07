@@ -861,14 +861,13 @@ class pptxToHtml {
                               height:${renderHeight}px;
                               ${shapeStyle}
                               ${borderCSS}
-                              ${boxShadowCSS}
                               transform: ${imgcss.transform} rotate(${rotation}deg);
                               overflow:hidden;
                               ${cursorStyle}
                               z-index:${zIndex};">
                           
                           <img src="${imageInfo.src}" alt="${nodeName}"
-                              style="${imgStyle}" />
+                              style="${imgStyle} ${boxShadowCSS}" />
                         </div>`;
           } else {
             // No image info and no SVG content

@@ -646,7 +646,7 @@ class ShapeHandler {
                 }
             }
 
-            const svgMarkup = freeFormShape.generateCustomShapeSVG(custGeom, position, fillColor, resolvedStroke, { flipH, flipV });
+            const svgMarkup = freeFormShape.generateCustomShapeSVG(shapeNode, custGeom, position, fillColor, resolvedStroke, { flipH, flipV });
             return `<div id="custGeom" class="custom-shape" data-name="${shapeName}"
                         style="position:absolute; 
                         left:${position.x}px; 
@@ -655,8 +655,8 @@ class ShapeHandler {
                         width:${position.width}px; 
                         height:${position.height}px; 
                         display:flex;
-                        transform: rotate(${position.rotation}deg); // flip issue changed here
-                        ${opacity}; 
+                        transform: rotate(${position.rotation}deg);
+                        ${shapefillopacity};
                         overflow:visible;">${textContent}${svgMarkup}
                     </div>`;
         }
@@ -677,10 +677,7 @@ class ShapeHandler {
                 strokeDashArray = "5, 5, 2, 5";
             }
         }
-        // ✅ FIX: Hoist isTextBox + transformString BEFORE the switch so that
-        // cases which return early (e.g. "diamond") can reference them.
-        // Previously both were declared only AFTER the switch closed (~line 1690),
-        // causing: ReferenceError: Cannot access 'transformString' before initialization
+
         const isTextBox = shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvSpPr"]?.[0]?.["$"]?.txBox === "1";
         const transformString = this.getTransformString(position, isTextBox);
 
@@ -2156,6 +2153,10 @@ class ShapeHandler {
 
         // ── Glow wrapper pattern ───────────────────────────────────────────────
 
+        const softEdgeResult = this.getSoftEdgeStyle(shapeNode);
+        const softEdgeStyle = softEdgeResult?.css || '';
+        const softEdgeRadEMU = softEdgeResult?.radEMU || 0;
+
         if (glowStyle) {
             return `<div class="shape-glow-wrapper" style="
                 position: absolute;
@@ -2169,6 +2170,8 @@ class ShapeHandler {
                 z-index: ${zIndex};
             "><div class="shape" id="${caseName}"
                 data-name="${shapeName}"
+                data-hidden="${hidden}"
+                data-soft-edge-rad="${softEdgeRadEMU}" 
                 data-original-color="${originalThemeColor}"
                 originalLumMod="${originalLumMod}"
                 originalLumOff="${originalLumOff}"
@@ -2185,6 +2188,7 @@ class ShapeHandler {
                     ${shapeBorder}
                     ${shapeBorderCSS}
                     ${shadowStyle}
+                    ${softEdgeStyle || ''} 
                     display: ${hidden ? "none" : "flex"};
                     transform: ${transformString};
                     box-sizing: border-box;
@@ -2203,6 +2207,7 @@ class ShapeHandler {
         return `<div class="shape" id="${caseName}" 
             data-name="${shapeName}" 
             data-hidden="${hidden}"
+            data-soft-edge-rad="${softEdgeRadEMU}" 
             data-pattern-prst="${fillProps.patternPrst || ''}"
             data-pattern-fg="${fillProps.patternFg || ''}"
             data-pattern-bg="${fillProps.patternBg || ''}"
@@ -2224,6 +2229,7 @@ class ShapeHandler {
                 ${shapeBorder}
                 ${shapeBorderCSS}
                 ${shadowStyle}
+                ${softEdgeStyle || ''} 
                 display: flex;
                 visibility: ${hidden ? "hidden" : "visible"};
                 pointer-events: ${hidden ? "none" : "auto"};
@@ -2239,6 +2245,44 @@ class ShapeHandler {
             ${textContent}
         </div>`;
 
+    }
+
+    getSoftEdgeStyle(shapeNode, slideBgColor = '#ffffff') {
+        const softEdge = shapeNode
+            ?.["p:spPr"]?.[0]
+            ?.["a:effectLst"]?.[0]
+            ?.["a:softEdge"]?.[0];
+
+        if (!softEdge) return null;
+
+        const radEMU = parseInt(softEdge?.["$"]?.rad || 0, 10);
+        if (!radEMU) return null;
+
+        const radPx = Math.round(radEMU / this.getEMUDivisor());
+
+        // Resolve background color dynamically:
+        // 1. Try slide bg solid fill from themeXML/masterXML
+        // 2. Fall back to caller-supplied slideBgColor
+        // 3. Fall back to white
+        let bgColor = slideBgColor || '#ffffff';
+
+        const themeBg = this.themeXML
+            ?.["a:theme"]?.[0]
+            ?.["a:themeElements"]?.[0]
+            ?.["a:clrScheme"]?.[0]
+            ?.["a:bg1"]?.[0];
+
+        if (themeBg) {
+            const sysClr = themeBg?.["a:sysClr"]?.[0]?.["$"]?.lastClr;
+            const srgbClr = themeBg?.["a:srgbClr"]?.[0]?.["$"]?.val;
+            if (sysClr) bgColor = `#${sysClr}`;
+            else if (srgbClr) bgColor = `#${srgbClr}`;
+        }
+
+        return {
+            css: `box-shadow: inset 0 0 ${radPx}px ${radPx}px ${bgColor};`,
+            radEMU: radEMU
+        };
     }
 
     async getImageFromPicture(node, slidePath, relationshipsXML, height) {

@@ -553,149 +553,200 @@ async function convertConnectorToHTML(shapeNode, themeXML, clrMap, masterXML, la
         </div>`;
     }
 
-    // Handle bent connectors using HTML/CSS
-    const width = Math.max(1, position.width);
-    const height = Math.max(1, position.height);
+    const isbentConnector = shapeType.includes("bentConnector");
+    if (isbentConnector) {
+        const width = Math.max(1, position.width);
+        const height = Math.max(1, position.height);
 
-    // Get adjustment values if present
-    const avLst = shapeNode?.["p:spPr"]?.[0]?.["a:prstGeom"]?.[0]?.["a:avLst"]?.[0];
-    let adj1 = 50000;
-    let adj2 = 50000;
-    if (avLst?.["a:gd"]) {
-        const gdList = Array.isArray(avLst["a:gd"]) ? avLst["a:gd"] : [avLst["a:gd"]];
-        for (const gd of gdList) {
-            const name = gd.$?.name;
-            const fmla = gd.$?.fmla || "";
-            if (name === "adj1" && fmla.includes("val")) {
-                adj1 = parseInt(fmla.replace("val ", ""), 10) || 50000;
-            }
-            else if (name === "adj2" && fmla.includes("val")) {
-                adj2 = parseInt(fmla.replace("val ", ""), 10) || 50000;
+        const avLst = shapeNode?.["p:spPr"]?.[0]?.["a:prstGeom"]?.[0]?.["a:avLst"]?.[0];
+        let adj1 = 50000;
+        let adj2 = 50000;
+        if (avLst?.["a:gd"]) {
+            const gdList = Array.isArray(avLst["a:gd"]) ? avLst["a:gd"] : [avLst["a:gd"]];
+            for (const gd of gdList) {
+                const name = gd.$?.name;
+                const fmla = gd.$?.fmla || "";
+                if (name === "adj1" && fmla.includes("val")) {
+                    adj1 = parseInt(fmla.replace("val ", ""), 10) || 50000;
+                }
+                else if (name === "adj2" && fmla.includes("val")) {
+                    adj2 = parseInt(fmla.replace("val ", ""), 10) || 50000;
+                }
             }
         }
-    }
 
-    const adj1Pct = adj1 / 100000;
-    const adj2Pct = adj2 / 100000;
-    // Calculate path and get endpoints
-    // const pathInfo = calculateConnectorPath(shapeType, width, height, adj1Pct);
-    const pathInfo = calculateConnectorPath(shapeType, width, height, adj1Pct, adj2Pct);
-    const { segments, startPoint, endPoint } = pathInfo;
+        const adj1Pct = adj1 / 100000;
+        const adj2Pct = adj2 / 100000;
 
-    // Generate HTML segments
-    let segmentsHTML = "";
-    const borderStyle = strokeDashArray ? `${strokeWidth}px dashed ${strokeColor}` : `${strokeWidth}px solid ${strokeColor}`;
 
-    for (const seg of segments) {
-        if (seg.type === 'horizontal') {
-            const left = Math.min(seg.x1, seg.x2);
-            const segWidth = Math.abs(seg.x2 - seg.x1);
-            segmentsHTML += `<div style="position: absolute; left: ${left}px; top: ${seg.y1}px; width: ${segWidth}px; border-top: ${borderStyle};"></div>`;
-        } else if (seg.type === 'vertical') {
-            const top = Math.min(seg.y1, seg.y2);
-            const segHeight = Math.abs(seg.y2 - seg.y1);
-            segmentsHTML += `<div style="position: absolute; left: ${seg.x1}px; top: ${top}px; height: ${segHeight}px; border-left: ${borderStyle};"></div>`;
-        } else if (seg.type === 'diagonal') {
-            const lineLength = Math.sqrt(Math.pow(seg.x2 - seg.x1, 2) + Math.pow(seg.y2 - seg.y1, 2));
-            const angle = Math.atan2(seg.y2 - seg.y1, seg.x2 - seg.x1) * 180 / Math.PI;
-            segmentsHTML += `<div style="
-                position: absolute;
-                left: ${seg.x1}px;
-                top: ${seg.y1}px;
-                width: ${lineLength}px;
-                height: ${strokeWidth}px;
-                background: ${strokeColor};
-                transform-origin: left top;
-                transform: rotate(${angle}deg);
-                ${strokeDashArray ? `
-                    background: linear-gradient(to right, ${strokeColor} 50%, transparent 50%);
-                    background-size: ${strokeDashArray.split(' ')[0]} ${strokeWidth}px;
-                ` : ''}
-            "></div>`;
+        function remapEndpoint(localX, localY, width, height, rotationDeg, flipH, flipV) {
+            // Step 1: translate to center-origin
+            let cx = localX - width / 2;
+            let cy = localY - height / 2;
+
+            // Step 2: rotate (same as before — this part is correct)
+            if (rotationDeg !== 0) {
+                const rad = rotationDeg * Math.PI / 180;
+                const cos = Math.cos(rad);
+                const sin = Math.sin(rad);
+                const rx = cx * cos - cy * sin;
+                const ry = cx * sin + cy * cos;
+                cx = rx;
+                cy = ry;
+            }
+
+            // Step 3: translate back to element space
+            let ex = cx + width / 2;
+            let ey = cy + height / 2;
+
+            // Step 4: flip AFTER translating back (mirrors around w/2 and h/2,
+            //         matching CSS scaleX(-1)/scaleY(-1) transform-origin: center)
+            if (flipH) ex = width - ex;
+            if (flipV) ey = height - ey;
+
+            return { x: ex, y: ey };
         }
-    }
 
-    // Generate markers at actual path endpoints
-    const firstSegment = segments[0];
-    const lastSegment = segments[segments.length - 1];
+        const pathInfo = calculateConnectorPath(shapeType, width, height, adj1Pct, adj2Pct);
+        const { segments, startPoint, endPoint } = pathInfo;
 
-    const tailRotation = getArrowRotation(firstSegment, true);
-    const headRotation = getArrowRotation(lastSegment, false);
+        let segmentsHTML = "";
+        const borderStyle = strokeDashArray ? `${strokeWidth}px dashed ${strokeColor}` : `${strokeWidth}px solid ${strokeColor}`;
 
-    const tailMarker = generateArrowMarker(lineEnds.tailType, strokeColor, strokeWidth, startPoint.x, startPoint.y, tailRotation);
-    const headMarker = generateArrowMarker(lineEnds.headType, strokeColor, strokeWidth, endPoint.x, endPoint.y, headRotation);
+        for (const seg of segments) {
+            if (seg.type === 'horizontal') {
+                const left = Math.min(seg.x1, seg.x2);
+                const segWidth = Math.abs(seg.x2 - seg.x1);
+                segmentsHTML += `<div style="position: absolute; left: ${left}px; top: ${seg.y1}px; width: ${segWidth}px; border-top: ${borderStyle};"></div>`;
+            } else if (seg.type === 'vertical') {
+                const top = Math.min(seg.y1, seg.y2);
+                const segHeight = Math.abs(seg.y2 - seg.y1);
+                segmentsHTML += `<div style="position: absolute; left: ${seg.x1}px; top: ${top}px; height: ${segHeight}px; border-left: ${borderStyle};"></div>`;
+            } else if (seg.type === 'diagonal') {
+                const lineLength = Math.sqrt(Math.pow(seg.x2 - seg.x1, 2) + Math.pow(seg.y2 - seg.y1, 2));
+                const angle = Math.atan2(seg.y2 - seg.y1, seg.x2 - seg.x1) * 180 / Math.PI;
+                segmentsHTML += `<div style="
+                    position: absolute;
+                    left: ${seg.x1}px;
+                    top: ${seg.y1}px;
+                    width: ${lineLength}px;
+                    height: ${strokeWidth}px;
+                    background: ${strokeColor};
+                    transform-origin: left top;
+                    transform: rotate(${angle}deg);
+                    ${strokeDashArray ? `
+                        background: linear-gradient(to right, ${strokeColor} 50%, transparent 50%);
+                        background-size: ${strokeDashArray.split(' ')[0]} ${strokeWidth}px;
+                    ` : ''}
+                "></div>`;
+            }
+        }
 
-    // Check for rotation and flips
-    const xfrm = shapeNode?.["p:spPr"]?.[0]?.["a:xfrm"]?.[0];
-    let rotation = xfrm?.["$"]?.rot ? parseInt(xfrm["$"].rot, 10) / 60000 : 0;
-    const flipH = xfrm?.["$"]?.flipH === "1";
-    const flipV = xfrm?.["$"]?.flipV === "1";
-    const originalRotation = rotation;
+        const firstSegment = segments[0];
+        const lastSegment = segments[segments.length - 1];
 
-    // ✅ Build transform: rotation first, then swapped flips (no rotation compensation needed)
-    let transform = '';
-    if (rotation !== 0) {
-        transform += `rotate(${rotation}deg) `;
-    }
-    if (flipV) {
-        transform += 'scaleX(-1) ';
-    }
-    if (flipH) {
-        transform += 'scaleY(-1) ';
-    }
+        const tailRotation = getArrowRotation(firstSegment, true);
+        const headRotation = getArrowRotation(lastSegment, false);
 
-    // ✅ FIXED: Store ABSOLUTE positions by adding parent position to each segment
-    const connectorDataJSON = JSON.stringify({
-        shapeType: shapeType,
-        strokeColor: strokeColor,
-        strokeWidth: strokeWidth,
-        dashType: line?.["a:prstDash"]?.[0]?.["$"]?.val || "solid",
-        lineEnds: {
-            headType: lineEnds.headType || "none",
-            tailType: lineEnds.tailType || "none"
-        },
-        // ✅ Convert relative segment positions to absolute positions
-        segments: segments && segments.length > 0 ? segments.map(seg => ({
-            type: seg.type,
-            x1: position.x + seg.x1,  // Add parent X to make absolute
-            y1: position.y + seg.y1,  // Add parent Y to make absolute
-            x2: position.x + seg.x2,  // Add parent X to make absolute
-            y2: position.y + seg.y2   // Add parent Y to make absolute
-        })) : [],
-        position: {
-            x: position.x,
-            y: position.y,
-            width: width,
-            height: height
-        },
-        rotation: rotation,
-        originalRotation: originalRotation,
-        flipH: flipH,
-        flipV: flipV
-    });
+        // Check for rotation and flips
+        const xfrm = shapeNode?.["p:spPr"]?.[0]?.["a:xfrm"]?.[0];
+        let rotation = xfrm?.["$"]?.rot ? parseInt(xfrm["$"].rot, 10) / 60000 : 0;
+        const flipH = xfrm?.["$"]?.flipH === "1";
+        const flipV = xfrm?.["$"]?.flipV === "1";
+        const originalRotation = rotation;
 
-    return `<div class="shape connector"
-        data-shape-type="${shapeType}"
-        id="${shapeType}"
-        data-name="${shapeName}"
-        data-connector-info='${connectorDataJSON.replace(/'/g, "&#39;")}'
-        style="
-            position: absolute;
-            left: ${position.x}px;
-            top: ${position.y}px;
-            width: ${width}px;
-            height: ${height}px;
-            ${transform ? `transform: ${transform.trim()};` : ''}
-            overflow: visible;
-            z-index: ${zIndex};
-            pointer-events: auto;
-        ">
-        <div style="position: relative; width: 100%; height: 100%;">
-            ${segmentsHTML}
+        const rotNorm = ((rotation % 360) + 360) % 360;
+        const isOddQuadrant = (rotNorm > 45 && rotNorm <= 135) || (rotNorm > 225 && rotNorm <= 315);
+        const flipCount = (flipH ? 1 : 0) + (flipV ? 1 : 0);
+        const pathReversed = isOddQuadrant ? (flipCount % 2 === 0) : (flipCount % 2 === 1);
+
+        const effectiveTailType = pathReversed ? lineEnds.headType : lineEnds.tailType;
+        const effectiveHeadType = pathReversed ? lineEnds.tailType : lineEnds.headType;
+
+        const tailLocalPoint = pathReversed ? endPoint : startPoint;
+        const headLocalPoint = pathReversed ? startPoint : endPoint;
+
+        const remappedTail = remapEndpoint(tailLocalPoint.x, tailLocalPoint.y, width, height, rotation, flipH, flipV);
+        const remappedHead = remapEndpoint(headLocalPoint.x, headLocalPoint.y, width, height, rotation, flipH, flipV);
+
+        const absTailX = position.x + remappedTail.x;
+        const absTailY = position.y + remappedTail.y;
+        const absHeadX = position.x + remappedHead.x;
+        const absHeadY = position.y + remappedHead.y;
+
+        // console.log("oooooooo shapeName",shapeName);
+        // console.log("kkkkkkkk absTailX",absTailX);
+        // console.log("jjjjjjjj absTailY",absTailY);
+        // console.log("llllllll absHeadX",absHeadX);
+        // console.log("mmmmmmmm absHeadY",absHeadY);
+        const tailMarker = generateArrowMarker(effectiveTailType, strokeColor, strokeWidth, absTailX, absTailY, tailRotation);
+        const headMarker = generateArrowMarker(effectiveHeadType, strokeColor, strokeWidth, absHeadX, absHeadY, headRotation);
+        let transform = '';
+        if (rotation !== 0) {
+            transform += `rotate(${rotation}deg) `;
+        }
+        if (flipH) {
+            transform += 'scaleX(-1) ';
+        }
+        if (flipV) {
+            transform += 'scaleY(-1) ';
+        }
+
+        const connectorDataJSON = JSON.stringify({
+            shapeType: shapeType,
+            strokeColor: strokeColor,
+            strokeWidth: strokeWidth,
+            dashType: line?.["a:prstDash"]?.[0]?.["$"]?.val || "solid",
+            lineEnds: {
+                headType: lineEnds.headType || "none",
+                tailType: lineEnds.tailType || "none"
+            },
+            segments: segments && segments.length > 0 ? segments.map(seg => ({
+                type: seg.type,
+                x1: position.x + seg.x1,
+                y1: position.y + seg.y1,
+                x2: position.x + seg.x2,
+                y2: position.y + seg.y2
+            })) : [],
+            position: {
+                x: position.x,
+                y: position.y,
+                width: width,
+                height: height
+            },
+            rotation: rotation,
+            originalRotation: originalRotation,
+            flipH: flipH,
+            flipV: flipV
+        });
+
+        // ✅ NEW: markers rendered OUTSIDE the transformed container as a sibling div
+        return `<div class="shape connector"
+            data-shape-type="${shapeType}"
+            id="${shapeType}"
+            data-name="${shapeName}"
+            data-connector-info='${connectorDataJSON.replace(/'/g, "&#39;")}'
+            style="
+                position : absolute;
+                left : ${position.x}px;
+                top : ${position.y}px;
+                width : ${width}px;
+                height : ${height}px;
+                ${transform ? `transform : ${transform.trim()};` : ''}
+                overflow : visible;
+                z-index : ${zIndex};
+                pointer-events : auto;
+            ">
+            <div style="position: relative; width: 100%; height: 100%;">
+                ${segmentsHTML}
+            </div>
+        </div>
+        <div style="position: absolute; left: 0; top: 0; width: 0; height: 0; overflow: visible; z-index: ${zIndex};">
             ${tailMarker}
             ${headMarker}
-        </div>
-    </div>`;
+        </div>`;
+    }
+
 }
 
 function getShapePosition(shapeNode, masterXML = null) {

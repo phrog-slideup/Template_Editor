@@ -426,7 +426,7 @@ function getAllTextInformationFromShape(shapeNode, themeXML, clrMap, masterXML, 
                 if (currentListType !== listKey) {
                     if (currentListTag) htmlContent.push(`</${currentListTag}>`);
 
-                    const listStyles = generateListStyles(bulletInfo);
+                    const listStyles = generateListStyles(bulletInfo,textAlign);
                     htmlContent.push(`<${bulletInfo.listTag} style="  margin-left: ${marginLeft}px; margin-right: ${marginRight}px; margin-top: ${marginTop + spaceBefore}px; margin-bottom: ${marginBottom + spaceAfter}px; line-height: ${lineHeight}; ${listStyles}">`);
                     currentListTag = bulletInfo.listTag;
                     currentListType = listKey;
@@ -1579,12 +1579,16 @@ function extractTextGradient(runRPrNode, themeXML) {
 
 
 /** IMPROVED: Better list style generation with proper indentation */
-function generateListStyles(bulletInfo) {
+function generateListStyles(bulletInfo,textAlign) {
     let styles = '';
-
+    styles += `text-align: ${textAlign}; `;
     // Base list styles
-    styles += 'list-style-position: outside; ';
-    styles += 'padding-left: 20px; '; // Standard indent for nested lists
+    if(textAlign=="center" || textAlign=="right"){
+        styles += 'list-style-position: inside; ';
+    }else{
+        styles += 'list-style-position: outside; ';
+    }
+    styles += 'padding-left: 7px; '; // Standard indent for nested lists
     styles += 'margin-left: 0; ';
 
     // Apply list style type

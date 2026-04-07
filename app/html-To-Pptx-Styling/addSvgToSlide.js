@@ -465,6 +465,139 @@ function extractColor(colorValue) {
     return namedColors[colorValue.toLowerCase()] || null;
 }
 
+// ─── SVG Gradient Helpers ────────────────────────────────────────────────────
+
+/**
+ * Returns true if `node` is nested inside a <defs> element.
+ * Paths inside <defs> are clip-geometry/marker templates, NOT drawable shapes.
+ */
+function isInsideDefs(node) {
+    let current = node.parentElement;
+    while (current) {
+        if (current.tagName && current.tagName.toLowerCase() === 'defs') return true;
+        current = current.parentElement;
+    }
+    return false;
+}
+
+/**
+ * Safely extract the background / background-image value from a DOM element's
+ * raw style attribute.
+ *
+ * IMPORTANT: We MUST read the raw attribute string, NOT element.style.background.
+ * JSDOM's CSS parser silently drops complex values like radial-gradient() from
+ * the CSSOM (element.style.*), so element.style.background always returns "".
+ * Reading the raw attribute bypasses the broken CSSOM and works reliably.
+ */
+function extractRawBackground(element) {
+    if (!element) return '';
+    const styleAttr = element.getAttribute('style') || '';
+    // Match "background: ..." or "background-image: ..."
+    const match = styleAttr.match(/background(?:-image)?\s*:\s*([^;]+)/i);
+    return match ? match[1].trim() : '';
+}
+
+/**
+ * Parse a CSS gradient string (linear-gradient / radial-gradient) into a
+ * structured object compatible with the svgGradientFillStore schema:
+ *   { type, stops:[{color,alpha,pos}], focusX, focusY, radialPath, angleDeg }
+ * Returns null on failure.
+ */
+function parseCssGradient(cssGradStr) {
+    if (!cssGradStr || !cssGradStr.includes('gradient')) return null;
+    try {
+        const gradientMatch = cssGradStr.match(/(linear|radial)-gradient\(([\s\S]+)\)/i);
+        if (!gradientMatch) return null;
+
+        const type = gradientMatch[1].toLowerCase();
+        const content = gradientMatch[2].trim();
+
+        // Split top-level comma-separated parts (respects nested parens)
+        const parts = [];
+        let depth = 0, cur = '';
+        for (const ch of content) {
+            if (ch === '(') depth++;
+            else if (ch === ')') depth--;
+            if (ch === ',' && depth === 0) { parts.push(cur.trim()); cur = ''; }
+            else cur += ch;
+        }
+        if (cur.trim()) parts.push(cur.trim());
+
+        // Parse colour stops (skip non-colour config parts)
+        const stops = [];
+        for (const part of parts) {
+            // rgba(r,g,b,a?) [pos%]
+            const rgbaMatch = part.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)\s*([\d.]+%)?/);
+            if (rgbaMatch) {
+                const r = parseInt(rgbaMatch[1], 10).toString(16).padStart(2, '0');
+                const g = parseInt(rgbaMatch[2], 10).toString(16).padStart(2, '0');
+                const b = parseInt(rgbaMatch[3], 10).toString(16).padStart(2, '0');
+                const alpha = rgbaMatch[4] !== undefined ? parseFloat(rgbaMatch[4]) : 1;
+                const pos = rgbaMatch[5] ? parseFloat(rgbaMatch[5]) / 100 : null;
+                stops.push({ color: `${r}${g}${b}`.toUpperCase(), alpha, pos });
+                continue;
+            }
+            // #hex [pos%]
+            const hexMatch = part.match(/#([0-9a-fA-F]{3,8})\s*([\d.]+%)?/);
+            if (hexMatch) {
+                let hex = hexMatch[1];
+                if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+                const pos = hexMatch[2] ? parseFloat(hexMatch[2]) / 100 : null;
+                stops.push({ color: hex.toUpperCase().slice(0, 6), alpha: 1, pos });
+            }
+        }
+
+        if (stops.length === 0) return null;
+
+        // Fill in implied positions (spread evenly for nulls)
+        stops.forEach((stop, i) => {
+            if (stop.pos === null) {
+                if (i === 0) stop.pos = 0;
+                else if (i === stops.length - 1) stop.pos = 1;
+                else stop.pos = i / (stops.length - 1);
+            }
+        });
+
+        // Radial: focal point (centre by default)
+        let focusX = 50, focusY = 50, radialPath = 'circle';
+        if (type === 'radial') {
+            const focalMatch = content.match(/(?:circle|ellipse)\s+at\s+([\w\s%]+?)(?:,|$)/i);
+            if (focalMatch) {
+                const mapPos = v => {
+                    if (!v) return 50;
+                    const lc = v.toLowerCase().trim();
+                    if (lc === 'left') return 0;
+                    if (lc === 'right') return 100;
+                    if (lc === 'top') return 0;
+                    if (lc === 'bottom') return 100;
+                    if (lc === 'center') return 50;
+                    if (lc.endsWith('%')) return parseFloat(lc);
+                    return 50;
+                };
+                const pos = focalMatch[1].trim().split(/\s+/);
+                focusX = mapPos(pos[0]);
+                focusY = pos.length >= 2 ? mapPos(pos[1]) : focusX;
+            }
+            if (/ellipse/i.test(content)) radialPath = 'rect';
+        }
+
+        // Linear: angle (degrees, CSS convention)
+        let angleDeg = 180; // default: top→bottom
+        if (type === 'linear') {
+            const angleMatch = content.match(/^([-\d.]+)deg/);
+            if (angleMatch) angleDeg = parseFloat(angleMatch[1]);
+            else if (/to bottom/i.test(content)) angleDeg = 180;
+            else if (/to top/i.test(content)) angleDeg = 0;
+            else if (/to right/i.test(content)) angleDeg = 90;
+            else if (/to left/i.test(content)) angleDeg = 270;
+        }
+
+        return { type, stops, focusX, focusY, radialPath, angleDeg };
+    } catch (_) {
+        return null;
+    }
+}
+
 function collectNodeStyles(node, svgElement) {
     return {
         fill: node.getAttribute('fill') || svgElement.style.fill || null,
@@ -477,21 +610,97 @@ function collectNodeStyles(node, svgElement) {
 
 function collectSvgDrawables(svgElement) {
     const nodes = Array.from(svgElement.querySelectorAll('path, polygon, polyline, rect, circle, ellipse'));
-    return nodes
+
+    // ── Filter out nodes inside <defs> ──────────────────────────────────────
+    // querySelectorAll descends into <defs>, picking up clipPath paths that are
+    // used as clip masks only — not rendered shapes. Filter them out first.
+    const visibleNodes = nodes.filter(node => !isInsideDefs(node));
+
+    const drawables = visibleNodes
         .map(node => {
             const pathData = resolveShapePath(node);
             if (!pathData) return null;
-
             const rawPoints = parsePathDataToRawPoints(pathData);
             if (rawPoints.length === 0) return null;
-
             return {
                 node,
                 points: transformPoints(rawPoints, getNodeTransformMatrix(node, svgElement)),
-                styles: collectNodeStyles(node, svgElement)
+                styles: collectNodeStyles(node, svgElement),
+                gradient: null
             };
         })
         .filter(Boolean);
+
+    // ── Handle foreignObject + clipPath gradient pattern ─────────────────────
+    // Pattern used for gradient-filled custom shapes:
+    //   <clipPath id="X"><path d="…"/></clipPath>
+    //   <foreignObject clip-path="url(#X)">
+    //     <div style="background: radial-gradient(…)"/>
+    //   </foreignObject>
+    //
+    // The clipPath path was filtered above (it's inside <defs>). The gradient
+    // lives in the foreignObject div. We detect this pattern when the normal
+    // drawable list is empty and synthesise a drawable that carries the gradient.
+    //
+    // ⚠ JSDOM BUG WORKAROUND: element.style.background / backgroundImage always
+    // returns "" for radial-gradient / linear-gradient values because JSDOM's
+    // CSSOM parser rejects them. We MUST read the raw style attribute string via
+    // getAttribute('style') and regex-extract the gradient value ourselves.
+    if (drawables.length === 0) {
+        const foreignObjects = Array.from(svgElement.querySelectorAll('foreignObject'));
+        for (const fo of foreignObjects) {
+            // Locate the associated clipPath
+            const clipPathRef = fo.getAttribute('clip-path') || '';
+            const clipIdMatch = clipPathRef.match(/url\(#([^)]+)\)/);
+            if (!clipIdMatch) continue;
+
+            const clipId = clipIdMatch[1];
+            const clipPathEl =
+                svgElement.querySelector(`clipPath[id="${clipId}"]`) ||
+                svgElement.querySelector(`[id="${clipId}"]`);
+            if (!clipPathEl) continue;
+
+            const pathEl = clipPathEl.querySelector('path, polygon, polyline, rect, circle, ellipse');
+            if (!pathEl) continue;
+
+            const pathData = resolveShapePath(pathEl);
+            if (!pathData) continue;
+
+            const rawPoints = parsePathDataToRawPoints(pathData);
+            if (rawPoints.length === 0) continue;
+
+            // ── Extract gradient via raw attribute (JSDOM-safe) ──────────────
+            let gradient = null;
+            const divEl = fo.querySelector('div');
+            if (divEl) {
+                // extractRawBackground reads getAttribute('style') + regex —
+                // the only reliable way to get gradients out of JSDOM elements.
+                const bg = extractRawBackground(divEl);
+                if (bg.includes('gradient')) {
+                    gradient = parseCssGradient(bg);
+                }
+            }
+
+            // Dominant (first stop) colour as solid fallback.
+            // pptxgenjs will render this initially; the post-processing
+            // injection step replaces it with a proper <a:gradFill>.
+            const fallbackHex = gradient?.stops?.[0]?.color || 'CCCCCC';
+
+            drawables.push({
+                node: pathEl,
+                points: transformPoints(rawPoints, getNodeTransformMatrix(pathEl, svgElement)),
+                styles: {
+                    fill: `#${fallbackHex}`,   // extractColor-compatible hex
+                    stroke: null,
+                    strokeWidth: '0',
+                    opacity: String(gradient?.stops?.[0]?.alpha ?? 1)
+                },
+                gradient
+            });
+        }
+    }
+
+    return drawables;
 }
 
 function createDynamicShapeOptions(element, slideContext, points, svgStyles) {
@@ -511,18 +720,56 @@ function createDynamicShapeOptions(element, slideContext, points, svgStyles) {
         points
     };
 
-    const fillColor = extractColor(svgStyles.fill);
-    if (fillColor) shapeOptions.fill = fillColor;
+    // ── Opacity / Transparency ────────────────────────────────────────────────
+    // BUG FIX: Compute opacity BEFORE setting fill so transparency can be
+    // embedded directly inside the fill object (see below).
+    //
+    // BUG FIX: `style.opacity` (JSDOM CSSStyleDeclaration) sometimes returns
+    // '' or undefined for multi-line inline-style attributes in certain JSDOM
+    // versions.  Use a raw getAttribute() regex as a guaranteed fallback — the
+    // same JSDOM-safe pattern already used elsewhere in this file (e.g. for
+    // background-gradient extraction).
+    let opacityStr = style.opacity;
+    if ((opacityStr === '' || opacityStr == null) && element.getAttribute) {
+        const rawStyle = element.getAttribute('style') || '';
+        const m = rawStyle.match(/\bopacity\s*:\s*([\d.]+)/i);
+        if (m) opacityStr = m[1];
+    }
 
+    // SVG node-level opacity/fill-opacity are secondary sources.
+    // Use != '1' guard so the default '1' placeholder doesn't mask a real
+    // container opacity that JSDOM failed to surface via element.style.
+    const svgNodeOpacity = (svgStyles.opacity !== '1' && svgStyles.opacity != null) ? svgStyles.opacity : null;
+    const rawOpacity = parseFloat(opacityStr || svgNodeOpacity || svgStyles.fillOpacity || '1');
+    const opacity = Number.isFinite(rawOpacity) ? Math.max(0, Math.min(1, rawOpacity)) : 1;
+    const transparency = opacity < 1 ? Math.round((1 - opacity) * 100) : 0;
+
+    // ── Fill ──────────────────────────────────────────────────────────────────
+    // BUG FIX: pptxgenjs does NOT reliably apply a top-level `transparency`
+    // property to a *string* fill for custGeom shapes.  Embed transparency
+    // directly inside the fill object so the <a:alpha> element is always
+    // written into the XML regardless of which pptxgenjs code path runs.
+    const fillColor = extractColor(svgStyles.fill);
+    if (fillColor) {
+        shapeOptions.fill = (transparency > 0 && transparency <= 100)
+            ? { color: fillColor, transparency }
+            : fillColor;
+    }
+
+    // ── Stroke ───────────────────────────────────────────────────────────────
     const strokeColor = extractColor(svgStyles.stroke);
     const strokeWidth = parseFloat(svgStyles.strokeWidth || '0');
     if (strokeColor && Number.isFinite(strokeWidth) && strokeWidth > 0) {
         shapeOptions.line = { color: strokeColor, width: Math.min(strokeWidth, 10) };
     }
 
-    const opacity = parseFloat(style.opacity || svgStyles.opacity || svgStyles.fillOpacity || '1');
-    const transparency = opacity < 1 ? Math.round((1 - opacity) * 100) : 0;
+    // Keep top-level transparency as well for older pptxgenjs compatibility
+    // and for shapes that have no explicit fill (stroke-only outlines).
     if (transparency > 0 && transparency <= 100) shapeOptions.transparency = transparency;
+
+    // Stash raw opacity (0-1) for the post-processing XML-injection step.
+    // Removed before calling pptxgenjs.addShape (see addSvgToSlide below).
+    if (opacity < 1) shapeOptions._opacity = opacity;
 
     const transform = style.transform || '';
     const rotateMatch = transform.match(/rotate\((-?\d*\.?\d+)deg\)/);
@@ -626,6 +873,33 @@ function addSvgToSlide(pptSlide, svgElement, elementStyle, slideContext) {
 
             const baseName = normalizeSvgObjectBaseName(parentElement.dataset?.name || parentElement.className || 'unnamed');
             shapeOptions.objectName = `Custom SVG Shape (${baseName}) #${index + 1}`;
+
+            // ── Register opacity for post-processing XML injection ────────────
+            // pptxgenjs may not write <a:alpha> for custGeom shapes in every
+            // version. We mirror the svgGradientFillStore / patternFillStore
+            // pattern so injectSvgOpacityIntoSlideXML() can patch the fill
+            // element directly in the raw OOXML after file generation.
+            if (shapeOptions._opacity !== undefined && shapeOptions._opacity < 1) {
+                if (!global.svgOpacityStore) global.svgOpacityStore = new Map();
+                global.svgOpacityStore.set(shapeOptions.objectName, {
+                    opacity: shapeOptions._opacity,
+                    // OOXML <a:alpha val="..."/> uses 1/1000ths of a percent
+                    // (100 000 = fully opaque, 0 = fully transparent).
+                    alphaVal: Math.round(shapeOptions._opacity * 100000)
+                });
+            }
+            // Remove internal property before handing options to pptxgenjs
+            delete shapeOptions._opacity;
+
+            // ── Register gradient for post-processing XML injection ───────────
+            // pptxgenjs has no gradient-fill API for custGeom shapes; the solid
+            // fill above is just a placeholder. We store the gradient data here
+            // keyed by objectName so injectSvgGradientFillsIntoSlideXML() can
+            // replace it with proper <a:gradFill> XML after file generation.
+            if (drawable.gradient) {
+                if (!global.svgGradientFillStore) global.svgGradientFillStore = new Map();
+                global.svgGradientFillStore.set(shapeOptions.objectName, drawable.gradient);
+            }
 
             try {
                 pptSlide.addShape('custGeom', shapeOptions);

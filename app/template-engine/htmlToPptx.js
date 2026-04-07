@@ -27,6 +27,8 @@ const { extractHyperlinkFromSpan } = require("./hyperlink-pptx-patch");
 async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName) {
     try {
         global.patternFillStore = new Map();
+        global.svgGradientFillStore = new Map();
+        global.softEdgeStore = new Map();
         clearGradientMetadata();
         clearReflectionStore();
         const dom = new JSDOM(htmlString);
@@ -175,13 +177,27 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         }
 
         // ========================================
+        // 🌈 STEP 6.5B-SVG: INJECT SVG GRADIENT FILLS
+        // ========================================
+        const svgGradResult = await injectSvgGradientFillsIntoSlideXML(slideXmlsDir);
+        if (svgGradResult.injected > 0) {
+            console.log(`   ✅ Injected SVG gradient fills into ${svgGradResult.injected} shape(s)`);
+        }
+
+        // ========================================
         // 🪞 STEP 6.5B: INJECT SHAPE REFLECTIONS
         // ========================================
         const reflectionResult = await injectReflectionsIntoSlideXML(slideXmlsDir);
         if (reflectionResult.shapesInjected > 0) {
             console.log(`   ✅ Injected reflections into ${reflectionResult.shapesInjected} shape(s)`);
         }
-
+        // ========================================
+        // 🌫️ STEP 6.5C: INJECT SOFT EDGES         ← ADD THIS ENTIRE BLOCK
+        // ========================================
+        const softEdgeResult = await injectSoftEdgesIntoSlideXML(slideXmlsDir);
+        if (softEdgeResult.injected > 0) {
+            console.log(`   ✅ Injected soft edges into ${softEdgeResult.injected} shape(s)`);
+        }
         // NEW STEP 6.7: Fix chart relationships
         const chartRelsResult = await fixChartRelationships(slideXmlsDir);
 
@@ -237,6 +253,92 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         });
     }
 }
+
+async function injectSoftEdgesIntoSlideXML(slideXmlsDir) {
+    try {
+        if (!global.softEdgeStore || global.softEdgeStore.size === 0) {
+            return { success: true, injected: 0 };
+        }
+
+        const slidesDir = path.join(slideXmlsDir, 'slides');
+        if (!await checkDirectoryExists(slidesDir)) {
+            return { success: true, injected: 0 };
+        }
+
+        const slideFiles = await fsPromises.readdir(slidesDir);
+        const slideXmlFiles = slideFiles.filter(f => f.match(/^slide\d+\.xml$/));
+        let totalInjected = 0;
+
+        for (const slideFile of slideXmlFiles) {
+            const slidePath = path.join(slidesDir, slideFile);
+            let xml = await fsPromises.readFile(slidePath, 'utf8');
+            let modified = false;
+
+            // ✅ CRITICAL FIX: Normalize <p:cNvPr> to self-closing BEFORE regex matching
+            // (same pre-processing that injectPatternFillsIntoSlideXML does)
+            // Without this, the shape-name regex never matches because at this point
+            // cleanSlideXmlForSyncfusion (Step 6.9) hasn't run yet.
+            xml = xml.replace(/<p:cNvPr([^>]*)>\s*<\/p:cNvPr>/g, '<p:cNvPr$1/>');
+
+            for (const [key, data] of global.softEdgeStore.entries()) {
+                const shapeName = data.shapeName || key;
+                if (!shapeName) continue;
+
+                const escapedName = shapeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+                const shapeBlockRegex = new RegExp(
+                    `(<p:sp>[\\s\\S]*?<p:cNvPr[^>]*name="${escapedName}"[^>]*/>[\\s\\S]*?)(<p:spPr[^>]*>)([\\s\\S]*?)(</p:spPr>)`,
+                    'g'
+                );
+
+                const newXml = xml.replace(shapeBlockRegex, (match, before, spPrOpen, spPrContent, spPrClose) => {
+                    if (spPrContent.includes('<a:softEdge')) return match;
+
+                    const softEdgeTag = `<a:softEdge rad="${data.radEMU}"/>`;
+                    let newSpPrContent = spPrContent;
+
+                    if (spPrContent.includes('<a:effectLst>')) {
+                        newSpPrContent = spPrContent.replace(
+                            '<a:effectLst>',
+                            `<a:effectLst>${softEdgeTag}`
+                        );
+                    } else if (spPrContent.includes('<a:effectLst/>')) {
+                        newSpPrContent = spPrContent.replace(
+                            '<a:effectLst/>',
+                            `<a:effectLst>${softEdgeTag}</a:effectLst>`
+                        );
+                    } else if (spPrContent.includes('</a:ln>')) {
+                        newSpPrContent = spPrContent.replace(
+                            '</a:ln>',
+                            `</a:ln><a:effectLst>${softEdgeTag}</a:effectLst>`
+                        );
+                    } else {
+                        newSpPrContent = spPrContent + `<a:effectLst>${softEdgeTag}</a:effectLst>`;
+                    }
+
+                    modified = true;
+                    totalInjected++;
+                    return before + spPrOpen + newSpPrContent + spPrClose;
+                });
+
+                xml = newXml;
+            }
+
+            if (modified) {
+                await fsPromises.writeFile(slidePath, xml, 'utf8');
+                console.log(`   ✅ Soft edges injected into ${slideFile}`);
+            }
+        }
+
+        global.softEdgeStore.clear();
+        return { success: true, injected: totalInjected };
+
+    } catch (error) {
+        console.error('   ❌ Error in injectSoftEdgesIntoSlideXML:', error);
+        return { success: false, error: error.message, injected: 0 };
+    }
+}
+
 
 function extractSlideDimensions(slideElement) {
     const style = slideElement.getAttribute('style') || '';
@@ -1854,6 +1956,166 @@ async function injectPatternFillsIntoSlideXML(slideXmlsDir) {
 
     } catch (error) {
         console.error('   ❌ Error in injectPatternFillsIntoSlideXML:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+// ─── SVG Gradient Fill Injection ─────────────────────────────────────────────
+
+/**
+ * Build OOXML <a:gradFill> XML from gradient data stored in svgGradientFillStore.
+ *
+ * Mirrors genXmlColorSelection() in pptxgen_cjs.js so output is fully compatible:
+ *   - Linear:  uses (angleDeg + 270) % 360 angle conversion, scaled="1"
+ *   - Radial:  uses fillToRect focal point + tileRect for non-centre foci
+ */
+function buildGradFillXml(grad) {
+    const { type, stops, focusX = 50, focusY = 50, radialPath = 'circle', angleDeg = 180 } = grad;
+
+    // Build <a:gsLst> gradient stops
+    const gsLst = stops.map(stop => {
+        const pos = Math.round(Math.max(0, Math.min(1, stop.pos ?? 0)) * 100000);
+        const alpha = Math.round(Math.max(0, Math.min(1, stop.alpha ?? 1)) * 100000);
+        const color = String(stop.color).replace(/^#/, '').toUpperCase().slice(0, 6);
+        return `<a:gs pos="${pos}"><a:srgbClr val="${color}"><a:alpha val="${alpha}"/></a:srgbClr></a:gs>`;
+    }).join('');
+
+    if (type === 'linear') {
+        // Match pptxgenjs formula: openXmlDeg = (angleDeg + 270) % 360
+        const openXmlDeg = ((angleDeg + 270) % 360 + 360) % 360;
+        const rot = Math.round(openXmlDeg * 60000);
+        return `<a:gradFill rotWithShape="1"><a:gsLst>${gsLst}</a:gsLst>` +
+            `<a:lin ang="${rot}" scaled="1"/></a:gradFill>`;
+    }
+
+    // Radial (circle / rect)
+    let fillToRectAttrs, tileRectExtra = '';
+
+    if (focusX === 50 && focusY === 50) {
+        // Centred: all sides equal (simplest and most common case)
+        fillToRectAttrs = `l="50000" t="50000" r="50000" b="50000"`;
+    } else {
+        // Non-centred: replicate pptxgenjs focal-point logic exactly
+        const fx = Math.round(focusX * 1000);
+        const fy = Math.round(focusY * 1000);
+        const fillAttrs = [], tileAttrs = [];
+
+        if (focusX > 0) {
+            fillAttrs.push(`l="${fx}"`);
+            if (focusX < 100) fillAttrs.push(`r="${100000 - fx}"`);
+            else tileAttrs.push(`r="-100000"`);
+        } else {
+            fillAttrs.push(`r="100000"`);
+            tileAttrs.push(`l="-100000"`);
+        }
+
+        if (focusY > 0) {
+            fillAttrs.push(`t="${fy}"`);
+            if (focusY < 100) fillAttrs.push(`b="${100000 - fy}"`);
+            else tileAttrs.push(`b="-100000"`);
+        } else {
+            fillAttrs.push(`b="100000"`);
+            tileAttrs.push(`t="-100000"`);
+        }
+
+        fillToRectAttrs = fillAttrs.join(' ');
+        if (tileAttrs.length > 0) tileRectExtra = ` ${tileAttrs.join(' ')}`;
+    }
+
+    return `<a:gradFill flip="none" rotWithShape="1">` +
+        `<a:gsLst>${gsLst}</a:gsLst>` +
+        `<a:path path="${radialPath}">` +
+        `<a:fillToRect ${fillToRectAttrs}/></a:path>` +
+        `<a:tileRect${tileRectExtra}/></a:gradFill>`;
+}
+
+/**
+ * Post-processing step: iterate every entry in global.svgGradientFillStore,
+ * find the matching shape in each slide XML by its objectName, and replace its
+ * placeholder <a:solidFill> (or any existing fill) with the correct
+ * <a:gradFill> OOXML built by buildGradFillXml().
+ *
+ * Called immediately after injectPatternFillsIntoSlideXML() in the pipeline.
+ */
+async function injectSvgGradientFillsIntoSlideXML(slideXmlsDir) {
+    try {
+        if (!global.svgGradientFillStore || global.svgGradientFillStore.size === 0) {
+            return { success: true, injected: 0 };
+        }
+
+        const slidesDir = path.join(slideXmlsDir, 'slides');
+        if (!await checkDirectoryExists(slidesDir)) {
+            return { success: true, injected: 0 };
+        }
+
+        const slideFiles = await fsPromises.readdir(slidesDir);
+        const slideXmlFiles = slideFiles.filter(f => f.match(/^slide\d+\.xml$/));
+        let totalInjected = 0;
+
+        for (const slideFile of slideXmlFiles) {
+            const slidePath = path.join(slidesDir, slideFile);
+            let xml = await fsPromises.readFile(slidePath, 'utf8');
+            let modified = false;
+
+            // Normalise self-closing cNvPr so the shape-block regex matches cleanly
+            xml = xml.replace(/<p:cNvPr([^>]*)>\s*<\/p:cNvPr>/g, '<p:cNvPr$1/>');
+
+            for (const [shapeName, gradData] of global.svgGradientFillStore.entries()) {
+                if (!shapeName) continue;
+
+                let gradFillXml;
+                try {
+                    gradFillXml = buildGradFillXml(gradData);
+                } catch (buildErr) {
+                    console.warn(`   ⚠️  buildGradFillXml failed for "${shapeName}":`, buildErr.message);
+                    continue;
+                }
+
+                const escapedName = shapeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+                // Match the full <p:spPr>…</p:spPr> block for this shape
+                const shapeBlockRegex = new RegExp(
+                    `(<p:sp>[\\s\\S]*?<p:cNvPr[^>]*name="${escapedName}"[^>]*/>[\\s\\S]*?<p:spPr[^>]*>)([\\s\\S]*?)(</p:spPr>)`,
+                    'g'
+                );
+
+                const newXml = xml.replace(shapeBlockRegex, (match, before, spPrContent, after) => {
+                    // Replace an existing solid/grad/no/blip fill with our gradFill
+                    const fillReplaced = spPrContent.replace(
+                        /<a:(solidFill|gradFill|noFill|blipFill)>[\s\S]*?<\/a:\1>|<a:noFill\/>/,
+                        gradFillXml
+                    );
+
+                    let newSpPrContent;
+                    if (fillReplaced !== spPrContent) {
+                        // Replaced an existing fill tag
+                        newSpPrContent = fillReplaced;
+                    } else {
+                        // No fill tag present — insert after </a:xfrm> or at start
+                        newSpPrContent = spPrContent.replace(/(<\/a:xfrm>)/, `$1${gradFillXml}`);
+                        if (newSpPrContent === spPrContent) {
+                            newSpPrContent = gradFillXml + spPrContent;
+                        }
+                    }
+
+                    modified = true;
+                    totalInjected++;
+                    return before + newSpPrContent + after;
+                });
+
+                xml = newXml;
+            }
+
+            if (modified) {
+                await fsPromises.writeFile(slidePath, xml, 'utf8');
+                console.log(`   ✅ SVG gradient fills injected into ${slideFile}`);
+            }
+        }
+
+        return { success: true, injected: totalInjected };
+
+    } catch (error) {
+        console.error('   ❌ Error in injectSvgGradientFillsIntoSlideXML:', error);
         return { success: false, error: error.message };
     }
 }

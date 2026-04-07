@@ -378,56 +378,56 @@ function getCustomShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
 
         const outerShdw = effectLst?.["a:outerShdw"]?.[0];
         const innerShdw = effectLst?.["a:innerShdw"]?.[0];
-        if (!outerShdw) {
-            if (innerShdw) {
-                console.warn(
-                    "[getCustomShapeShadowStyle] Inner shadow on custGeom shape skipped — " +
-                    "CSS drop-shadow() has no inset variant. Shape:",
-                    shapeNode?.["p:nvSpPr"]?.[0]?.["p:cNvPr"]?.[0]?.["$"]?.name ?? "(unnamed)"
-                );
-            }
-            return "";
-        }
 
-        const attrs = outerShdw["$"] ?? {};
+        const shdwNode = outerShdw ?? innerShdw;
+        const isInner = !outerShdw && !!innerShdw;
+
+        if (!shdwNode) return "";
+
+        const attrs = shdwNode["$"] ?? {};
 
         // ── 1. Color + alpha ──────────────────────────────────────────────────
-        const color = resolveShadowColor(outerShdw, themeXML, masterXML);
-        const alpha = resolveShadowAlpha(outerShdw);
+        const color = resolveShadowColor(shdwNode, themeXML, masterXML);
+        const alpha = resolveShadowAlpha(shdwNode);
 
         // ── 2. Blur radius ────────────────────────────────────────────────────
         let blurPx = blurRadToPx(attrs.blurRad);
 
-        // ── 3. Spread approximation added into blur ───────────────────────────
-
-        const sx = attrs.sx ? parseInt(attrs.sx, 10) / 100000 : 1;
-        const sy = attrs.sy ? parseInt(attrs.sy, 10) / 100000 : 1;
-        const avgScale = (sx + sy) / 2;
-        if (avgScale > 1) {
-            // Spread surplus: e.g. scale=1.02 → adds 2% of blurPx as extra blur
-            blurPx = Math.round((blurPx + (avgScale - 1) * blurPx) * 10) / 10;
+        // ── 3. Spread approximation added into blur (outer only) ──────────────
+        if (!isInner) {
+            const sx = attrs.sx ? parseInt(attrs.sx, 10) / 100000 : 1;
+            const sy = attrs.sy ? parseInt(attrs.sy, 10) / 100000 : 1;
+            const avgScale = (sx + sy) / 2;
+            if (avgScale > 1) {
+                // Spread surplus: e.g. scale=1.02 → adds 2% of blurPx as extra blur
+                blurPx = Math.round((blurPx + (avgScale - 1) * blurPx) * 10) / 10;
+            }
         }
 
         // ── 4. Offset (dir + dist) ────────────────────────────────────────────
-        const distRaw = attrs.dist ? parseInt(attrs.dist, 10) : 0;
-        const dirRaw = (attrs.dir != null && attrs.dir !== "")
-            ? parseInt(attrs.dir, 10)
-            : null;
+        // Inner shadows have no meaningful outward offset in CSS drop-shadow()
+        // since inset is unsupported — force zero offset for inner shadows.
+        const distRaw = isInner ? 0 : (attrs.dist ? parseInt(attrs.dist, 10) : 0);
+        const dirRaw = isInner
+            ? null
+            : ((attrs.dir != null && attrs.dir !== "") ? parseInt(attrs.dir, 10) : null);
 
         let { offX, offY } = dirDistToOffset(dirRaw, distRaw, attrs.algn);
 
-        // ── 4b. Alignment-aware clip adjustment ───────────────────────────────
+        // ── 4b. Alignment-aware clip adjustment (outer only) ──────────────────
         // drop-shadow() has no spread parameter, so we bake the compensation
         // directly into blur and offset instead.
-        const sxVal = attrs.sx ? parseInt(attrs.sx, 10) / 100000 : 1;
-        const syVal = attrs.sy ? parseInt(attrs.sy, 10) / 100000 : 1;
-        const dirDeg = (dirRaw != null) ? (dirRaw / 60000) : 0;
-        const { spreadDelta, offXDelta, offYDelta } =
-            getAlgnClipAdjustment(attrs.algn, dirDeg, blurPx, sxVal, syVal);
-        // For drop-shadow we absorb the negative spread into a blur reduction
-        blurPx = Math.max(0, Math.round((blurPx + spreadDelta) * 10) / 10);
-        offX += offXDelta;
-        offY += offYDelta;
+        if (!isInner) {
+            const sxVal = attrs.sx ? parseInt(attrs.sx, 10) / 100000 : 1;
+            const syVal = attrs.sy ? parseInt(attrs.sy, 10) / 100000 : 1;
+            const dirDeg = (dirRaw != null) ? (dirRaw / 60000) : 0;
+            const { spreadDelta, offXDelta, offYDelta } =
+                getAlgnClipAdjustment(attrs.algn, dirDeg, blurPx, sxVal, syVal);
+            // For drop-shadow we absorb the negative spread into a blur reduction
+            blurPx = Math.max(0, Math.round((blurPx + spreadDelta) * 10) / 10);
+            offX += offXDelta;
+            offY += offYDelta;
+        }
 
         // ── 5. Compose CSS ────────────────────────────────────────────────────
         const rgb = hexToRgbComponents(color);
@@ -446,4 +446,94 @@ function getCustomShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
 }
 
 
-module.exports = { getShapeShadowStyle, getCustomShapeShadowStyle };
+/**
+ * Like getCustomShapeShadowStyle but returns a structured object so the caller
+ * can decide WHERE to apply the shadow depending on how the SVG is composed.
+ *
+ * Returns:
+ *   null                          – no shadow found
+ *   { isInner: false, svgFilter }  – outer shadow → apply as filter: on <svg>
+ *   { isInner: true,  boxShadow }  – inner shadow → apply as box-shadow: inset on <div>
+ */
+function getCustomShapeShadowData(shapeNode, themeXML, masterXML, clrMap) {
+    try {
+        const effectLst =
+            shapeNode?.["p:spPr"]?.[0]?.["a:effectLst"]?.[0]
+            ?? shapeNode?.["a:effectLst"]?.[0]
+            ?? (shapeNode?.["a:outerShdw"] || shapeNode?.["a:innerShdw"] ? shapeNode : null);
+
+        if (!effectLst) return null;
+
+        const outerShdw = effectLst?.["a:outerShdw"]?.[0];
+        const innerShdw = effectLst?.["a:innerShdw"]?.[0];
+        const shdwNode  = outerShdw ?? innerShdw;
+        const isInner   = !outerShdw && !!innerShdw;
+
+        if (!shdwNode) return null;
+
+        const attrs = shdwNode["$"] ?? {};
+
+        const color    = resolveShadowColor(shdwNode, themeXML, masterXML);
+        const alpha    = resolveShadowAlpha(shdwNode);
+        const rgb      = hexToRgbComponents(color);
+        const cssAlpha = Math.round(alpha * 1000) / 1000;
+        let   blurPx   = blurRadToPx(attrs.blurRad);
+
+        if (isInner) {
+            // ── Inner shadow → box-shadow: inset on the clipped <div> ────────
+            const distRaw = attrs.dist ? parseInt(attrs.dist, 10) : 0;
+            const dirRaw  = (attrs.dir != null && attrs.dir !== "")
+                ? parseInt(attrs.dir, 10) : null;
+
+            let { offX, offY } = dirDistToOffset(dirRaw, distRaw, attrs.algn);
+            // OOXML inner shadow offsets point inward; CSS inset offsets are identical direction
+            offX = -offX;
+            offY = -offY;
+
+            const cssOffX = Math.round(offX * 1000) / 1000;
+            const cssOffY = Math.round(offY * 1000) / 1000;
+            const cssBlur = Math.round(blurPx * 10) / 10;
+
+            return {
+                isInner:   true,
+                boxShadow: `inset ${cssOffX}px ${cssOffY}px ${cssBlur}px rgba(${rgb}, ${cssAlpha})`,
+            };
+        } else {
+            // ── Outer shadow → filter: drop-shadow() on <svg> ────────────────
+            const sx = attrs.sx ? parseInt(attrs.sx, 10) / 100000 : 1;
+            const sy = attrs.sy ? parseInt(attrs.sy, 10) / 100000 : 1;
+            const avgScale = (sx + sy) / 2;
+            if (avgScale > 1) {
+                blurPx = Math.round((blurPx + (avgScale - 1) * blurPx) * 10) / 10;
+            }
+
+            const distRaw = attrs.dist ? parseInt(attrs.dist, 10) : 0;
+            const dirRaw  = (attrs.dir != null && attrs.dir !== "")
+                ? parseInt(attrs.dir, 10) : null;
+
+            let { offX, offY } = dirDistToOffset(dirRaw, distRaw, attrs.algn);
+
+            const dirDeg = (dirRaw != null) ? (dirRaw / 60000) : 0;
+            const { spreadDelta, offXDelta, offYDelta } =
+                getAlgnClipAdjustment(attrs.algn, dirDeg, blurPx, sx, sy);
+            blurPx = Math.max(0, Math.round((blurPx + spreadDelta) * 10) / 10);
+            offX += offXDelta;
+            offY += offYDelta;
+
+            const cssOffX = Math.round(offX * 10) / 10;
+            const cssOffY = Math.round(offY * 10) / 10;
+            const cssBlur = Math.round(blurPx * 10) / 10;
+
+            return {
+                isInner:   false,
+                svgFilter: `filter: drop-shadow(${cssOffX}px ${cssOffY}px ${cssBlur}px rgba(${rgb}, ${cssAlpha}));`,
+            };
+        }
+    } catch (err) {
+        console.error("getCustomShapeShadowData error:", err);
+        return null;
+    }
+}
+
+
+module.exports = { getShapeShadowStyle, getCustomShapeShadowStyle, getCustomShapeShadowData };

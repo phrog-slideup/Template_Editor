@@ -2318,13 +2318,6 @@ class ShapeHandler {
                 borderColor = colorHelper.resolveThemeColorHelper(schemeClrKey, this.extractor.themeXML, this.masterXML);
             }
 
-            // ?? Extract Transparency (Opacity)
-            // let opacity = 1;
-            // const alphaNode = node?.["p:spPr"]?.[0]?.["a:solidFill"]?.[0]?.["a:alpha"];
-            // if (alphaNode) {
-            //     opacity = parseInt(alphaNode[0]["$"].val, 10) / 100000;
-            // }
-
             // ?? Extract Image Transformations (Flip, Rotation)
             const xfrm = node?.["p:spPr"]?.[0]?.["a:xfrm"]?.[0];
             let flipH = "";

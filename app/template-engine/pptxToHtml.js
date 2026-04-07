@@ -736,17 +736,39 @@ class pptxToHtml {
           const rotation = pptTextAllInfo.getRotation(picNode);
           const imgcss = imgSvgStyle.returnImgSvgStyle(picNode);
 
-          if (!imageInfo && svgContent) {
-            htmlContent += `<div class="sli-svg-container${picPlaceholderClass}" data-name="${nodeName}"
+          if (svgContent) {
+            const svgAltText = imageInfo?.altText || "";
+            const svgHyperlinkAttr = imageInfo?.hyperlink ? `data-hyperlink="${imageInfo.hyperlink}"` : "";
+            const svgOnclickAttr = imageInfo?.hyperlink ? `onclick="window.location.href='${imageInfo.hyperlink}'"` : "";
+            const svgCursorStyle = imageInfo?.hyperlink ? "cursor: pointer;" : "";
+
+            htmlContent += `<div class="image-container${picPlaceholderClass}" 
+                              data-image-format="svg"
+                              data-name="${nodeName}"
+                              data-alt-text="${svgAltText}"
+                              ${svgHyperlinkAttr}
+                              ${svgOnclickAttr}
+                              phType="${position.phType || ""}" 
+                              phIdx="${position.phIdx || ""}" 
+                              data-is-line="${isLine}"
+                              data-actual-width="${actualWidth}"
+                              data-actual-height="${actualHeight}"
                               style="position:absolute; 
                               left:${position.x}px; 
                               top:${position.y}px; 
                               width:${renderWidth}px; 
                               height:${renderHeight}px;
-                              transform: ${imgcss.flipH} ${imgcss.flipV} rotate(${rotation}deg);
+                              transform: ${imgcss.transform} rotate(${rotation}deg);
+                              transform-origin: center center;
+                              ${imgcss.suppressShadow ? "box-shadow:none; filter:none;" : ""}
                               overflow:hidden;
+                              ${svgCursorStyle}
                               z-index:${zIndex};">
-                              <svg style="width:100%; height:100%;" xmlns="http://www.w3.org/2000/svg">${svgContent}</svg>
+                              <svg aria-label="${svgAltText}"
+                                   role="img"
+                                   preserveAspectRatio="xMidYMid meet"
+                                   style="width:100%; height:100%; overflow:visible; ${imgcss.assetTransform ? `transform:${imgcss.assetTransform}; transform-origin:center center; transform-box:fill-box;` : ""}"
+                                   xmlns="http://www.w3.org/2000/svg">${svgContent}</svg>
                           </div>`;
           } else if (imageInfo) {
             // Apply border-radius for ellipse detection
@@ -788,7 +810,12 @@ class pptxToHtml {
                 boxShadowCSS = `box-shadow: ${shadows.join(", ")};`;
               }
             }
-            const finalFilter = imgcss.blurAmount ? `filter: blur(${imgcss.blurAmount}px) contrast(${imgcss.contrastValue || 1});` : combinedFilter;
+            if (imgcss.suppressShadow) {
+              boxShadowCSS = "box-shadow:none; filter:none;";
+            }
+            const finalFilter = imgcss.suppressShadow
+              ? "filter:none;"
+              : (imgcss.blurAmount ? `filter: blur(${imgcss.blurAmount}px) contrast(${imgcss.contrastValue || 1});` : combinedFilter);
 
             // For lines: use object-fit fill and ensure no distortion
             const objectFit = isLine ? "fill" : "cover";
@@ -839,6 +866,10 @@ class pptxToHtml {
               }
             }
 
+            if (imgcss.assetTransform) {
+              imgStyle += ` transform:${imgcss.assetTransform}; transform-origin:center center;`;
+            }
+
             htmlContent += `
                       <div class="image-container${picPlaceholderClass}${isLine ? " line-image" : ""}" 
                           srcrectl="${imageInfo.cropping?.l || 0}" 
@@ -863,12 +894,13 @@ class pptxToHtml {
                               ${borderCSS}
                               ${boxShadowCSS}
                               transform: ${imgcss.transform} rotate(${rotation}deg);
+                              transform-origin: center center;
                               overflow:hidden;
                               ${cursorStyle}
                               z-index:${zIndex};">
                           
                           <img src="${imageInfo.src}" alt="${nodeName}"
-                              style="${imgStyle}" />
+                              style="${imgStyle} ${imgcss.suppressShadow ? 'box-shadow:none; filter:none;' : ''}" />
                         </div>`;
           } else {
             // No image info and no SVG content
@@ -1197,7 +1229,10 @@ class pptxToHtml {
   }
 
   async getSVGContent(blipNode, relationshipsXML) {
-    const svgEmbedId = blipNode?.["a:extLst"]?.[0]?.["a:ext"]?.[0]?.["asvg:svgBlip"]?.[0]?.["$"]?.["r:embed"];
+    const extNodes = blipNode?.["a:extLst"]?.[0]?.["a:ext"] || [];
+    const svgEmbedId = extNodes
+      .map((ext) => ext?.["asvg:svgBlip"]?.[0]?.["$"]?.["r:embed"])
+      .find(Boolean);
     if (!svgEmbedId) {
       return null;
     }

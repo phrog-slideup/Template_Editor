@@ -37,6 +37,19 @@ function emuToPxWithLookup(emu) {
     return emuToPxTable[emu] || emuToPx(emu); // Use lookup or fallback
 }
 
+function getScene3dTransform(picNode) {
+    const cameraPrst = picNode?.["p:spPr"]?.[0]?.["a:scene3d"]?.[0]?.["a:camera"]?.[0]?.["$"]?.prst;
+
+    const presetTransformMap = {
+        // Approximate PowerPoint camera presets with CSS 3D transforms instead of
+        // skewing the whole wrapper, which bends small icons badly.
+        isometricTopUp: "perspective(240px) rotateX(58deg) rotateZ(-45deg) translate(-1px, -2px) scale(0.94)",
+        perspectiveRelaxedModerately: "perspective(260px) rotateX(18deg) scale(0.98)"
+    };
+
+    return presetTransformMap[cameraPrst] || "";
+}
+
 
 // Function to extract styles for images from PPTX XML
 function returnImgSvgStyle(picNode) {
@@ -83,6 +96,10 @@ function returnImgSvgStyle(picNode) {
         flipV = "scaleY(-1)";
     }
 
+    const cameraPrst = picNode?.["p:spPr"]?.[0]?.["a:scene3d"]?.[0]?.["a:camera"]?.[0]?.["$"]?.prst || "";
+    const sceneTransform = getScene3dTransform(picNode);
+    const wrapperTransform = [flipH, flipV].filter(t => t !== "").join(" ");
+
     return {
         opacity,
         borderWidth,
@@ -90,7 +107,12 @@ function returnImgSvgStyle(picNode) {
         shadowColor,
         shadowOffsetX,
         shadowOffsetY,
-        transform: [flipH, flipV].filter(t => t !== "").join(" "),
+        transform: wrapperTransform,
+        assetTransform: sceneTransform,
+        sceneTransform,
+        suppressShadow: Boolean(cameraPrst),
+        flipH,
+        flipV,
     };
 }
 

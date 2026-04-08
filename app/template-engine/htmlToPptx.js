@@ -145,6 +145,8 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
             throw new Error('Failed to extract slide XML files');
         }
 
+        await injectSvgScene3dIntoSlideXML(slideXmlsDir, pptx._svgScene3dStore || []);
+
         // NEW STEP 6.5: Fix chart XML bugs before replacing files
         const chartFixResult = await fixChartXmlBugs(slideXmlsDir);
 
@@ -822,9 +824,9 @@ async function processSlideContent(pptx, pptSlide, slideElement, slideContext) {
                     element.classList.contains("image-container") &&
                     element.getAttribute("data-shape-type") === "image"
                 ) {
-                    const imgElement = element.querySelector("img");
-                    if (imgElement && !isMasterElement(imgElement)) {
-                        await addImage.addImageToSlide(pptx, pptSlide, imgElement, slideContext, element);
+                    const imageAsset = element.querySelector("img, svg");
+                    if (imageAsset && !isMasterElement(imageAsset)) {
+                        await addImage.addImageToSlide(pptx, pptSlide, imageAsset, slideContext, element);
                         processedElements.add(element);
                     } else {
                         await processShapeElement(pptx, pptSlide, element, slideContext);
@@ -844,16 +846,16 @@ async function processSlideContent(pptx, pptSlide, slideElement, slideContext) {
                 await processLayoutElement(pptx, pptSlide, element, slideContext, processedElements);
             }
             else if (element.classList.contains("image-container")) {
-                const imgElement = element.querySelector("img");
+                const imageAsset = element.querySelector("img, svg");
 
-                if (imgElement && !isMasterElement(imgElement)) {
+                if (imageAsset && !isMasterElement(imageAsset)) {
 
                     if (element.classList.contains('placeholder-picture')) {
                         // CASE 1 (placeholder variant): handled by placeholder processor
                         await processPlaceholderElement(pptx, pptSlide, element, slideContext);
                     } else {
                         // CASE 1: plain image-container with optional srcrect crop attributes
-                        await addImage.addImageToSlide(pptx, pptSlide, imgElement, slideContext, element);
+                        await addImage.addImageToSlide(pptx, pptSlide, imageAsset, slideContext, element);
                     }
                     processedElements.add(element);
                     // ✅ ADD THIS BLOCK HERE TOO
@@ -1876,6 +1878,73 @@ async function cleanSlideXmlForSyncfusion(slideXmlsDir) {
     }
 }
 
+async function injectSvgScene3dIntoSlideXML(slideXmlsDir, sceneStore = []) {
+    try {
+        if (!Array.isArray(sceneStore) || sceneStore.length === 0) {
+            return { success: true, injected: 0 };
+        }
+
+        const slidesDir = path.join(slideXmlsDir, 'slides');
+        if (!await checkDirectoryExists(slidesDir)) {
+            return { success: true, injected: 0 };
+        }
+
+        const groupedBySlide = new Map();
+        for (const item of sceneStore) {
+            if (!item?.objectName || !item?.cameraPrst) continue;
+            const slideIndex = Number.isInteger(item.slideIndex) ? item.slideIndex : 0;
+            if (!groupedBySlide.has(slideIndex)) {
+                groupedBySlide.set(slideIndex, []);
+            }
+            groupedBySlide.get(slideIndex).push(item);
+        }
+
+        let injected = 0;
+
+        for (const [slideIndex, entries] of groupedBySlide.entries()) {
+            const slidePath = path.join(slidesDir, `slide${slideIndex + 1}.xml`);
+            if (!await checkFileExists(slidePath)) continue;
+
+            let slideXml = await fsPromises.readFile(slidePath, 'utf8');
+            let modified = false;
+
+            for (const entry of entries) {
+                const escapedName = escapeRegExp(entry.objectName);
+                const picRegex = new RegExp(
+                    `(<p:pic>[\\s\\S]*?<p:cNvPr[^>]*name="${escapedName}"[^>]*>[\\s\\S]*?<p:spPr>)([\\s\\S]*?)(</p:spPr>[\\s\\S]*?</p:pic>)`,
+                    'i'
+                );
+
+                slideXml = slideXml.replace(picRegex, (match, spPrOpen, spPrContent, picClose) => {
+                    if (spPrContent.includes('<a:scene3d>')) {
+                        return match;
+                    }
+
+                    let nextSpPrContent = spPrContent;
+
+                    if (!nextSpPrContent.includes('<a:effectLst>')) {
+                        nextSpPrContent += '<a:effectLst><a:outerShdw blurRad="50800" dist="38100" dir="2700000" algn="tl" rotWithShape="0"><a:prstClr val="black"><a:alpha val="40000"/></a:prstClr></a:outerShdw></a:effectLst>';
+                    }
+
+                    nextSpPrContent += `<a:scene3d><a:camera prst="${entry.cameraPrst}"/><a:lightRig rig="threePt" dir="t"/></a:scene3d>`;
+                    modified = true;
+                    injected += 1;
+                    return `${spPrOpen}${nextSpPrContent}${picClose}`;
+                });
+            }
+
+            if (modified) {
+                await fsPromises.writeFile(slidePath, slideXml, 'utf8');
+            }
+        }
+
+        return { success: true, injected };
+    } catch (error) {
+        console.error(`   ❌ Error in injectSvgScene3dIntoSlideXML: ${error.message}`);
+        return { success: false, injected: 0, error: error.message };
+    }
+}
+
 
 async function injectPatternFillsIntoSlideXML(slideXmlsDir) {
     try {
@@ -2533,9 +2602,9 @@ async function processLayoutElement(pptx, pptSlide, element, slideContext, proce
         for (const imgContainer of filteredImages) {
             if (!processedElements.has(imgContainer)) {
                 try {
-                    const imgElement = imgContainer.querySelector("img");
-                    if (imgElement && !isMasterElement(imgElement)) {
-                        await addImage.addImageToSlide(pptx, pptSlide, imgElement, slideContext);
+                    const imageAsset = imgContainer.querySelector("img, svg");
+                    if (imageAsset && !isMasterElement(imageAsset)) {
+                        await addImage.addImageToSlide(pptx, pptSlide, imageAsset, slideContext);
                         processedElements.add(imgContainer);
                     }
                 } catch (nestedImageError) {
@@ -3291,7 +3360,7 @@ async function replaceSlideImages(fileFolderName, extractedSlidesDir) {
         if (mediaExist) {
             const mediaFiles = await fsPromises.readdir(extractedMediaPath);
             const validMediaFiles = mediaFiles.filter(file =>
-                file.match(/\.(png|jpg|jpeg|gif|bmp|mp4|wmv|avi)$/i)
+                file.match(/\.(png|jpg|jpeg|gif|bmp|svg|mp4|wmv|avi)$/i)
             );
 
             for (const mediaFile of validMediaFiles) {
@@ -3495,6 +3564,10 @@ async function checkFileExists(filePath) {
     } catch {
         return false;
     }
+}
+
+function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 async function checkDirectoryExists(dirPath) {

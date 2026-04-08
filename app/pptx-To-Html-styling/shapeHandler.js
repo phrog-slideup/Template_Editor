@@ -11,6 +11,7 @@ const imgSvgStyle = require("../pptx-To-Html-styling/imgSvgCss.js");
 const config = require('../config.js');
 const { generateHexagonSVG, extractHexagon3DProperties } = require("./shapes/svgHexagonHandler.js");
 const BarChartHandler = require("./charts/barChartHandler.js");
+const LineChartHandler = require("./charts/LineChartHandler.js");
 const DoughnutChartHandler = require("./charts/DoughnutChartHandler.js");
 const TwoDAreaChartHandler = require("./charts/2DAreaChartHandler.js");
 const textHandler = require("../pptx-To-Html-styling/text/textHandler.js");
@@ -155,7 +156,12 @@ class ShapeHandler {
 
                 if (chartType === "bar") {
                     chartHandler = new BarChartHandler(
-                        graphicsNode, chartXML, chartRelsXML, chartColorsXML, chartStyleXML, this.themeXML
+                        graphicsNode, chartXML, chartRelsXML, chartColorsXML, chartStyleXML, this.themeXML, this.masterXML
+                    );
+                }
+                else if (chartType === "line") {
+                    chartHandler = new LineChartHandler(
+                        graphicsNode, chartXML, chartRelsXML, chartColorsXML, chartStyleXML, this.themeXML, this.masterXML
                     );
                 }
                 else if (chartType === "doughnut") {

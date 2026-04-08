@@ -1,3 +1,5 @@
+const sharp = require('sharp');
+
 function postProcessChartXML(chartXML, chartType, chartData) {
     if (chartType !== 'line') {
         return chartXML; // Only fix line charts
@@ -168,6 +170,15 @@ function createChartOptions(chartData, position, styling) {
     } else if (chartData.type === 'bar' || chartData.type === 'column') {
     const isHorizontal = chartData.isHorizontal === true;
     const axisMax = Math.ceil(chartData.maxValue * 10) / 10 + 1;
+    const valGridLine = chartData.showValGridLines
+        ? {
+            color: normalizeColor(chartData.valGridLineColor || '888888', true),
+            size: 1,
+            style: 'solid'
+        }
+        : {
+            style: 'none'
+        };
 
     // For horizontal bar in pptxgenjs:
     //   catAxisTitle = the LEFT axis (Y) = where categories are = XML's catAx = "NR Axis Title"
@@ -194,13 +205,14 @@ function createChartOptions(chartData, position, styling) {
         catAxisTitle: chartData.catAxisTitle || '',
         showValAxisTitle: !!chartData.valAxisTitle,
         valAxisTitle: chartData.valAxisTitle || '',
+        valGridLine,
     };
 } else {
         return baseOptions;
     }
 }
 
-function addChartToSlide(pptx, pptSlide, element, slideContext) {
+async function addChartToSlide(pptx, pptSlide, element, slideContext) {
     try {
         // Check if this is a chart container
         if (!isChartElement(element)) {
@@ -233,6 +245,11 @@ function addChartToSlide(pptx, pptSlide, element, slideContext) {
         // Extract position and styling
         const position = extractChartPosition(element, slideContext);
         const styling = extractChartStyling(element, chartData);
+        addChartBackgroundShape(pptx, pptSlide, element, position);
+
+        if (chartType === 'line') {
+            return await addLineChartAsImage(pptSlide, element, position);
+        }
 
         // Convert data to pptxgenjs format
         const pptxData = convertToPptxFormat(chartData);
@@ -288,6 +305,96 @@ function addChartToSlide(pptx, pptSlide, element, slideContext) {
     } catch (error) {
         console.error('Error adding chart to slide:', error);
         return false;
+    }
+}
+
+async function addLineChartAsImage(pptSlide, chartElement, position) {
+    try {
+        const svgElement = chartElement.querySelector('svg');
+        if (!svgElement) {
+            return false;
+        }
+
+        const svgMarkup = svgElement.outerHTML;
+        const pngBuffer = await sharp(Buffer.from(svgMarkup, 'utf8'))
+            .png()
+            .toBuffer();
+        const pngDataUri = `data:image/png;base64,${pngBuffer.toString('base64')}`;
+
+        pptSlide.addImage({
+            data: pngDataUri,
+            x: position.x,
+            y: position.y,
+            w: position.w,
+            h: position.h
+        });
+
+        return true;
+    } catch (error) {
+        console.error('Error adding line chart as image:', error);
+        return false;
+    }
+}
+
+function addChartBackgroundShape(pptx, pptSlide, chartElement, position) {
+    try {
+        const background = extractChartContainerBackground(chartElement);
+        if (!background || background.color === null) return;
+
+        const shapeOptions = {
+            x: position.x,
+            y: position.y,
+            w: position.w,
+            h: position.h,
+            line: { color: background.color, transparency: 100 },
+            fill: { color: background.color }
+        };
+
+        if (typeof background.transparency === 'number' && background.transparency > 0) {
+            shapeOptions.fill.transparency = background.transparency;
+        }
+
+        pptSlide.addShape(pptx.shapes.RECTANGLE, shapeOptions);
+    } catch (error) {
+        console.error('Error adding chart background shape:', error);
+    }
+}
+
+function extractChartContainerBackground(chartElement) {
+    try {
+        const styleAttr = chartElement.getAttribute('style') || '';
+        const backgroundMatch = styleAttr.match(/background(?:-color)?:\s*([^;]+)/i);
+        const rawBackground = backgroundMatch?.[1]?.trim() || chartElement.style?.background || chartElement.style?.backgroundColor || '';
+
+        if (!rawBackground || rawBackground === 'transparent' || rawBackground === 'none') {
+            return null;
+        }
+
+        const rgbaMatch = rawBackground.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/i);
+        if (rgbaMatch) {
+            const r = parseInt(rgbaMatch[1], 10);
+            const g = parseInt(rgbaMatch[2], 10);
+            const b = parseInt(rgbaMatch[3], 10);
+            const alpha = rgbaMatch[4] !== undefined ? parseFloat(rgbaMatch[4]) : 1;
+            return {
+                color: `${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`.toUpperCase(),
+                transparency: Math.round((1 - alpha) * 100)
+            };
+        }
+
+        if (rawBackground.startsWith('#')) {
+            return { color: normalizeColor(rawBackground, true), transparency: 0 };
+        }
+
+        const normalized = normalizeColor(rawBackground, true);
+        if (normalized) {
+            return { color: normalized, transparency: 0 };
+        }
+
+        return null;
+    } catch (error) {
+        console.error('Error extracting chart background:', error);
+        return null;
     }
 }
 
@@ -484,6 +591,8 @@ function extractBarChartData(chartContainer) {
 
         const catAxisTitle = chartContainer.getAttribute('data-cat-axis-title') || '';
         const valAxisTitle = chartContainer.getAttribute('data-val-axis-title') || '';
+        const showValGridLines = chartContainer.getAttribute('data-val-gridlines-show') === 'true';
+        const valGridLineColor = chartContainer.getAttribute('data-val-gridline-color') || '';
 
         return {
             categories,
@@ -492,7 +601,9 @@ function extractBarChartData(chartContainer) {
             minValue,
             catAxisTitle,
             valAxisTitle,
-            title: chartTitle
+            title: chartTitle,
+            showValGridLines,
+            valGridLineColor
         };
 
     } catch (error) {
@@ -875,11 +986,60 @@ async function postProcessPPTXForMarkers(pptxPath, markerDataArray) {
         console.error('   ⚠️ Error post-processing chart markers:', error);
     }
 }
+
+async function ensurePPTXMediaContentTypes(pptxPath) {
+    try {
+        const JSZip = require('jszip');
+        const fs = require('fs').promises;
+
+        const pptxBuffer = await fs.readFile(pptxPath);
+        const zip = await JSZip.loadAsync(pptxBuffer);
+        const contentTypesFile = zip.file('[Content_Types].xml');
+        if (!contentTypesFile) return;
+
+        let contentTypesXml = await contentTypesFile.async('string');
+        const mediaFiles = Object.keys(zip.files).filter((name) => name.startsWith('ppt/media/'));
+        if (mediaFiles.length === 0) return;
+
+        const mimeByExt = {
+            png: 'image/png',
+            jpg: 'image/jpeg',
+            jpeg: 'image/jpeg',
+            gif: 'image/gif',
+            svg: 'image/svg+xml',
+            webp: 'image/webp'
+        };
+
+        let changed = false;
+        for (const mediaFile of mediaFiles) {
+            const ext = mediaFile.split('.').pop()?.toLowerCase();
+            const mimeType = mimeByExt[ext];
+            if (!ext || !mimeType) continue;
+
+            const defaultTag = `<Default Extension="${ext}" ContentType="${mimeType}"/>`;
+            const hasType = new RegExp(`<Default\\s+Extension="${ext}"\\s+ContentType="${mimeType.replace(/[.+]/g, '\\$&')}"\\s*/>`, 'i').test(contentTypesXml);
+            if (!hasType) {
+                contentTypesXml = contentTypesXml.replace('</Types>', `${defaultTag}</Types>`);
+                changed = true;
+            }
+        }
+
+        if (!changed) return;
+
+        zip.file('[Content_Types].xml', contentTypesXml);
+        const modifiedBuffer = await zip.generateAsync({ type: 'nodebuffer' });
+        await fs.writeFile(pptxPath, modifiedBuffer);
+    } catch (error) {
+        console.error('   ⚠️ Error ensuring PPTX media content types:', error);
+    }
+}
+
 // Export functions for use in the main conversion system
 module.exports = {
     addChartToSlide,
     processChartElement,
     isChartElement,
     postProcessChartXML,
-    postProcessPPTXForMarkers
+    postProcessPPTXForMarkers,
+    ensurePPTXMediaContentTypes
 };

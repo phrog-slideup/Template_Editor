@@ -2,268 +2,156 @@ const colorHelper = require("../../api/helper/colorHelper.js");
 
 class BarChartHandler {
 
-    constructor(graphicsNode, chartXML, chartRelsXML, chartColorsXML, chartStyleXML, themeXML) {
+    constructor(graphicsNode, chartXML, chartRelsXML, chartColorsXML, chartStyleXML, themeXML, masterXML = null) {
         this.graphicsNode = graphicsNode;
         this.chartXML = chartXML;
         this.chartRelsXML = chartRelsXML;
         this.chartColorsXML = chartColorsXML;
         this.chartStyleXML = chartStyleXML;
         this.themeXML = themeXML;
+        this.masterXML = masterXML;
     }
 
-    // EMU -> px divisor
     getEMUDivisor() {
         return 12700;
     }
 
+    escapeHtml(value) {
+        return String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+    }
+
     async convertChartToHTML(graphicsNode, chartXML, chartRelsXML, chartColorsXML, chartStyleXML, themeXML, zIndex = 0) {
         try {
-            const sanitizeShapeName = (name) => {
-                if (!name) return '';
-                return name.replace(/['"<>&]/g, '').trim() || '';
-            };
-
-            // Extract unique identifiers from graphicsNode
             const cNvPr = graphicsNode?.["p:nvGraphicFramePr"]?.[0]?.["p:cNvPr"]?.[0];
-            const shapeName = cNvPr?.["$"]?.name || 'Chart';
+            const shapeName = cNvPr?.["$"]?.name || "Chart";
             const shapeId = cNvPr?.["$"]?.id || Math.random().toString(36).substr(2, 9);
-
-            // Extract relationship ID (r:id) from the chart reference
             const chartRef = graphicsNode?.["a:graphic"]?.[0]?.["a:graphicData"]?.[0]?.["c:chart"]?.[0];
-            const relationshipId = chartRef?.["$"]?.["r:id"] || '';
-
+            const relationshipId = chartRef?.["$"]?.["r:id"] || "";
             const position = this.getChartPosition(graphicsNode);
             const chartData = this.parseChartData(chartXML);
 
-            // If no valid chart data found, try to extract from alternative sources or create fallback
-            if (!chartData.series || chartData.series.length === 0) {
+            if (!chartData?.series || chartData.series.length === 0) {
                 const fallbackData = this.createFallbackChartData(chartXML, shapeName);
-                const htmlOutput = this.generateChartHTML(fallbackData, position, shapeName, shapeId, relationshipId, zIndex);
-                return htmlOutput;
+                return this.generateChartHTML(fallbackData, position, shapeName, shapeId, relationshipId, zIndex);
             }
 
-            const htmlOutput = this.generateChartHTML(chartData, position, shapeName, shapeId, relationshipId, zIndex);
-            return htmlOutput;
+            return this.generateChartHTML(chartData, position, shapeName, shapeId, relationshipId, zIndex);
         } catch (error) {
             return this.generateErrorHTML(error.message);
         }
     }
 
     createFallbackChartData(chartXML, shapeName) {
-
-        // Try to extract any available data or create sample data
         const chart = chartXML["c:chartSpace"]?.["c:chart"]?.[0];
         const title = this.getChartTitle(chart) || shapeName || "Chart";
-
-        // Extract axis titles
-        const catAxNode = (plotArea["c:catAx"] || [])[0];
-        const valAxNode = (plotArea["c:valAx"] || [])[0];
-        const catAxisTitle = this.getAxisTitle(catAxNode);  // vertical label (Y-axis for horizontal charts)
-        const valAxisTitle = this.getAxisTitle(valAxNode);  // horizontal label (X-axis for horizontal charts)
-
-        // Create sample data structure
         const series = [
-            {
-                index: 0,
-                name: "Series 1",
-                values: [4.3, 2.5, 3.5, 4.5],
-                categories: ["Category 1", "Category 2", "Category 3", "Category 4"],
-                color: "#A5C249"
-            },
-            {
-                index: 1,
-                name: "Series 2",
-                values: [2.4, 4.4, 1.8, 2.8],
-                categories: ["Category 1", "Category 2", "Category 3", "Category 4"],
-                color: "#7CCA62"
-            },
-            {
-                index: 2,
-                name: "Series 3",
-                values: [2, 2, 3, 5],
-                categories: ["Category 1", "Category 2", "Category 3", "Category 4"],
-                color: "#10CF9B"
-            }
+            { index: 0, name: "Series 1", values: [4.3, 2.5, 3.5, 4.5], categories: ["Category 1", "Category 2", "Category 3", "Category 4"], color: "#4472C4" },
+            { index: 1, name: "Series 2", values: [2.4, 4.4, 1.8, 2.8], categories: ["Category 1", "Category 2", "Category 3", "Category 4"], color: "#ED7D31" },
+            { index: 2, name: "Series 3", values: [2, 2, 3, 5], categories: ["Category 1", "Category 2", "Category 3", "Category 4"], color: "#1F6B3A" }
         ];
-
         const allValues = series.flatMap(s => s.values);
 
         return {
             type: "bar",
             isHorizontal: false,
-            title: title,
-            series: series,
+            title,
+            series,
             categories: ["Category 1", "Category 2", "Category 3", "Category 4"],
-            axes: {
-                yAxis: null,
-                dataMin: 1.8,
-                dataMax: 5,
-                allValues: allValues
-            },
+            axes: { yAxis: null, dataMin: 1.8, dataMax: 5, allValues },
+            catAxisTitle: "",
+            valAxisTitle: "",
+            backgroundColor: ""
         };
     }
 
     parseChartData(chartXML, axisPreferences = null) {
         try {
             const chart = chartXML["c:chartSpace"]?.["c:chart"]?.[0];
-            if (!chart) {
-                return null;
-            }
+            const plotArea = chart?.["c:plotArea"]?.[0];
+            const barChart = plotArea?.["c:barChart"]?.[0] || plotArea?.["c:bar3DChart"]?.[0] || plotArea?.["c:columnChart"]?.[0] || plotArea?.["c:col3DChart"]?.[0];
+            if (!chart || !plotArea || !barChart) return null;
 
-            const plotArea = chart["c:plotArea"]?.[0];
-            if (!plotArea) {
-                return null;
-            }
-
-            const barChart = plotArea["c:barChart"]?.[0] ||
-                plotArea["c:bar3DChart"]?.[0] ||
-                plotArea["c:columnChart"]?.[0] ||
-                plotArea["c:col3DChart"]?.[0];
-
-            if (!barChart) {
-                return null;
-            }
-
-            const barDir = barChart["c:barDir"]?.[0]?.["$"]?.["val"] || "col";
+            const barDir = barChart["c:barDir"]?.[0]?.["$"]?.val || "col";
             const isHorizontal = barDir === "bar";
-
             const series = barChart["c:ser"] || [];
+            if (series.length === 0) return null;
 
-            if (series.length === 0) {
-                return null;
-            }
+            const chartSeries = series.map((ser, index) => ({
+                index,
+                name: this.getSeriesName(ser, index),
+                values: this.getSeriesValues(ser),
+                categories: this.getSeriesCategories(ser),
+                color: this.getSeriesColor(ser, index),
+            }));
 
-            const chartSeries = series.map((ser, index) => {
-                const seriesData = {
-                    index,
-                    name: this.getSeriesName(ser, index),
-                    values: this.getSeriesValues(ser),
-                    categories: this.getSeriesCategories(ser),
-                    color: this.getSeriesColor(ser, index),
-                };
-                return seriesData;
-            });
-
-            const title = this.getChartTitle(chart);
-
-            // Get axis info and data extents
             let yAxis = this.getValueAxis(plotArea);
-
-
-            // Apply axis preferences if provided (allows manual override)
-            if (axisPreferences) {
-                yAxis = {
-                    ...yAxis,
-                    ...axisPreferences
-                };
-            }
+            if (axisPreferences) yAxis = { ...yAxis, ...axisPreferences };
 
             const allValues = chartSeries.flatMap((s) => s.values).filter(v => v !== null && v !== undefined && !isNaN(v));
             const dataMin = allValues.length ? Math.min(...allValues) : 0;
             const dataMax = allValues.length ? Math.max(...allValues) : 5;
-
             const catAxNode = (plotArea["c:catAx"] || [])[0];
             const valAxNode = (plotArea["c:valAx"] || [])[0];
-            const catAxisTitle = this.getAxisTitle(catAxNode); // Y-axis title for horizontal charts
-            const valAxisTitle = this.getAxisTitle(valAxNode); // X-axis title for horizontal charts
 
-            const result = {
+            return {
                 type: "bar",
                 isHorizontal,
-                title,
+                title: this.getChartTitle(chart),
                 series: chartSeries,
                 categories: chartSeries.length ? chartSeries[0].categories : [],
                 axes: { yAxis, dataMin, dataMax, allValues },
-                catAxisTitle,  // ✅ NOW included
-                valAxisTitle,  // ✅ NOW included
+                catAxisTitle: this.getAxisTitle(catAxNode),
+                valAxisTitle: this.getAxisTitle(valAxNode),
+                backgroundColor: this.getChartBackground(chartXML),
+                valueAxisGridlines: this.getAxisGridlineInfo(valAxNode),
             };
-
-
-            return result;
-        } catch (error) {
+        } catch {
             return null;
         }
     }
 
-    // Helper function to safely extract text from XML value
     extractTextValue(value) {
         if (!value) return null;
-
-        // If it's already a string, return it
-        if (typeof value === 'string') return value;
-
-        // If it's an object with _ property (xml2js text node with attributes)
-        if (typeof value === 'object' && value._) return String(value._);
-
-        // If it's an object with text property
-        if (typeof value === 'object' && value.text) return String(value.text);
-
-        // Try to convert to string
+        if (typeof value === "string") return value;
+        if (typeof value === "object" && value._) return String(value._);
+        if (typeof value === "object" && value.text) return String(value.text);
         if (value !== null && value !== undefined) {
             const str = String(value);
-            // Don't return [object Object]
-            if (str !== '[object Object]') return str;
+            if (str !== "[object Object]") return str;
         }
-
         return null;
     }
 
     getSeriesName(seriesXML, index) {
         try {
             const tx = seriesXML["c:tx"];
-
-            if (tx && tx[0]) {
-                // Try string reference first
-                if (tx[0]["c:strRef"]) {
-                    const strCache = tx[0]["c:strRef"][0]["c:strCache"];
-                    if (strCache && strCache[0]["c:pt"] && strCache[0]["c:pt"][0]) {
-                        const value = strCache[0]["c:pt"][0]["c:v"];
-                        if (value && value[0]) {
-                            const extracted = this.extractTextValue(value[0]);
-                            if (extracted) return extracted;
-                        }
+            if (tx?.[0]?.["c:strRef"]) {
+                const value = tx[0]["c:strRef"][0]["c:strCache"]?.[0]?.["c:pt"]?.[0]?.["c:v"]?.[0];
+                const extracted = this.extractTextValue(value);
+                if (extracted) return extracted;
+            }
+            if (tx?.[0]?.["c:v"]?.[0]) {
+                const extracted = this.extractTextValue(tx[0]["c:v"][0]);
+                if (extracted) return extracted;
+            }
+            if (tx?.[0]?.["c:rich"]) {
+                const rich = tx[0]["c:rich"][0];
+                for (const p of rich["a:p"] || []) {
+                    for (const r of p["a:r"] || []) {
+                        const extracted = this.extractTextValue(r["a:t"]?.[0]);
+                        if (extracted) return extracted;
                     }
-                }
-
-                // Try direct value
-                if (tx[0]["c:v"] && tx[0]["c:v"][0]) {
-                    const extracted = this.extractTextValue(tx[0]["c:v"][0]);
+                    const extracted = this.extractTextValue(p["a:t"]?.[0]);
                     if (extracted) return extracted;
                 }
-
-                // Try rich text
-                if (tx[0]["c:rich"]) {
-                    const rich = tx[0]["c:rich"][0];
-
-                    if (rich["a:p"]) {
-                        for (const p of rich["a:p"]) {
-                            // Try a:r -> a:t path
-                            if (p["a:r"]) {
-                                for (const r of p["a:r"]) {
-                                    if (r["a:t"] && r["a:t"][0]) {
-                                        const extracted = this.extractTextValue(r["a:t"][0]);
-                                        if (extracted) return extracted;
-                                    }
-                                }
-                            }
-
-                            // Try direct a:t
-                            if (p["a:t"] && p["a:t"][0]) {
-                                const extracted = this.extractTextValue(p["a:t"][0]);
-                                if (extracted) return extracted;
-                            }
-                        }
-                    }
-                }
             }
-
-            // Fallback to index from series
-            const idxVal = seriesXML["c:idx"]?.[0]?.["$"]?.["val"];
-            if (idxVal !== undefined) {
-                return `Series ${parseInt(idxVal) + 1}`;
-            }
-            return `Series ${index + 1}`;
-        } catch (error) {
+            const idxVal = seriesXML["c:idx"]?.[0]?.["$"]?.val;
+            return idxVal !== undefined ? `Series ${parseInt(idxVal, 10) + 1}` : `Series ${index + 1}`;
+        } catch {
             return `Series ${index + 1}`;
         }
     }
@@ -271,42 +159,35 @@ class BarChartHandler {
     getSeriesValues(seriesXML) {
         try {
             const val = seriesXML["c:val"];
-            if (val && val[0]) {
-                if (val[0]["c:numRef"]) {
-                    const numCache = val[0]["c:numRef"][0]["c:numCache"];
-                    if (numCache && numCache[0]["c:pt"]) {
-                        // Use idx attribute to place values in correct positions (sparse-safe)
-                        const ptCount = parseInt(numCache[0]["c:ptCount"]?.[0]?.["$"]?.val || numCache[0]["c:pt"].length);
-                        const values = new Array(ptCount).fill(0);
-                        numCache[0]["c:pt"].forEach((pt) => {
-                            const idx = parseInt(pt["$"]?.idx ?? 0);
-                            const v = pt["c:v"]?.[0];
-                            if (v !== undefined && !isNaN(parseFloat(v))) {
-                                values[idx] = parseFloat(v);
-                            }
-                        });
-                        return values;
-                    }
+            if (!val?.[0]) return [];
+            if (val[0]["c:numRef"]) {
+                const numCache = val[0]["c:numRef"][0]["c:numCache"];
+                if (numCache?.[0]?.["c:pt"]) {
+                    const ptCount = parseInt(numCache[0]["c:ptCount"]?.[0]?.["$"]?.val || numCache[0]["c:pt"].length, 10);
+                    const values = new Array(ptCount).fill(0);
+                    numCache[0]["c:pt"].forEach((pt) => {
+                        const idx = parseInt(pt["$"]?.idx ?? 0, 10);
+                        const v = pt["c:v"]?.[0];
+                        if (v !== undefined && !isNaN(parseFloat(v))) values[idx] = parseFloat(v);
+                    });
+                    return values;
                 }
-                // Try literal values
-                if (val[0]["c:numLit"]) {
-                    const numLit = val[0]["c:numLit"][0];
-                    if (numLit["c:pt"]) {
-                        const ptCount = parseInt(numLit["c:ptCount"]?.[0]?.["$"]?.val || numLit["c:pt"].length);
-                        const values = new Array(ptCount).fill(0);
-                        numLit["c:pt"].forEach((pt) => {
-                            const idx = parseInt(pt["$"]?.idx ?? 0);
-                            const v = pt["c:v"]?.[0];
-                            if (v !== undefined && !isNaN(parseFloat(v))) {
-                                values[idx] = parseFloat(v);
-                            }
-                        });
-                        return values;
-                    }
+            }
+            if (val[0]["c:numLit"]) {
+                const numLit = val[0]["c:numLit"][0];
+                if (numLit["c:pt"]) {
+                    const ptCount = parseInt(numLit["c:ptCount"]?.[0]?.["$"]?.val || numLit["c:pt"].length, 10);
+                    const values = new Array(ptCount).fill(0);
+                    numLit["c:pt"].forEach((pt) => {
+                        const idx = parseInt(pt["$"]?.idx ?? 0, 10);
+                        const v = pt["c:v"]?.[0];
+                        if (v !== undefined && !isNaN(parseFloat(v))) values[idx] = parseFloat(v);
+                    });
+                    return values;
                 }
             }
             return [];
-        } catch (error) {
+        } catch {
             return [];
         }
     }
@@ -314,91 +195,61 @@ class BarChartHandler {
     getSeriesCategories(seriesXML) {
         try {
             const cat = seriesXML["c:cat"];
-            if (cat && cat[0]) {
-                // Try string reference
-                if (cat[0]["c:strRef"]) {
-                    const strCache = cat[0]["c:strRef"][0]["c:strCache"];
-                    if (strCache && strCache[0]["c:pt"]) {
-                        const ptCount = parseInt(strCache[0]["c:ptCount"]?.[0]?.["$"]?.val || strCache[0]["c:pt"].length);
-                        const categories = new Array(ptCount).fill("");
-                        strCache[0]["c:pt"].forEach((pt) => {
-                            const idx = parseInt(pt["$"]?.idx ?? 0);
-                            categories[idx] = pt["c:v"]?.[0] || "";
-                        });
-                        return categories;
-                    }
+            if (!cat?.[0]) return [];
+            if (cat[0]["c:strRef"]) {
+                const strCache = cat[0]["c:strRef"][0]["c:strCache"];
+                if (strCache?.[0]?.["c:pt"]) {
+                    const ptCount = parseInt(strCache[0]["c:ptCount"]?.[0]?.["$"]?.val || strCache[0]["c:pt"].length, 10);
+                    const categories = new Array(ptCount).fill("");
+                    strCache[0]["c:pt"].forEach((pt) => {
+                        const idx = parseInt(pt["$"]?.idx ?? 0, 10);
+                        categories[idx] = pt["c:v"]?.[0] || "";
+                    });
+                    return categories;
                 }
-                // Try multi-level string reference
-                if (cat[0]["c:multiLvlStrRef"]) {
-                    const multiCache = cat[0]["c:multiLvlStrRef"][0]["c:multiLvlStrCache"];
-                    if (multiCache && multiCache[0]["c:lvl"] && multiCache[0]["c:lvl"][0]["c:pt"]) {
-                        return multiCache[0]["c:lvl"][0]["c:pt"].map((pt) => pt["c:v"]?.[0] || "");
-                    }
+            }
+            if (cat[0]["c:multiLvlStrRef"]) {
+                const multiCache = cat[0]["c:multiLvlStrRef"][0]["c:multiLvlStrCache"];
+                if (multiCache?.[0]?.["c:lvl"]?.[0]?.["c:pt"]) {
+                    return multiCache[0]["c:lvl"][0]["c:pt"].map((pt) => pt["c:v"]?.[0] || "");
                 }
-                // Try literal categories
-                if (cat[0]["c:strLit"]) {
-                    const strLit = cat[0]["c:strLit"][0];
-                    if (strLit["c:pt"]) {
-                        return strLit["c:pt"].map((pt) => pt["c:v"]?.[0] || "");
-                    }
+            }
+            if (cat[0]["c:strLit"]) {
+                const strLit = cat[0]["c:strLit"][0];
+                if (strLit["c:pt"]) {
+                    return strLit["c:pt"].map((pt) => pt["c:v"]?.[0] || "");
                 }
             }
             return [];
-        } catch (error) {
+        } catch {
             return [];
         }
     }
 
     getValueAxis(plotArea) {
         const valAx = (plotArea["c:valAx"] || [])[0];
-        if (!valAx) {
-            return null;
-        }
-
+        if (!valAx) return null;
         const scaling = valAx["c:scaling"]?.[0];
         const numFmt = valAx["c:numFmt"]?.[0]?.["$"]?.formatCode || "General";
         const crosses = valAx["c:crosses"]?.[0]?.["$"]?.val || "autoZero";
-
         const toNum = (n) => {
             const v = Number(n);
             return Number.isFinite(v) ? v : undefined;
         };
 
-        // Extract min value
-        let minVal = toNum(scaling?.["c:min"]?.[0]?.["$"]?.val);
-
-        // Extract max value
-        let maxVal = toNum(scaling?.["c:max"]?.[0]?.["$"]?.val);
-
-        // Extract majorUnit
-        let majorUnitVal = toNum(valAx["c:majorUnit"]?.[0]?.["$"]?.val);
-
-        // Check if orientation is reversed
-        const orientation = scaling?.["c:orientation"]?.[0]?.["$"]?.val;
-
-        // Check for auto settings
-        const autoMin = valAx["c:auto"]?.[0]?.["$"]?.val === "1";
-        const autoMax = valAx["c:autoMax"]?.[0]?.["$"]?.val === "1";
-
-        // NEW: Check for explicitly stored tick labels (sometimes PowerPoint stores these)
-        const tickLblSkip = valAx["c:tickLblSkip"]?.[0]?.["$"]?.val;
-        const tickMarkSkip = valAx["c:tickMarkSkip"]?.[0]?.["$"]?.val;
-
-        const axisData = {
-            min: minVal,
-            max: maxVal,
-            majorUnit: majorUnitVal,
+        return {
+            min: toNum(scaling?.["c:min"]?.[0]?.["$"]?.val),
+            max: toNum(scaling?.["c:max"]?.[0]?.["$"]?.val),
+            majorUnit: toNum(valAx["c:majorUnit"]?.[0]?.["$"]?.val),
             minorUnit: toNum(valAx["c:minorUnit"]?.[0]?.["$"]?.val),
             numFmt,
             crosses,
-            orientation,
-            autoMin,
-            autoMax,
-            tickLblSkip,
-            tickMarkSkip
+            orientation: scaling?.["c:orientation"]?.[0]?.["$"]?.val,
+            autoMin: valAx["c:auto"]?.[0]?.["$"]?.val === "1",
+            autoMax: valAx["c:autoMax"]?.[0]?.["$"]?.val === "1",
+            tickLblSkip: valAx["c:tickLblSkip"]?.[0]?.["$"]?.val,
+            tickMarkSkip: valAx["c:tickMarkSkip"]?.[0]?.["$"]?.val
         };
-
-        return axisData;
     }
 
     niceStep(rawStep) {
@@ -415,10 +266,7 @@ class BarChartHandler {
     }
 
     computeValueTicks(yAxis, dataMin, dataMax, desired = 10, allDataValues = []) {
-
-        // Use exact min/max from PPTX if available, otherwise calculate from data
-        let min = yAxis?.min !== undefined ? yAxis.min :
-            yAxis?.crosses === "autoZero" && dataMin > 0 ? 0 : dataMin;
+        let min = yAxis?.min !== undefined ? yAxis.min : yAxis?.crosses === "autoZero" && dataMin > 0 ? 0 : dataMin;
         let max = yAxis?.max !== undefined ? yAxis.max : dataMax;
 
         if (min === max) {
@@ -426,114 +274,52 @@ class BarChartHandler {
             else min = 0;
         }
 
-        // Use exact majorUnit from PPTX if available
         let step;
         const hasExplicitMajorUnit = yAxis?.majorUnit !== undefined && yAxis.majorUnit > 0;
-
         if (hasExplicitMajorUnit) {
-            // Use the exact step from PPTX without any modification
             step = yAxis.majorUnit;
         } else {
-            // No explicit value in PPTX - calculate using niceStep
-            const rawStep = (max - min) / desired;
-            step = this.niceStep(rawStep);
-
-
-            // SMART DETECTION: Analyze data to decide between integer and decimal steps
+            step = this.niceStep((max - min) / desired);
             if (!Number.isInteger(step) && allDataValues.length > 0) {
                 const detection = this.detectStepPreference(allDataValues, step, max - min);
-
-                if (detection.preferInteger) {
-                    step = detection.suggestedStep;
-                }
+                if (detection.preferInteger) step = detection.suggestedStep;
             }
         }
 
-        // Use exact min/max if provided in PPTX
         const hasExactMinMax = yAxis?.min !== undefined && yAxis?.max !== undefined;
-
-        const originalMin = min;
-        const originalMax = max;
-
         if (!hasExactMinMax) {
-            // Round min/max to align with step for clean axis
             min = Math.floor(min / step) * step;
             max = Math.ceil(max / step) * step;
-            // PPT always adds one extra majorUnit beyond data max for breathing room
-            if (max <= dataMax + step * 0.01) {
-                max = max + step;
-            }
+            if (max <= dataMax + step * 0.01) max += step;
         }
 
         const span = max - min || step;
         const decimals = this.decimalsFor(step);
         const ticks = [];
-
-        // Generate ticks from min to max using the step
         for (let v = min; v <= max + step * 1e-6; v += step) {
             ticks.push(+v.toFixed(decimals));
         }
-
         return { ticks, min, max, step, numFmt: yAxis?.numFmt || "General", span };
     }
 
     detectStepPreference(allDataValues, calculatedStep, range) {
-        // Analyze data values to determine if integer or decimal steps are more appropriate
-
-        // Count how many values have significant decimal parts
-        const decimalThreshold = 0.15; // Values with decimals > 0.15 are considered "truly decimal"
-        const valuesWithDecimals = allDataValues.filter(v => {
-            const decimalPart = Math.abs(v - Math.round(v));
-            return decimalPart > decimalThreshold;
-        });
-
+        const decimalThreshold = 0.15;
+        const valuesWithDecimals = allDataValues.filter(v => Math.abs(v - Math.round(v)) > decimalThreshold);
         const percentDecimal = valuesWithDecimals.length / allDataValues.length;
 
-        // Decision logic - MORE AGGRESSIVE for integer steps
-
-        // For calculated step of 0.5 with small ranges (≤ 6)
         if (calculatedStep === 0.5 && range <= 6) {
-            // Use integer steps unless MOST values (>75%) have significant decimals
-            // This means we prefer integer steps for mixed data
-            if (percentDecimal < 0.75) {
-                return {
-                    preferInteger: true,
-                    suggestedStep: 1,
-                    reason: `Only ${(percentDecimal * 100).toFixed(0)}% of values have significant decimals (threshold: 75%), range is ${range}`
-                };
-            } else {
-                return {
-                    preferInteger: false,
-                    suggestedStep: calculatedStep,
-                    reason: `${(percentDecimal * 100).toFixed(0)}% of values have significant decimals (above 75% threshold)`
-                };
+            return percentDecimal < 0.75 ? { preferInteger: true, suggestedStep: 1 } : { preferInteger: false, suggestedStep: calculatedStep };
+        }
+
+        if (!Number.isInteger(calculatedStep) && range <= 10 && percentDecimal < 0.5) {
+            const intStep = Math.max(1, Math.round(calculatedStep));
+            const numTicks = Math.ceil(range / intStep) + 1;
+            if (numTicks >= 4 && numTicks <= 15) {
+                return { preferInteger: true, suggestedStep: intStep };
             }
         }
 
-        // For other decimal steps with small ranges
-        if (!Number.isInteger(calculatedStep) && range <= 10) {
-            // If less than 50% of values have decimals, prefer integer steps
-            if (percentDecimal < 0.5) {
-                const intStep = Math.max(1, Math.round(calculatedStep));
-                const numTicks = Math.ceil(range / intStep) + 1;
-
-                // Only use integer step if it gives reasonable tick count
-                if (numTicks >= 4 && numTicks <= 15) {
-                    return {
-                        preferInteger: true,
-                        suggestedStep: intStep,
-                        reason: `${(percentDecimal * 100).toFixed(0)}% of values have decimals (below 50%), would give ${numTicks} ticks`
-                    };
-                }
-            }
-        }
-
-        // Default: keep the calculated step
-        return {
-            preferInteger: false,
-            suggestedStep: calculatedStep,
-            reason: "Data characteristics match calculated step"
-        };
+        return { preferInteger: false, suggestedStep: calculatedStep };
     }
 
     decimalsFor(num) {
@@ -542,48 +328,19 @@ class BarChartHandler {
     }
 
     formatTick(val, numFmt, step) {
-        // Check if this is a percentage format
-        const isPercentage = numFmt && (numFmt.includes('%') || numFmt.toLowerCase().includes('percent'));
-
+        const isPercentage = numFmt && (numFmt.includes("%") || numFmt.toLowerCase().includes("percent"));
         if (isPercentage) {
-            // For percentage format, multiply by 100 and add %
             const percentValue = val * 100;
-
-            // Parse the format code to determine decimal places
             let decimals = 0;
-
-            // Check the format string for decimal places
-            // Examples: "#,##0%" = 0 decimals, "#,##0.0%" = 1 decimal, "0.00%" = 2 decimals
             const decimalMatch = numFmt.match(/0\.(0+)%/);
-            if (decimalMatch) {
-                // Format specifies decimals (e.g., "0.00%" means 2 decimals)
-                decimals = decimalMatch[1].length;
-            } else if (numFmt.includes('.')) {
-                // Has decimal point but didn't match pattern, check manually
-                const parts = numFmt.split('.');
-                if (parts.length > 1) {
-                    const afterDecimal = parts[1].replace(/[^0]/g, '');
-                    decimals = afterDecimal.length;
-                }
-            } else {
-                // No decimal point in format = 0 decimals (e.g., "#,##0%", "0%")
-                decimals = 0;
+            if (decimalMatch) decimals = decimalMatch[1].length;
+            else if (numFmt.includes(".")) {
+                const parts = numFmt.split(".");
+                if (parts.length > 1) decimals = parts[1].replace(/[^0]/g, "").length;
             }
-
-            // Format the percentage value
-            let formatted;
-            if (decimals === 0) {
-                // For whole numbers, just round - don't use replace to avoid removing the "0" from "0"
-                formatted = Math.round(percentValue).toString();
-            } else {
-                // For decimals, format and remove unnecessary trailing zeros after decimal point
-                formatted = percentValue.toFixed(decimals).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
-            }
-
-            return formatted + '%';
+            return (decimals === 0 ? Math.round(percentValue).toString() : percentValue.toFixed(decimals).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "")) + "%";
         }
 
-        // For non-percentage formats
         const fixed = this.decimalsFor(step);
         if (numFmt && /^0(\.0+)?$/.test(numFmt)) {
             const dec = (numFmt.split(".")[1] || "").length;
@@ -594,47 +351,131 @@ class BarChartHandler {
 
     getSeriesColor(seriesXML, index) {
         try {
-            const spPr = seriesXML["c:spPr"];
-            if (spPr && spPr[0]) {
-                const solidFill = spPr[0]["a:solidFill"];
-                if (solidFill && solidFill[0]) {
-                    const schemeClr = solidFill[0]["a:schemeClr"];
-                    if (schemeClr && schemeClr[0]) {
-                        const colorName = schemeClr[0]["$"]["val"];
-                        return this.resolveThemeColor(colorName);
-                    }
-                    const srgbClr = solidFill[0]["a:srgbClr"];
-                    if (srgbClr && srgbClr[0]) {
-                        return "#" + srgbClr[0]["$"]["val"];
-                    }
-                }
-            }
-
-            const defaultColors = [
-                "#4472C4", "#ED7D31", "#1F6B3A", "#FFC000", "#5B9BD5",
-                "#70AD47", "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4"
-            ];
+            const spPr = seriesXML["c:spPr"]?.[0];
+            const solidFill = spPr?.["a:solidFill"]?.[0];
+            const resolved = this.resolveColorNode(solidFill);
+            if (resolved) return resolved;
+            const defaultColors = ["#4472C4", "#ED7D31", "#1F6B3A", "#FFC000", "#5B9BD5", "#70AD47"];
             return defaultColors[index % defaultColors.length];
         } catch {
-            const fallback = ["#A5C249", "#7CCA62", "#10CF9B"];
+            const fallback = ["#4472C4", "#ED7D31", "#1F6B3A"];
             return fallback[index % fallback.length];
         }
     }
 
-    resolveThemeColor(colorName) {
-        const themeColors = {
-            accent1: "#4472C4", accent2: "#ED7D31", accent3: "#1F6B3A",
-            accent4: "#FFC000", accent5: "#5B9BD5", accent6: "#70AD47",
-        };
-        return themeColors[colorName] || "#5B9BD5";
+    resolveColorNode(fillNode, options = {}) {
+        if (!fillNode) return "";
+
+        const srgbClr = fillNode["a:srgbClr"]?.[0];
+        if (srgbClr?.["$"]?.val) {
+            return this.applyColorTransforms(`#${srgbClr["$"].val}`, srgbClr, options);
+        }
+
+        const schemeClr = fillNode["a:schemeClr"]?.[0];
+        if (schemeClr?.["$"]?.val) {
+            const base = colorHelper.resolveThemeColorHelper(schemeClr["$"].val, this.themeXML, this.masterXML);
+            return this.applyColorTransforms(base, schemeClr, options);
+        }
+
+        const prstClr = fillNode["a:prstClr"]?.[0];
+        if (prstClr?.["$"]?.val) {
+            const base = colorHelper.resolvePresetColor(prstClr["$"].val);
+            return this.applyColorTransforms(base, prstClr, options);
+        }
+
+        const sysClr = fillNode["a:sysClr"]?.[0];
+        if (sysClr?.["$"]?.lastClr) {
+            return this.applyColorTransforms(`#${sysClr["$"].lastClr}`, sysClr, options);
+        }
+
+        return "";
+    }
+
+    applyColorTransforms(hexColor, colorNode, options = {}) {
+        if (!hexColor) return "";
+
+        let color = hexColor;
+        const lumMod = colorNode?.["a:lumMod"]?.[0]?.["$"]?.val;
+        const lumOff = colorNode?.["a:lumOff"]?.[0]?.["$"]?.val;
+        const tint = colorNode?.["a:tint"]?.[0]?.["$"]?.val;
+        const shade = colorNode?.["a:shade"]?.[0]?.["$"]?.val;
+
+        if (lumMod) {
+            color = colorHelper.applyLumMod(color, lumMod);
+        }
+        if (lumOff) {
+            color = this.applyLumOff(color, lumOff);
+        }
+        if (tint) {
+            color = this.applyTint(color, tint);
+        }
+        if (shade) {
+            color = this.applyShade(color, shade);
+        }
+
+        const alpha = colorNode?.["a:alpha"]?.[0]?.["$"]?.val;
+        if (options.preserveAlpha && alpha !== undefined) {
+            const alphaValue = Math.max(0, Math.min(1, Number(alpha) / 100000));
+            const [r, g, b] = this.hexToRgb(color);
+            return `rgba(${r}, ${g}, ${b}, ${alphaValue})`;
+        }
+
+        return color;
+    }
+
+    applyLumOff(hexColor, lumOff) {
+        const [r, g, b] = this.hexToRgb(hexColor);
+        const off = Number(lumOff) / 100000;
+        return this.rgbToHex(
+            Math.round(r + (255 * off)),
+            Math.round(g + (255 * off)),
+            Math.round(b + (255 * off))
+        );
+    }
+
+    applyTint(hexColor, tint) {
+        const [r, g, b] = this.hexToRgb(hexColor);
+        const tintRatio = Number(tint) / 100000;
+        return this.rgbToHex(
+            Math.round(r + (255 - r) * tintRatio),
+            Math.round(g + (255 - g) * tintRatio),
+            Math.round(b + (255 - b) * tintRatio)
+        );
+    }
+
+    applyShade(hexColor, shade) {
+        const [r, g, b] = this.hexToRgb(hexColor);
+        const shadeRatio = Number(shade) / 100000;
+        return this.rgbToHex(
+            Math.round(r * shadeRatio),
+            Math.round(g * shadeRatio),
+            Math.round(b * shadeRatio)
+        );
+    }
+
+    hexToRgb(hexColor) {
+        const value = String(hexColor).replace("#", "");
+        const normalized = value.length === 3
+            ? value.split("").map((c) => c + c).join("")
+            : value;
+        return [
+            parseInt(normalized.slice(0, 2), 16),
+            parseInt(normalized.slice(2, 4), 16),
+            parseInt(normalized.slice(4, 6), 16),
+        ];
+    }
+
+    rgbToHex(r, g, b) {
+        const clamp = (value) => Math.max(0, Math.min(255, value));
+        return `#${clamp(r).toString(16).padStart(2, "0")}${clamp(g).toString(16).padStart(2, "0")}${clamp(b).toString(16).padStart(2, "0")}`;
     }
 
     getChartTitle(chartXML) {
         try {
             const title = chartXML["c:title"];
-            if (title && title[0] && title[0]["c:tx"] && title[0]["c:tx"][0]["c:rich"]) {
+            if (title?.[0]?.["c:tx"]?.[0]?.["c:rich"]) {
                 const rich = title[0]["c:tx"][0]["c:rich"][0];
-                if (rich["a:p"] && rich["a:p"][0] && rich["a:p"][0]["a:r"]) {
+                if (rich["a:p"]?.[0]?.["a:r"]?.[0]?.["a:t"]?.[0]) {
                     return rich["a:p"][0]["a:r"][0]["a:t"][0];
                 }
             }
@@ -647,22 +488,43 @@ class BarChartHandler {
     getAxisTitle(axisXML) {
         try {
             const title = axisXML?.["c:title"];
-            if (title && title[0] && title[0]["c:tx"] && title[0]["c:tx"][0]["c:rich"]) {
-                const rich = title[0]["c:tx"][0]["c:rich"][0];
-                if (rich["a:p"]) {
-                    for (const p of rich["a:p"]) {
-                        if (p["a:r"]) {
-                            for (const r of p["a:r"]) {
-                                if (r["a:t"] && r["a:t"][0]) {
-                                    const text = this.extractTextValue(r["a:t"][0]);
-                                    if (text) return text;  // ✅ Return first non-empty text
-                                }
-                            }
-                        }
-                    }
+            if (!title?.[0]?.["c:tx"]?.[0]?.["c:rich"]) return "";
+            const rich = title[0]["c:tx"][0]["c:rich"][0];
+            for (const p of rich["a:p"] || []) {
+                for (const r of p["a:r"] || []) {
+                    const text = this.extractTextValue(r["a:t"]?.[0]);
+                    if (text) return text;
                 }
             }
             return "";
+        } catch {
+            return "";
+        }
+    }
+
+    getAxisGridlineInfo(axisXML) {
+        try {
+            const majorGridlines = axisXML?.["c:majorGridlines"]?.[0];
+            if (!majorGridlines) {
+                return { showMajor: false, majorColor: "" };
+            }
+
+            const lineFill = majorGridlines?.["c:spPr"]?.[0]?.["a:ln"]?.[0]?.["a:solidFill"]?.[0];
+            return {
+                showMajor: true,
+                majorColor: this.resolveColorNode(lineFill) || "",
+            };
+        } catch {
+            return { showMajor: false, majorColor: "" };
+        }
+    }
+
+    getChartBackground(chartXML) {
+        try {
+            const chartSpace = chartXML?.["c:chartSpace"] || chartXML;
+            const chartSpaceProps = chartSpace?.["c:spPr"]?.[0] || chartSpace?.spPr?.[0];
+            const fillNode = chartSpaceProps?.["a:solidFill"]?.[0];
+            return this.resolveColorNode(fillNode, { preserveAlpha: true }) || "";
         } catch {
             return "";
         }
@@ -675,123 +537,74 @@ class BarChartHandler {
             const offset = chartXfrm?.["a:off"]?.[0]?.["$"];
             const extent = chartXfrm?.["a:ext"]?.[0]?.["$"];
             if (offset && extent) {
-                const left = parseInt(offset.x || 0) / emuDivisor;
-                const top = parseInt(offset.y || 0) / emuDivisor;
-                const width = parseInt(extent.cx || 100) / emuDivisor;
-                const height = parseInt(extent.cy || 100) / emuDivisor;
-                return { left, top, width, height };
+                return {
+                    left: parseInt(offset.x || 0, 10) / emuDivisor,
+                    top: parseInt(offset.y || 0, 10) / emuDivisor,
+                    width: parseInt(extent.cx || 100, 10) / emuDivisor,
+                    height: parseInt(extent.cy || 100, 10) / emuDivisor,
+                };
             }
         }
         return { left: 0, top: 0, width: 400, height: 300 };
     }
 
     generateChartHTML(chartData, position, shapeName, shapeId, relationshipId, zIndex = 0) {
-    const chartId = "chart_" + shapeId;
-    const { yAxis, dataMin, dataMax, allValues = [] } = chartData.axes || {};
-    const tickInfo = this.computeValueTicks(yAxis, dataMin, dataMax, 10, allValues);
+        const chartId = "chart_" + shapeId;
+        const { yAxis, dataMin, dataMax, allValues = [] } = chartData.axes || {};
+        const tickInfo = this.computeValueTicks(yAxis, dataMin, dataMax, 10, allValues);
 
-    let html = `<div class="chart-container" 
-         data-name="${shapeName}" 
-         data-shape-id="${shapeId}"
-         data-rel-id="${relationshipId}"
-         data-chart-type="bar"
-         data-chart-direction="${chartData.isHorizontal ? 'horizontal' : 'vertical'}"
-         data-cat-axis-title="${chartData.catAxisTitle || ''}"
-         data-val-axis-title="${chartData.valAxisTitle || ''}"
-         id="${chartId}"
-         style="...your existing styles...">`;
+        const titleHeight = chartData.title ? 34 : 0;
+        const legendHeight = chartData.series?.length ? 34 : 0;
+        const plotLeft = chartData.isHorizontal ? 110 : 48;
+        const plotRight = 20;
+        const plotTop = titleHeight ? 42 : 12;
+        const plotBottom = legendHeight + 34;
+        const chartAreaWidth = Math.max(140, position.width - plotLeft - plotRight);
+        const chartAreaHeight = Math.max(120, position.height - plotTop - plotBottom);
 
-    if (chartData.title) {
-        html += `<div class="chart-title" style="
-            text-align: center; font-weight: bold;
-            font-size: 16px; margin-bottom: 20px; color: #333;">
-            ${chartData.title}</div>`;
+        let html = `<div class="chart-container"
+            data-name="${this.escapeHtml(shapeName)}"
+            data-shape-id="${this.escapeHtml(shapeId)}"
+            data-rel-id="${this.escapeHtml(relationshipId)}"
+            data-chart-type="bar"
+            data-chart-direction="${chartData.isHorizontal ? "horizontal" : "vertical"}"
+            data-cat-axis-title="${this.escapeHtml(chartData.catAxisTitle || "")}"
+            data-val-axis-title="${this.escapeHtml(chartData.valAxisTitle || "")}"
+            data-val-gridlines-show="${chartData.valueAxisGridlines?.showMajor === true ? "true" : "false"}"
+            data-val-gridline-color="${this.escapeHtml(chartData.valueAxisGridlines?.majorColor || "")}"
+            id="${chartId}"
+            style="position:absolute; left:${position.left}px; top:${position.top}px; width:${position.width}px; height:${position.height}px; z-index:${zIndex}; overflow:visible; box-sizing:border-box; background:${chartData.backgroundColor || "transparent"}; font-family:Calibri, Arial, sans-serif;">`;
+
+        if (chartData.title) {
+            html += `<div class="chart-title" style="position:absolute; top:6px; left:0; width:100%; text-align:center; font-weight:400; font-size:14px; line-height:20px; color:#595959; z-index:4; pointer-events:none;">${this.escapeHtml(chartData.title)}</div>`;
+        }
+
+        if (chartData.isHorizontal && chartData.catAxisTitle) {
+            html += `<div class="cat-axis-title" style="position:absolute; left:10px; top:${plotTop + chartAreaHeight / 2}px; transform:rotate(-90deg) translateX(-50%); transform-origin:left center; font-size:12px; color:#666; white-space:nowrap; z-index:4; pointer-events:none;">${this.escapeHtml(chartData.catAxisTitle)}</div>`;
+        }
+
+        html += `<div class="chart-area" style="position:absolute; left:${plotLeft}px; top:${plotTop}px; width:${chartAreaWidth}px; height:${chartAreaHeight}px; overflow:visible; box-sizing:border-box;">`;
+
+        if (chartData.isHorizontal && chartData.valAxisTitle) {
+            html += `<div class="val-axis-title" style="position:absolute; bottom:-26px; width:100%; text-align:center; font-size:12px; color:#666; z-index:4; pointer-events:none;">${this.escapeHtml(chartData.valAxisTitle)}</div>`;
+        }
+
+        html += chartData.isHorizontal
+            ? this.generateHorizontalBars(chartData, chartAreaWidth, chartAreaHeight, tickInfo)
+            : this.generateVerticalBars(chartData, chartAreaWidth, chartAreaHeight, tickInfo);
+
+        html += this.generateAxes(chartData, chartAreaWidth, chartAreaHeight, tickInfo);
+        html += `</div>`;
+        html += this.generateLegend(chartData, plotTop + chartAreaHeight + 14);
+        html += `</div>`;
+        return html;
     }
 
-    const chartAreaHeight = position.height - 140;
-    const chartAreaWidth = position.width - 140;
-
-    // ✅ ADD: Y-axis title for horizontal charts (rotated, on the left)
-    if (chartData.isHorizontal && chartData.catAxisTitle) {
-        html += `<div class="cat-axis-title" style="
-            position: absolute;
-            left: 10px;
-            top: ${position.height / 2}px;
-            transform: rotate(-90deg) translateX(-50%);
-            transform-origin: left center;
-            font-size: 12px;
-            color: #666;
-            font-family: Arial, sans-serif;
-            white-space: nowrap;
-            z-index: 4;">
-            ${chartData.catAxisTitle}</div>`;
-    }
-
-    html += `<div class="chart-area" style="
-        position: relative;
-        height: ${chartAreaHeight}px;
-        width: ${chartAreaWidth}px;
-        margin-left: 100px;
-        margin-top: 20px;
-        overflow: visible;
-        padding-bottom: 30px;">`;
-
-    // ✅ ADD: X-axis title for horizontal charts (below the axis)
-    if (chartData.isHorizontal && chartData.valAxisTitle) {
-        html += `<div class="val-axis-title" style="
-            position: absolute;
-            bottom: -25px;
-            width: 100%;
-            text-align: center;
-            font-size: 12px;
-            color: #666;
-            font-family: Arial, sans-serif;
-            z-index: 4;">
-            ${chartData.valAxisTitle}</div>`;
-    }
-
-    if (chartData.isHorizontal) {
-        html += this.generateHorizontalBars(chartData, chartAreaWidth, chartAreaHeight, tickInfo);
-    } else {
-        html += this.generateVerticalBars(chartData, chartAreaWidth, chartAreaHeight, tickInfo);
-    }
-
-    html += this.generateAxes(chartData, chartAreaWidth, chartAreaHeight, tickInfo);
-    html += "</div>";
-    html += this.generateLegend(chartData);
-    html += "</div>";
-
-    return html;
-}
-    generateLegend(chartData) {
-        // Show legend in PPT order: Series 3, Series 2, Series 1 (reversed from data order)
-        const legendSeries = [...chartData.series].reverse();
-
-        let html = `<div class="chart-legend" style="
-        display: flex;
-        flex-direction: row;
-        justify-content: center;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 16px;
-        margin-top: 12px;
-        font-family: Arial, sans-serif;
-        font-size: 12px;
-        color: #333;">`;
-
-        legendSeries.forEach((series) => {
-            html += `<div style="display: flex; align-items: center; gap: 5px;">
-            <div style="
-                width: 12px;
-                height: 12px;
-                background-color: ${series.color};
-                flex-shrink: 0;
-                border-radius: 1px;">
-            </div>
-            <span>${series.name}</span>
-        </div>`;
+    generateLegend(chartData, top) {
+        let html = `<div class="chart-legend" style="position:absolute; top:${top}px; left:0; width:100%; display:flex; flex-direction:row; justify-content:center; align-items:center; flex-wrap:wrap; gap:16px; font-size:12px; color:#595959; pointer-events:none;">`;
+        chartData.series.forEach((series) => {
+            html += `<div style="display:flex; align-items:center; gap:5px;"><div style="width:12px; height:12px; background-color:${series.color}; flex-shrink:0; border-radius:1px;"></div><span>${this.escapeHtml(series.name)}</span></div>`;
         });
-
         html += `</div>`;
         return html;
     }
@@ -803,11 +616,9 @@ class BarChartHandler {
         const categoryWidth = width / categoryCount;
         const barWidth = Math.round((categoryWidth * 0.8) / seriesCount);
         const barSpacing = categoryWidth * 0.1;
-
         const min = tickInfo.min;
         const span = tickInfo.span || tickInfo.max - tickInfo.min || 1;
         const innerH = height - 40;
-
         const valueToY = (v) => height - 20 - ((v - min) / span) * innerH;
         const zeroY = valueToY(0);
 
@@ -818,39 +629,10 @@ class BarChartHandler {
                 const top = Math.round(Math.min(yVal, zeroY));
                 const barH = Math.round(Math.max(1, Math.abs(yVal - zeroY)));
                 const x = Math.round(categoryIndex * categoryWidth + barSpacing + seriesIndex * barWidth);
-
                 const barId = `bar_${seriesIndex}_${categoryIndex}`;
-
-                html += `<div class="bar" 
-                id="${barId}"
-                data-series="${seriesIndex}" 
-                data-category="${categoryIndex}"
-                data-value="${value}"
-                style="
-                    position: absolute;
-                    left: ${x}px;
-                    top: ${top}px;
-                    width: ${barWidth - 2}px;
-                    height: ${barH}px;
-                    background-color: ${series.color};
-                    border-radius: 2px;
-                    transition: opacity 0.3s;
-                    z-index: 2;
-                    cursor: ns-resize;
-                    user-select: none;
-                " title="${series.name}: ${value}"></div>`;
+                html += `<div class="bar" id="${barId}" data-series="${seriesIndex}" data-category="${categoryIndex}" data-value="${value}" style="position:absolute; left:${x}px; top:${top}px; width:${barWidth - 2}px; height:${barH}px; background-color:${series.color}; border-radius:2px; transition:opacity 0.3s; z-index:2; cursor:ns-resize; user-select:none;" title="${this.escapeHtml(series.name)}: ${value}"></div>`;
             });
-
-            html += `<div class="category-label" style="
-                        position: absolute;
-                        left: ${categoryIndex * categoryWidth + categoryWidth / 2 - 30}px;
-                        top: ${height - 15}px;
-                        width: 60px;
-                        text-align: center;
-                        font-size: 12px;
-                        color: #666;
-                        z-index: 4;
-                    ">${category}</div>`;
+            html += `<div class="category-label" style="position:absolute; left:${categoryIndex * categoryWidth + categoryWidth / 2}px; top:${height - 15}px; width:90px; transform:translateX(-50%); text-align:center; font-size:12px; color:#666; z-index:4; white-space:nowrap;">${this.escapeHtml(category)}</div>`;
         });
 
         return html;
@@ -860,72 +642,33 @@ class BarChartHandler {
         let html = "";
         const categoryCount = chartData.categories.length || 1;
         const seriesCount = chartData.series.length || 1;
-        const categoryHeight = height / categoryCount;
+        const axisBandH = 28;
+        const plotHeight = Math.max(40, height - axisBandH);
+        const categoryHeight = plotHeight / categoryCount;
         const barHeight = Math.round((categoryHeight * 0.8) / seriesCount);
         const barSpacing = categoryHeight * 0.1;
-
         const min = tickInfo.min;
         const span = tickInfo.span || tickInfo.max - tickInfo.min || 1;
         const innerW = width;
-
         const valueToX = (v) => ((v - min) / span) * innerW;
         const zeroX = valueToX(0);
 
         chartData.categories.forEach((category, categoryIndex) => {
-            // PPT renders categories bottom-up, so reverse the visual index
             const visualIndex = (categoryCount - 1) - categoryIndex;
             chartData.series.forEach((series, seriesIndex) => {
-                // Reverse series draw order to match PPT (Series 3 on top, Series 1 on bottom)
                 const visualSeriesIndex = (seriesCount - 1) - seriesIndex;
                 const value = series.values[categoryIndex] ?? 0;
                 const xVal = valueToX(value);
                 const left = Math.round(Math.min(xVal, zeroX));
                 const bWidth = Math.round(Math.max(1, Math.abs(xVal - zeroX)));
                 const y = Math.round(visualIndex * categoryHeight + barSpacing + visualSeriesIndex * barHeight);
-
-                html += `<div class="bar"
-                data-value="${value}"
-                data-series="${seriesIndex}"
-                data-category="${categoryIndex}"
-                style="
-                position: absolute;
-                left: ${left}px;
-                top: ${y}px;
-                width: ${bWidth}px;
-                height: ${barHeight - 2}px;
-                background-color: ${series.color};
-                border-radius: 2px;
-                transition: opacity 0.3s;
-                z-index: 2;
-                " title="${series.name}: ${value}"></div>`;
-                // Add data label
+                html += `<div class="bar" data-value="${value}" data-series="${seriesIndex}" data-category="${categoryIndex}" style="position:absolute; left:${left}px; top:${y}px; width:${bWidth}px; height:${barHeight - 2}px; background-color:${series.color}; border-radius:2px; transition:opacity 0.3s; z-index:2;" title="${this.escapeHtml(series.name)}: ${value}"></div>`;
                 if (value !== 0) {
                     const labelX = left + bWidth + 5;
-                    html += `<div class="data-label" style="
-        position: absolute;
-        left: ${labelX}px;
-        top: ${y + (barHeight - 2) / 2 - 6}px;
-        font-size: 11px;
-        color: #666;
-        z-index: 5;
-        white-space: nowrap;
-    ">${value}</div>`;
+                    html += `<div class="data-label" style="position:absolute; left:${labelX}px; top:${y + (barHeight - 2) / 2 - 6}px; font-size:11px; color:#666; z-index:5; white-space:nowrap;">${value}</div>`;
                 }
             });
-
-            html += `<div class="category-label" style="
-                    position: absolute;
-                    left: -85px;
-                    top: ${visualIndex * categoryHeight + categoryHeight / 2 - 8}px;
-                    width: 80px;
-                    text-align: right;
-                    font-size: 12px;
-                    color: #666;
-                    z-index: 4;
-                    white-space: nowrap;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                ">${category}</div>`;
+            html += `<div class="category-label" style="position:absolute; left:-85px; top:${visualIndex * categoryHeight + categoryHeight / 2 - 8}px; width:80px; text-align:right; font-size:12px; color:#666; z-index:4; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${this.escapeHtml(category)}</div>`;
         });
 
         return html;
@@ -936,17 +679,27 @@ class BarChartHandler {
         const { ticks, min, step, numFmt, span } = tickInfo;
         const innerH = height - 40;
         const innerW = width - 60;
+        const gridlineColor = chartData.valueAxisGridlines?.majorColor || "#eee";
+        const showMajorGridlines = chartData.valueAxisGridlines?.showMajor === true;
 
         if (chartData.isHorizontal) {
+            const axisBandH = 28;
+            const plotHeight = Math.max(40, height - axisBandH);
+            html += `<div style="position:absolute; left:0; top:${plotHeight}px; width:${innerW}px; height:1px; background:#d9d9d9; z-index:2; pointer-events:none;"></div>`;
             ticks.forEach((t) => {
                 const x = ((t - min) / span) * innerW;
-                html += `<div style="position:absolute; left:${x}px; top:0; width:1px; height:${height - 20}px; background:#eee; z-index:1; pointer-events:none;"></div>`;
-                html += `<div class="axis-label" style="position:absolute; left:${x - 15}px; top:${height + 8}px; width:30px; text-align:center; font-size:10px; color:#666; z-index:4;">${this.formatTick(t, numFmt, step)}</div>`;
+                if (showMajorGridlines) {
+                    html += `<div style="position:absolute; left:${x}px; top:0; width:1px; height:${plotHeight}px; background:${gridlineColor}; z-index:1; pointer-events:none;"></div>`;
+                }
+                html += `<div class="axis-label" style="position:absolute; left:${x - 15}px; top:${plotHeight + 8}px; width:30px; text-align:center; font-size:10px; color:#666; z-index:4;">${this.formatTick(t, numFmt, step)}</div>`;
             });
         } else {
+            html += `<div style="position:absolute; left:0; top:${height - 20}px; width:${width}px; height:1px; background:#d9d9d9; z-index:2; pointer-events:none;"></div>`;
             ticks.forEach((t) => {
                 const y = height - 20 - ((t - min) / span) * innerH;
-                html += `<div style="position:absolute; left:0; top:${y}px; width:${width}px; height:1px; background:#eee; z-index:1; pointer-events:none;"></div>`;
+                if (showMajorGridlines) {
+                    html += `<div style="position:absolute; left:0; top:${y}px; width:${width}px; height:1px; background:${gridlineColor}; z-index:1; pointer-events:none;"></div>`;
+                }
                 html += `<div class="axis-label" style="position:absolute; left:-35px; top:${y - 8}px; width:30px; text-align:right; font-size:10px; color:#666; z-index:4;">${this.formatTick(t, numFmt, step)}</div>`;
             });
         }
@@ -955,21 +708,7 @@ class BarChartHandler {
     }
 
     generateErrorHTML(errorMessage) {
-        return `<div class="chart-error" style="
-                    width: 400px;
-                    height: 300px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    border: 2px dashed #ccc;
-                    color: #666;
-                    font-family: Arial, sans-serif;">
-            <div style="text-align: center;">
-                <div style="font-size: 48px; margin-bottom: 10px;">📊</div>
-                <div>Chart could not be rendered</div>
-                <div style="font-size: 12px; margin-top: 10px; color: #999;">${errorMessage}</div>
-            </div>
-        </div>`;
+        return `<div class="chart-error" style="width:400px; height:300px; display:flex; align-items:center; justify-content:center; border:2px dashed #ccc; color:#666; font-family:Arial, sans-serif;"><div style="text-align:center;"><div style="font-size:48px; margin-bottom:10px;">Chart</div><div>Chart could not be rendered</div><div style="font-size:12px; margin-top:10px; color:#999;">${this.escapeHtml(errorMessage)}</div></div></div>`;
     }
 }
 

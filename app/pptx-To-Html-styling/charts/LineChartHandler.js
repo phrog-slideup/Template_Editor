@@ -16,13 +16,14 @@ const PAD_BOTTOM = 45;  // x-axis labels
 const LEGEND_H = 30;  // legend row height at bottom
 
 class LineChartHandler {
-    constructor(graphicsNode, chartXML, chartRelsXML, chartColorsXML, chartStyleXML, themeXML) {
+    constructor(graphicsNode, chartXML, chartRelsXML, chartColorsXML, chartStyleXML, themeXML, masterXML = null) {
         this.graphicsNode = graphicsNode;
         this.chartXML = chartXML;
         this.chartRelsXML = chartRelsXML;
         this.chartColorsXML = chartColorsXML;
         this.chartStyleXML = chartStyleXML;
         this.themeXML = themeXML;
+        this.masterXML = masterXML;
     }
 
     // ─── public entry point ──────────────────────────────────────────────────
@@ -55,6 +56,8 @@ class LineChartHandler {
             const categories = this._extractCategories(seriesNodes[0]);
             const title = this._extractTitle(chartSpace);
             const titleStyle = this._extractTitleStyle(chartSpace);
+            const chartBackground = this._getChartBackground(chartSpace);
+            const gridlineConfig = this._getGridlineConfig(plotArea);
 
             // Normalise lengths
             const catCount = Math.max(categories.length, ...seriesData.map(s => s.values.length));
@@ -71,7 +74,7 @@ class LineChartHandler {
 
             // ── Visible SVG chart ─────────────────────────────────────────
             const svgHTML = this._buildSVG(
-                seriesData, categories, title, titleStyle,
+                seriesData, categories, title, titleStyle, gridlineConfig,
                 position.width, position.height
             );
 
@@ -108,7 +111,7 @@ class LineChartHandler {
                                 z-index:${zIndex};
                                 overflow:hidden;
                                 box-sizing:border-box;
-                                background:#ffffff;">
+                                background:${chartBackground || "#ffffff"};">
                         ${svgHTML}
                         ${seriesDataHTML}
                         <div class="category-labels" style="display:none;">${catLabelsHTML}</div>
@@ -121,7 +124,7 @@ class LineChartHandler {
     }
 
     // ─── SVG renderer ────────────────────────────────────────────────────────
-    _buildSVG(seriesData, categories, title, titleStyle, totalW, totalH) {
+    _buildSVG(seriesData, categories, title, titleStyle, gridlineConfig, totalW, totalH) {
         const titleH = title ? 36 : 10;
         const legendH = seriesData.length > 0 ? LEGEND_H : 0;
 
@@ -139,12 +142,10 @@ class LineChartHandler {
 
         // ── Coordinate helpers with spacing from axes ────────────────────
         // Add small spacing so lines don't touch the Y-axis
-        const spacing = plotW * 0.03;
-        const effectivePlotW = plotW - (2 * spacing);
-
-        const xPos = i => plotX + spacing + (categories.length > 1
-            ? (i / (categories.length - 1)) * effectivePlotW
-            : effectivePlotW / 2);
+        const categoryStep = categories.length > 0 ? plotW / categories.length : plotW;
+        const xPos = i => plotX + (categories.length > 1
+            ? (categoryStep * 0.5) + (i * categoryStep)
+            : plotW / 2);
         const yPos = val => plotY + plotH - ((val - axisMin) / valueRange) * plotH;
 
         // ── Chart title ───────────────────────────────────────────────────
@@ -162,31 +163,34 @@ class LineChartHandler {
         // ── Plot area background (white) ──────────────────────────────────
         const plotBg = `<rect x="${plotX}" y="${plotY}"
                               width="${plotW}" height="${plotH}"
-                              fill="#FFFFFF" stroke="none"/>`;
+                              fill="transparent" stroke="none"/>`;
 
         // ── Horizontal grid lines (for Y-axis values) ────────────────────
         // ── Horizontal grid lines (for Y-axis values) ────────────────────
         let gridLinesH = "";
         const numSteps = Math.round((axisMax - axisMin) / step);
 
-        // Major gridlines (darker)
-        for (let i = 0; i <= numSteps; i++) {
-            const v = axisMin + i * step;
-            const y = yPos(v);
-            gridLinesH += `<line x1="${plotX}" y1="${y.toFixed(1)}"
-                 x2="${(plotX + plotW).toFixed(1)}" y2="${y.toFixed(1)}"
-                 stroke="#D9D9D9" stroke-width="0.75" opacity="1"/>`;
+        if (gridlineConfig.valAxis.showMajor) {
+            for (let i = 0; i <= numSteps; i++) {
+                const v = axisMin + i * step;
+                const y = yPos(v);
+                gridLinesH += `<line x1="${plotX}" y1="${y.toFixed(1)}"
+                     x2="${(plotX + plotW).toFixed(1)}" y2="${y.toFixed(1)}"
+                     stroke="${gridlineConfig.valAxis.majorColor}" stroke-width="0.75" opacity="1"/>`;
+            }
         }
-        // Minor gridlines (lighter, between major gridlines)
-        const minorSteps = 5; // Number of minor divisions between major gridlines
-        for (let i = 0; i < numSteps; i++) {
-            for (let j = 1; j < minorSteps; j++) {
-                const v = axisMin + i * step + (j * step / minorSteps);
-                if (v < axisMax) {
-                    const y = yPos(v);
-                    gridLinesH += `<line x1="${plotX}" y1="${y.toFixed(1)}"
-                         x2="${(plotX + plotW).toFixed(1)}" y2="${y.toFixed(1)}"
-                         stroke="#F2F2F2" stroke-width="0.5" opacity="1"/>`;
+
+        if (gridlineConfig.valAxis.showMinor) {
+            const minorSteps = 5;
+            for (let i = 0; i < numSteps; i++) {
+                for (let j = 1; j < minorSteps; j++) {
+                    const v = axisMin + i * step + (j * step / minorSteps);
+                    if (v < axisMax) {
+                        const y = yPos(v);
+                        gridLinesH += `<line x1="${plotX}" y1="${y.toFixed(1)}"
+                             x2="${(plotX + plotW).toFixed(1)}" y2="${y.toFixed(1)}"
+                             stroke="${gridlineConfig.valAxis.minorColor}" stroke-width="0.5" opacity="1"/>`;
+                    }
                 }
             }
         }
@@ -194,13 +198,23 @@ class LineChartHandler {
         // ── Vertical grid lines (for X-axis categories) ──────────────────
         let gridLinesV = "";
 
-        // Major gridlines at each category
-        categories.forEach((cat, i) => {
-            const x = xPos(i);
-            gridLinesV += `<line x1="${x.toFixed(1)}" y1="${plotY.toFixed(1)}"
-                         x2="${x.toFixed(1)}" y2="${(plotY + plotH).toFixed(1)}"
-                         stroke="#D9D9D9" stroke-width="0.75" opacity="1"/>`;
-        });
+        if (gridlineConfig.catAxis.showMajor) {
+            categories.forEach((cat, i) => {
+                const x = xPos(i);
+                gridLinesV += `<line x1="${x.toFixed(1)}" y1="${plotY.toFixed(1)}"
+                             x2="${x.toFixed(1)}" y2="${(plotY + plotH).toFixed(1)}"
+                             stroke="${gridlineConfig.catAxis.majorColor}" stroke-width="0.75" opacity="1"/>`;
+            });
+        }
+
+        if (gridlineConfig.catAxis.showMinor && categories.length > 1) {
+            for (let i = 1; i < categories.length; i++) {
+                const x = plotX + (i * categoryStep);
+                gridLinesV += `<line x1="${x.toFixed(1)}" y1="${plotY.toFixed(1)}"
+                             x2="${x.toFixed(1)}" y2="${(plotY + plotH).toFixed(1)}"
+                             stroke="${gridlineConfig.catAxis.minorColor}" stroke-width="0.5" opacity="1"/>`;
+            }
+        }
 
         // ── Y-axis labels ─────────────────────────────────────────────────
         let yLabels = "";
@@ -526,6 +540,52 @@ class LineChartHandler {
         return { fontSize: 14, fontFamily: "Calibri", fontWeight: "normal", color: "#595959" };
     }
 
+    _getChartBackground(chartSpace) {
+        try {
+            const chartSpaceProps = chartSpace?.["c:spPr"]?.[0] || chartSpace?.spPr?.[0];
+            const fillNode = chartSpaceProps?.["a:solidFill"]?.[0] || chartSpaceProps?.solidFill?.[0];
+            return this._resolveColor(fillNode, this.themeXML, fillNode) || "";
+        } catch {
+            return "";
+        }
+    }
+
+    _getGridlineConfig(plotArea) {
+        const catAx = plotArea?.["c:catAx"]?.[0] || plotArea?.catAx?.[0];
+        const valAx = plotArea?.["c:valAx"]?.[0] || plotArea?.valAx?.[0];
+        return {
+            catAxis: this._extractAxisGridlines(catAx),
+            valAxis: this._extractAxisGridlines(valAx),
+        };
+    }
+
+    _extractAxisGridlines(axisNode) {
+        try {
+            const majorNode = axisNode?.["c:majorGridlines"]?.[0] || axisNode?.majorGridlines?.[0];
+            const minorNode = axisNode?.["c:minorGridlines"]?.[0] || axisNode?.minorGridlines?.[0];
+            return {
+                showMajor: Boolean(majorNode),
+                showMinor: Boolean(minorNode),
+                majorColor: this._extractGridlineColor(majorNode) || "#D9D9D9",
+                minorColor: this._extractGridlineColor(minorNode) || "#F2F2F2",
+            };
+        } catch {
+            return {
+                showMajor: false,
+                showMinor: false,
+                majorColor: "#D9D9D9",
+                minorColor: "#F2F2F2",
+            };
+        }
+    }
+
+    _extractGridlineColor(gridlineNode) {
+        const solidFill =
+            gridlineNode?.["c:spPr"]?.[0]?.["a:ln"]?.[0]?.["a:solidFill"]?.[0] ||
+            gridlineNode?.spPr?.[0]?.ln?.[0]?.solidFill?.[0];
+        return this._resolveColor(solidFill, this.themeXML, solidFill) || "";
+    }
+
     _resolveColor(solidFill, themeXML, fullNode = null) {
         try {
             const srgb = solidFill?.["a:srgbClr"]?.[0]?.["$"]?.val;
@@ -534,19 +594,56 @@ class LineChartHandler {
             const schemeClr = solidFill?.["a:schemeClr"]?.[0];
             const scheme = schemeClr?.["$"]?.val;
             if (scheme && themeXML) {
-                // Extract lumMod and lumOff modifiers if present
                 const lumMod = schemeClr?.["a:lumMod"]?.[0]?.["$"]?.val;
                 const lumOff = schemeClr?.["a:lumOff"]?.[0]?.["$"]?.val;
+                const alpha = schemeClr?.["a:alpha"]?.[0]?.["$"]?.val;
 
-                // Pass modifiers to color helper
                 const modifiers = {};
                 if (lumMod) modifiers.lumMod = parseInt(lumMod, 10);
                 if (lumOff) modifiers.lumOff = parseInt(lumOff, 10);
-
-                return colorHelper.resolveThemeColorHelper(scheme, themeXML, modifiers) || null;
+                let color = colorHelper.resolveThemeColorHelper(scheme, themeXML, this.masterXML) || null;
+                if (!color) return null;
+                if (modifiers.lumMod) {
+                    color = colorHelper.applyLumMod(color, modifiers.lumMod);
+                }
+                if (modifiers.lumOff) {
+                    color = this._applyLumOff(color, modifiers.lumOff);
+                }
+                if (alpha !== undefined) {
+                    const [r, g, b] = this._hexToRgb(color);
+                    return `rgba(${r}, ${g}, ${b}, ${Math.max(0, Math.min(1, Number(alpha) / 100000))})`;
+                }
+                return color;
             }
             return null;
         } catch { return null; }
+    }
+
+    _applyLumOff(hexColor, lumOff) {
+        const [r, g, b] = this._hexToRgb(hexColor);
+        const off = Number(lumOff) / 100000;
+        return this._rgbToHex(
+            Math.round(r + (255 * off)),
+            Math.round(g + (255 * off)),
+            Math.round(b + (255 * off))
+        );
+    }
+
+    _hexToRgb(hexColor) {
+        const value = String(hexColor).replace("#", "");
+        const normalized = value.length === 3
+            ? value.split("").map((c) => c + c).join("")
+            : value;
+        return [
+            parseInt(normalized.slice(0, 2), 16),
+            parseInt(normalized.slice(2, 4), 16),
+            parseInt(normalized.slice(4, 6), 16),
+        ];
+    }
+
+    _rgbToHex(r, g, b) {
+        const clamp = (value) => Math.max(0, Math.min(255, value));
+        return `#${clamp(r).toString(16).padStart(2, "0")}${clamp(g).toString(16).padStart(2, "0")}${clamp(b).toString(16).padStart(2, "0")}`;
     }
 
     _esc(str) {

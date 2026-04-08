@@ -3,9 +3,33 @@ const fs = require("fs");
 const axios = require("axios");
 const normalizeStyle = require("../api/helper/colorHelper");
 const clrHelper = require("../api/helper/colorHelper.js");
+const imageSavePath = path.join(process.cwd(), "uploads");
+
+function ensureImageSavePath() {
+    if (!fs.existsSync(imageSavePath)) {
+        fs.mkdirSync(imageSavePath, { recursive: true });
+    }
+}
+
+function inferScene3dCameraFromTransform(transformStr = "") {
+    const normalized = String(transformStr || "").replace(/\s+/g, " ").trim();
+    if (!normalized) return "";
+
+    if (normalized.includes("rotateX(58deg)") && normalized.includes("rotateZ(-45deg)")) {
+        return "isometricTopUp";
+    }
+
+    if (normalized.includes("rotateX(18deg)")) {
+        return "perspectiveRelaxedModerately";
+    }
+
+    return "";
+}
 
 async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
-    let src = imgElement.getAttribute("src");
+
+    const isSvgElement = imgElement?.tagName?.toLowerCase() === "svg";
+    let src = isSvgElement ? "" : imgElement.getAttribute("src");
 
     const style = imgElement.style;
     const parent = imgElement.closest(".image-container");
@@ -146,6 +170,10 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
         imgOpacity = parseFloat(imgOpacityMatch[1]);
     }
 
+    const scene3dCamera = isSvgElement
+        ? inferScene3dCameraFromTransform(style.transform || "")
+        : "";
+
     const finalOpacity = containerOpacity * imgOpacity;
     const transparencyPercentage = Math.round((1 - finalOpacity) * 100);
 
@@ -194,8 +222,24 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
     try {
         let base64Data = null;
 
-        // Image loading logic (unchanged)
-        if (src.includes("uploads")) {
+        let imagePathForPpt = null;
+
+        if (isSvgElement) {
+            ensureImageSavePath();
+            const innerSvgElement = imgElement.querySelector("svg");
+            let svgMarkup = (innerSvgElement || imgElement).outerHTML;
+
+            // Drop HTML-only accessibility/style wrappers that can produce
+            // invalid nested SVG payloads for PowerPoint embedding.
+            svgMarkup = svgMarkup
+                .replace(/\srole="[^"]*"/gi, "")
+                .replace(/\saria-label="[^"]*"/gi, "");
+
+            const svgFileName = `html_export_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.svg`;
+            imagePathForPpt = path.join(imageSavePath, svgFileName);
+            fs.writeFileSync(imagePathForPpt, svgMarkup, "utf8");
+
+        } else if (src.includes("uploads")) {
             try {
                 const imageName = path.basename(src);
                 let imagePath = null;
@@ -242,7 +286,7 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
             throw new Error(`Unsupported image source format: ${src}`);
         }
 
-        if (!base64Data) {
+        if (!base64Data && !imagePathForPpt) {
             throw new Error("Failed to create image data");
         }
 
@@ -263,6 +307,12 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
             objectName: objName || '',
             altText: altText  // ✅ ADD THIS
         };
+
+        if (imagePathForPpt) {
+            imageOptions.path = imagePathForPpt;
+        } else {
+            imageOptions.data = base64Data;
+        }
 
         // ========================================
         // ✅ CRITICAL: Add sizing with crop
@@ -316,6 +366,18 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
         // Add hyperlink if exists
         if (hyperlink) {
             imageOptions.hyperlink = { url: hyperlink };
+        }
+
+        if (scene3dCamera && objName) {
+            if (!Array.isArray(pptx._svgScene3dStore)) {
+                pptx._svgScene3dStore = [];
+            }
+
+            pptx._svgScene3dStore.push({
+                slideIndex: slideContext?.slideIndex ?? 0,
+                objectName: objName,
+                cameraPrst: scene3dCamera
+            });
         }
 
         // Add image to slide

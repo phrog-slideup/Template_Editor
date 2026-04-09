@@ -777,10 +777,211 @@ class ShapeHandler {
                 caseName = "ellipse";
                 clipPath = "ellipse(50% 50% at 50% 50%)";
                 break;
-            case "triangle":
+            case "triangle": {
                 caseName = "triangle";
-                clipPath = "polygon(50% 0%, 100% 100%, 0% 100%)";
-                break;
+
+                const w = Math.max(position.width || 1, 1);
+                const h = Math.max(position.height || 1, 1);
+
+                const spPr = shapeNode?.["p:spPr"]?.[0] || {};
+                const xfrm = spPr?.["a:xfrm"]?.[0] || {};
+                const prstGeom = spPr?.["a:prstGeom"]?.[0] || {};
+                const avLst = prstGeom?.["a:avLst"]?.[0] || {};
+                const gdList = avLst?.["a:gd"] || avLst?.["gd"] || [];
+
+                const outline = spPr?.["a:ln"]?.[0] || null;
+                const effectLst = spPr?.["a:effectLst"]?.[0] || null;
+
+                let adj = 50000;
+                for (const gd of gdList) {
+                    const name = gd?.$?.name;
+                    const fmla = gd?.$?.fmla || "";
+                    const rawVal = parseInt(fmla.replace(/^val\s+/, ""), 10);
+                    if (name === "adj" && !Number.isNaN(rawVal)) {
+                        adj = rawVal;
+                        break;
+                    }
+                }
+
+                const clamp = (v, min, max) => Math.max(min, Math.min(v, max));
+
+                const apexX = w / 2;
+
+                const outerPts = `${apexX},0 ${w},${h} 0,${h}`;
+
+                const hasNoFillLine = !!outline?.["a:noFill"];
+                const isDoubleLine = outline?.["$"]?.cmpd === "dbl";
+
+                const strokeW = outline?.["$"]?.w ?
+                    parseInt(outline["$"].w, 10) / this.getEMUDivisor() :
+                    (parseFloat(strokeWidth) || 1);
+
+                const finalStroke = hasNoFillLine ? "none" : strokeColor;
+                const finalStrokeWidth = hasNoFillLine ? 0 : strokeW;
+
+                // ----- SVG filters from XML -----
+                const safeIdBase = (shapeName || `triangle_${zIndex}`).replace(/[^a-zA-Z0-9_-]/g, "_");
+                const filterId = `triFilter_${safeIdBase}`;
+
+                let filterMarkup = "";
+                let filterRef = "";
+
+                if (effectLst?.["a:outerShdw"]?.[0]) {
+                    const sh = effectLst["a:outerShdw"][0];
+                    const blur = (parseInt(sh?.["$"]?.blurRad || "0", 10) / this.getEMUDivisor()) || 0;
+                    const dist = (parseInt(sh?.["$"]?.dist || "0", 10) / this.getEMUDivisor()) || 0;
+                    const dir = parseInt(sh?.["$"]?.dir || "0", 10) / 60000;
+                    const rad = dir * Math.PI / 180;
+                    const dx = +(Math.cos(rad) * dist).toFixed(2);
+                    const dy = +(Math.sin(rad) * dist).toFixed(2);
+
+                    let shadowColor = "black";
+                    let shadowAlpha = 0.1;
+
+                    const prstClr = sh?.["a:prstClr"]?.[0];
+                    const schemeClr = sh?.["a:schemeClr"]?.[0];
+
+                    if (prstClr?.["$"]?.val) {
+                        shadowColor = prstClr["$"].val === "black" ? "#000000" : prstClr["$"].val;
+                        if (prstClr?.["a:alpha"]?.[0]?.["$"]?.val) {
+                            shadowAlpha = parseInt(prstClr["a:alpha"][0]["$"].val, 10) / 100000;
+                        }
+                    } else if (schemeClr?.["$"]?.val) {
+                        shadowColor = colorHelper.resolveThemeColorHelper(
+                            schemeClr["$"].val,
+                            themeXML,
+                            masterXMLToUse
+                        );
+                        if (schemeClr?.["a:alpha"]?.[0]?.["$"]?.val) {
+                            shadowAlpha = parseInt(schemeClr["a:alpha"][0]["$"].val, 10) / 100000;
+                        }
+                    }
+
+                    filterMarkup = `<filter id="${filterId}" x="-50%" y="-50%" width="200%" height="200%">
+                                                        <feDropShadow dx="${dx}" dy="${dy}" stdDeviation="${Math.max(blur / 2, 0.1)}" flood-color="${shadowColor}" flood-opacity="${shadowAlpha}"/>
+                                                    </filter>`;
+
+                    filterRef = `filter="url(#${filterId})"`;
+
+                } else if (effectLst?.["a:innerShdw"]?.[0]) {
+                    const sh = effectLst["a:innerShdw"][0];
+                    const blur = (parseInt(sh?.["$"]?.blurRad || "0", 10) / this.getEMUDivisor()) || 0;
+
+                    let shadowColor = "#000000";
+                    let shadowAlpha = 0.2;
+
+                    const prstClr = sh?.["a:prstClr"]?.[0];
+                    const schemeClr = sh?.["a:schemeClr"]?.[0];
+
+                    if (prstClr?.["$"]?.val) {
+                        shadowColor = prstClr["$"].val === "black" ? "#000000" : prstClr["$"].val;
+                        if (prstClr?.["a:alpha"]?.[0]?.["$"]?.val) {
+                            shadowAlpha = parseInt(prstClr["a:alpha"][0]["$"].val, 10) / 100000;
+                        }
+                    } else if (schemeClr?.["$"]?.val) {
+                        shadowColor = colorHelper.resolveThemeColorHelper(
+                            schemeClr["$"].val,
+                            themeXML,
+                            masterXMLToUse
+                        );
+                        if (schemeClr?.["a:alpha"]?.[0]?.["$"]?.val) {
+                            shadowAlpha = parseInt(schemeClr["a:alpha"][0]["$"].val, 10) / 100000;
+                        }
+                    }
+
+                    // approximate inner shadow with blur + composite
+                    filterMarkup = `
+                                                    <filter id="${filterId}" x="-50%" y="-50%" width="200%" height="200%">
+                                                        <feGaussianBlur in="SourceAlpha" stdDeviation="${Math.max(blur / 3, 0.1)}" result="blur"/>
+                                                        <feOffset dx="0" dy="0" result="offsetBlur"/>
+                                                        <feFlood flood-color="${shadowColor}" flood-opacity="${shadowAlpha}" result="color"/>
+                                                        <feComposite in="color" in2="offsetBlur" operator="in" result="shadow"/>
+                                                        <feComposite in="shadow" in2="SourceGraphic" operator="atop"/>
+                                                    </filter>`;
+                    filterRef = `filter="url(#${filterId})"`;
+                }
+
+                // ----- double line handling -----
+                let triangleMarkup = "";
+
+                if (isDoubleLine) {
+                    const inset = clamp(Math.max(finalStrokeWidth * 2.2, 2), 2, Math.min(w, h) / 4);
+                    const innerApexX = w / 2;
+                    const innerPts = `${innerApexX},${inset} ${w - inset},${h - inset} ${inset},${h - inset}`;
+
+                    triangleMarkup = `
+                                    <polygon
+                                        class="triangle-outer"
+                                        points="${outerPts}"
+                                        fill="${fillColor}"
+                                        stroke="${strokeColor}"
+                                        stroke-width="${finalStrokeWidth}"
+                                        stroke-linejoin="miter"
+                                        ${filterRef}
+                                    ></polygon>
+                                    <polygon
+                                        class="triangle-inner-border"
+                                        points="${innerPts}"
+                                        fill="none"
+                                        stroke="${strokeColor}"
+                                        stroke-width="${Math.max(finalStrokeWidth * 0.7, 0.8)}"
+                                        stroke-linejoin="miter"
+                                    ></polygon>`;
+                } else {
+                    triangleMarkup = `
+                                    <polygon
+                                        class="triangle-outer"
+                                        points="${outerPts}"
+                                        fill="${fillColor}"
+                                        stroke="${finalStroke}"
+                                        stroke-width="${finalStrokeWidth}"
+                                        stroke-linejoin="miter"
+                                        ${filterRef}
+                                    ></polygon>`;
+                }
+
+                return `<div class="shape triangle-shape"
+                                    id="${caseName}"
+                                    data-name="${shapeName}"
+                                    data-shape-type="${caseName}"
+                                    data-adj="${adj}"
+                                    data-original-color="${originalThemeColor}"
+                                    originalLumMod="${originalLumMod}"
+                                    originalLumOff="${originalLumOff}"
+                                    originalAlpha="${originalAlpha}"
+                                    style="
+                                        position:absolute;
+                                        left:${position.x}px;
+                                        top:${position.y}px;
+                                        width:${w}px;
+                                        height:${h}px;
+                                        ${opacity};
+                                        transform:${transformString};
+                                        transform-origin:center center;
+                                        z-index:${zIndex};
+                                        overflow:visible;
+                                        display:flex;
+                                        justify-content:${shapeInfo.justifyContent || "center"};
+                                        align-items:${shapeInfo.getAlignItem || "center"};
+                                        pointer-events:auto;
+                                    "
+                                data-interactive-type="shape">
+                                <svg
+                                    class="triangle-svg"
+                                    viewBox="0 0 ${w} ${h}"
+                                    width="100%"
+                                    height="100%"
+                                    preserveAspectRatio="none"
+                                    style="position:absolute;left:0;top:0;overflow:visible;">
+                                    <defs>
+                                        ${filterMarkup}
+                                    </defs>
+                                    ${triangleMarkup}
+                                </svg>
+
+                                ${textContent}
+                        </div>`;
+            }
             case "hexagon":
                 caseName = "hexagon";
 
@@ -1043,47 +1244,50 @@ class ShapeHandler {
             case "rightArrow": {
                 caseName = "rightArrow";
 
-                // --- 1. Read adj1 (shaft height) & adj2 (head width) from a:gd ---
-                let adj1 = 50000;  // PPT default if missing
-                let adj2 = 50000;  // PPT default if missing
+                // Read exact adjustment values from XML
+                let adj1 = 50000; // shaft thickness
+                let adj2 = 50000; // arrow head depth guide
 
-                const avLst =
-                    shapeNode?.["p:spPr"]?.[0]?.["a:prstGeom"]?.[0]?.["a:avLst"]?.[0];
-
-                // xml2js can give "a:gd" or "gd" depending on config, handle both
+                const avLst = shapeNode?.["p:spPr"]?.[0]?.["a:prstGeom"]?.[0]?.["a:avLst"]?.[0];
                 const gdList = (avLst && (avLst["a:gd"] || avLst["gd"])) || [];
 
                 for (const gd of gdList) {
-                    const name = gd.$?.name;
-                    const fmla = gd.$?.fmla || "";
-                    let val = parseInt(fmla.replace("val ", ""), 10);
+                    const name = gd?.$?.name;
+                    const fmla = gd?.$?.fmla || "";
+                    const rawVal = parseInt(fmla.replace(/^val\s+/, ""), 10);
 
-                    const DEFAULT_ADJ1 = 50000;
-                    const DEFAULT_ADJ2 = 50000;
-
-                    if (name === "adj1") adj1 = val || DEFAULT_ADJ1;
-                    if (name === "adj2") adj2 = val || DEFAULT_ADJ2;
+                    if (!Number.isNaN(rawVal)) {
+                        if (name === "adj1") adj1 = rawVal;
+                        if (name === "adj2") adj2 = rawVal;
+                    }
                 }
 
-                // --- 2. Convert to percentages (PPT uses 0–100000) ---
-                const shaftHeightPct = (adj1 / 100000) * 100;
-                const headWidthPct = (adj2 / 100000) * 100;
+                // Use actual rendered size of the shape
+                const w = Math.max(position.width || 0, 1);
+                const h = Math.max(position.height || 0, 1);
 
-                // --- 3. Compute polygon points in percentage space ---
-                const shaftTopPct = Math.round((100 - shaftHeightPct) / 2);
-                const shaftBottomPct = Math.round(shaftTopPct + shaftHeightPct);
-                const headStartPct = Math.round(100 - headWidthPct);
+                // Shaft thickness comes from height
+                const shaftHeightPx = (adj1 / 100000) * h;
 
-                // --- 4. Dynamic clip-path that matches PPT rightArrow geometry ---
+                // IMPORTANT:
+                // rightArrow head depth should not be treated as % of total width.
+                // It behaves relative to the shape's short-side context, so derive it
+                // from height and clamp it safely against width.
+                const headWidthPxRaw = (adj2 / 100000) * h;
+                const headWidthPx = Math.max(1, Math.min(headWidthPxRaw, w - 1));
+
+                const shaftTopPct = ((h - shaftHeightPx) / 2 / h) * 100;
+                const shaftBottomPct = ((h + shaftHeightPx) / 2 / h) * 100;
+                const headStartPct = ((w - headWidthPx) / w) * 100;
+
                 clipPath = `polygon(
-                        0% ${shaftTopPct}%,
-                        ${headStartPct}% ${shaftTopPct}%,
-                        ${headStartPct}% 0%,
-                        100% 50%,
-                        ${headStartPct}% 100%,
-                        ${headStartPct}% ${shaftBottomPct}%,
-                        0% ${shaftBottomPct}%
-                    )`;
+                0% ${shaftTopPct}%,
+                ${headStartPct}% ${shaftTopPct}%,
+                ${headStartPct}% 0%,
+                100% 50%,
+                ${headStartPct}% 100%,
+                ${headStartPct}% ${shaftBottomPct}%,
+                0% ${shaftBottomPct}%)`;
 
                 break;
             }
@@ -1120,10 +1324,91 @@ class ShapeHandler {
                 caseName = "upDownArrow";
                 clipPath = "polygon( 50% 0%,70% 20%, 60% 20%, 60% 45%, 80% 45%,50% 75%,20% 45%, 40% 45%, 40% 20%,  30% 20%,50% 0%,50% 75%,  80% 45%,  60% 45%, 60% 80%,  70% 80%, 50% 100%,30% 80%, 40% 80%,  40% 45%, 20% 45%,50% 75%)";
                 break;
-            case "chevron":
+             case "chevron": {
                 caseName = "chevron";
-                clipPath = "polygon(75% 0%, 100% 50%, 75% 100%, 0% 100%, 25% 50%, 0% 0%);"
-                break;
+
+                const w = Math.max(position.width || 1, 1);
+                const h = Math.max(position.height || 1, 1);
+
+                // Read adj dynamically from XML
+                let adj = 50000;
+                const avLst = shapeNode?.["p:spPr"]?.[0]?.["a:prstGeom"]?.[0]?.["a:avLst"]?.[0];
+                const gdList = (avLst && (avLst["a:gd"] || avLst["gd"])) || [];
+
+                for (const gd of gdList) {
+                    const name = gd?.$?.name;
+                    const fmla = gd?.$?.fmla || "";
+                    const rawVal = parseInt(fmla.replace(/^val\s+/, ""), 10);
+
+                    if (name === "adj" && !Number.isNaN(rawVal)) {
+                        adj = rawVal;
+                        break;
+                    }
+                }
+
+                // Chevron uses short-side math
+                const ss = Math.min(w, h);
+
+                // IMPORTANT:
+                // adj can be > 100000 for wide chevrons, so do NOT clamp to 100000 or ss/2
+                let insetPx = (adj / 100000) * ss;
+
+                // Only clamp to actual drawable width
+                insetPx = Math.max(0, Math.min(insetPx, w));
+
+                const rightBaseX = w - insetPx;
+                const midY = h / 2;
+
+                const points = [
+                    `${rightBaseX},0`,
+                    `${w},${midY}`,
+                    `${rightBaseX},${h}`,
+                    `0,${h}`,
+                    `${insetPx},${midY}`,
+                    `0,0`
+                ].join(" ");
+
+                const lnNode = shapeNode?.["p:spPr"]?.[0]?.["a:ln"]?.[0];
+                const hasNoFillLine = !!lnNode?.["a:noFill"];
+                const finalStroke = hasNoFillLine ? "none" : strokeColor;
+                const finalStrokeWidth = hasNoFillLine ? 0 : (parseFloat(strokeWidth) || 0);
+
+                return `<div class="shape"
+                            id="chevron"
+                            data-name="${shapeName}"
+                            data-original-color="${originalThemeColor}"
+                            originalLumMod="${originalLumMod}"
+                            originalLumOff="${originalLumOff}"
+                            originalAlpha="${originalAlpha}"
+                            data-adj="${adj}"
+                            style="
+                                position:absolute;
+                                left:${position.x}px;
+                                top:${position.y}px;
+                                width:${w}px;
+                                height:${h}px;
+                                ${opacity};
+                                transform:${transformString};
+                                z-index:${zIndex};
+                                overflow:visible;
+                                display:flex;
+                                justify-content:${shapeInfo.justifyContent || "center"};
+                                align-items:${shapeInfo.getAlignItem || "center"};
+                            "
+                            data-interactive-type="shape">
+                            <svg viewBox="0 0 ${w} ${h}" width="100%" height="100%" preserveAspectRatio="none"
+                                style="position:absolute;left:0;top:0;overflow:visible;">
+                                <polygon
+                                    points="${points}"
+                                    fill="${fillColor}"
+                                    stroke="${finalStroke}"
+                                    stroke-width="${finalStrokeWidth}"
+                                    stroke-linejoin="round"
+                                ></polygon>
+                            </svg>
+                            ${textContent}
+                        </div>`;
+            }
             case "rightArrowCallout":
                 caseName = "rightArrowCallout";
                 clipPath = "polygon(82% 45.93%, 82% 37.51%, 100% 50%, 82% 62.49%, 82% 54.36%, 69.44% 54.36%, 69.44% 69.74%, 33.94% 69.74%, 33.94% 31.94%, 69.44% 31.94%, 69.44% 45.93%);"
@@ -1921,65 +2206,212 @@ class ShapeHandler {
                             </div>`;
                 break;
 
-            case "cube":
-                const cubeWidth = position.width || 200;
-                const cubeHeight = position.height || 200;
+            case "cube": {
+                const cubeW = position.width || 200;
+                const cubeH = position.height || 200;
 
-                const sideOffset = cubeWidth * 0.3;
-                const topOffset = cubeHeight * 0.3;
+                const spPr = shapeNode?.["p:spPr"]?.[0];
+                const styleNode = shapeNode?.["p:style"]?.[0];
 
-                const frontX = sideOffset;
-                const frontY = topOffset;
+                // ── 1. adj (depth) ───────────────────────────────────────────────────
+                const prstGeomFmla = spPr?.["a:prstGeom"]?.[0]
+                    ?.["a:avLst"]?.[0]
+                    ?.["a:gd"]?.[0]
+                    ?.["$"]?.fmla;
+                const adjVal = prstGeomFmla
+                    ? parseInt(prstGeomFmla.replace("val ", ""), 10)
+                    : 25000;
+                const depthRatio = Math.min(Math.max(adjVal / 100000, 0), 0.5);
+                const d = Math.round(Math.min(cubeW, cubeH) * depthRatio);
+                const fw = cubeW - d;
+                const fh = cubeH - d;
 
-                // Adjust viewBox to ensure the entire cube fits inside
-                const viewBoxWidth = cubeWidth + sideOffset * 2;
-                const viewBoxHeight = cubeHeight + topOffset * 2;
+                // ── 2. Border ────────────────────────────────────────────────────────
+                let strokeColor = "none";
+                let strokeWidth = 0;
+                let strokeDash = "";
 
-                return `<div class="shape" id="cube" data-name="${shapeName}" style="
-                                position: absolute;
-                                left: ${position.x}px;
-                                top: ${position.y}px;
-                                width: ${viewBoxWidth}px;
-                                height: ${viewBoxHeight}px;
-                                ${opacity};
-                                transform: rotate(${position.rotation}deg);
-                                display: flex;
-                                align-items: center;
-                                justify-content: center;
-                                z-index: ${zIndex};">
-                                
-                                    <svg width="100%" height="100%" viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" xmlns="http://www.w3.org/2000/svg">
-                                        <!-- Front face -->
-                                        <rect x="${frontX}" y="${frontY}" width="${cubeWidth}" height="${cubeHeight}" fill="${fillColor}" stroke="#042433" stroke-width="2"/>
+                // helper: adjust hex brightness inline (no external dependency)
+                const _adjustBrightness = (hex, factor) => {
+                    if (!hex || !hex.startsWith("#")) return hex;
+                    let c = hex.replace("#", "");
+                    if (c.length === 3) c = c.split("").map(x => x + x).join("");
+                    const r = Math.min(255, Math.round(parseInt(c.slice(0, 2), 16) * factor));
+                    const g = Math.min(255, Math.round(parseInt(c.slice(2, 4), 16) * factor));
+                    const b = Math.min(255, Math.round(parseInt(c.slice(4, 6), 16) * factor));
+                    return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+                };
 
-                                        <!-- Right face -->
-                                        <path d="M${frontX + cubeWidth} ${frontY} 
-                                                L${frontX + cubeWidth + sideOffset} ${frontY - topOffset} 
-                                                L${frontX + cubeWidth + sideOffset} ${frontY + cubeHeight - topOffset} 
-                                                L${frontX + cubeWidth} ${frontY + cubeHeight}Z" 
-                                            fill="${fillColor}" stroke="#042433" stroke-width="1"/>
+                const lnNode = spPr?.["a:ln"]?.[0];
 
-                                        <!-- Top face -->
-                                        <path d="M${frontX} ${frontY} 
-                                                L${frontX + sideOffset} ${frontY - topOffset} 
-                                                L${frontX + cubeWidth + sideOffset} ${frontY - topOffset} 
-                                                L${frontX + cubeWidth} ${frontY}Z" 
-                                            fill="${fillColor}" stroke="#042433" stroke-width="1"/>
+                if (lnNode) {
+                    // ── Explicit border in spPr ──
+                    const hasNoFill = lnNode?.["a:noFill"] !== undefined;
+                    if (!hasNoFill) {
+                        const wEmu = parseInt(lnNode?.["$"]?.w || "9525", 10);
+                        strokeWidth = Math.max(0.5, wEmu / 12700);
 
-                                        <!-- Cube edges -->
-                                        <path d="M${frontX} ${frontY} 
-                                                L${frontX + sideOffset} ${frontY - topOffset} 
-                                                L${frontX + cubeWidth + sideOffset} ${frontY - topOffset} 
-                                                L${frontX + cubeWidth + sideOffset} ${frontY + cubeHeight - topOffset} 
-                                                L${frontX + cubeWidth} ${frontY + cubeHeight} 
-                                                L${frontX} ${frontY + cubeHeight} 
-                                                L${frontX} ${frontY}Z"
-                                            stroke="#042433" stroke-width="1" fill="none"/>
-                                            ${textContent}
-                                    </svg>
-                            </div>`;
-                break;
+                        const solidFill = lnNode?.["a:solidFill"]?.[0];
+                        const srgb = solidFill?.["a:srgbClr"]?.[0]?.["$"]?.val;
+                        const scheme = solidFill?.["a:schemeClr"]?.[0]?.["$"]?.val;
 
+                        if (srgb) {
+                            strokeColor = `#${srgb}`;
+                        } else if (scheme && scheme !== "phClr") {
+                            // ✅ use existing class method — same signature as line 3975
+                            strokeColor = this.resolveSchemeColor(scheme, themeXML, this.clrMap) || "none";
+                        }
+
+                        const prstDash = lnNode?.["a:prstDash"]?.[0]?.["$"]?.val;
+                        const dashMap = {
+                            dash: "8,4", dashDot: "8,4,2,4", dot: "2,4",
+                            lgDash: "16,4", lgDashDot: "16,4,2,4",
+                            sysDash: "5,3", sysDot: "2,2"
+                        };
+                        if (prstDash && prstDash !== "solid") strokeDash = dashMap[prstDash] || "4,4";
+                    }
+
+                } else {
+                    // ── Theme border from p:style > a:lnRef ──
+                    const lnRef = styleNode?.["a:lnRef"]?.[0];
+                    const lnIdx = parseInt(lnRef?.["$"]?.idx || "0", 10);
+
+                    if (lnIdx > 0) {
+                        strokeWidth = lnIdx === 1 ? 0.75 : 1.5;
+
+                        const schemeClrNode = lnRef?.["a:schemeClr"]?.[0];
+                        const scheme = schemeClrNode?.["$"]?.val;
+                        const shade = schemeClrNode?.["a:shade"]?.[0]?.["$"]?.val;
+                        const tint = schemeClrNode?.["a:tint"]?.[0]?.["$"]?.val;
+                        const lumMod = schemeClrNode?.["a:lumMod"]?.[0]?.["$"]?.val;
+                        const lumOff = schemeClrNode?.["a:lumOff"]?.[0]?.["$"]?.val;
+
+                        if (scheme && scheme !== "phClr") {
+                            // ✅ use existing class method
+                            let base = this.resolveSchemeColor(scheme, themeXML, this.clrMap) || "none";
+
+                            if (base && base !== "none") {
+                                if (shade) {
+                                    const factor = parseInt(shade, 10) / 100000;
+                                    base = _adjustBrightness(base, factor);
+                                }
+                                if (tint) {
+                                    const factor = 1 + (parseInt(tint, 10) / 100000);
+                                    base = _adjustBrightness(base, factor);
+                                }
+                                // ✅ use existing this.adjustLuminance (line 3841)
+                                if (lumMod || lumOff) {
+                                    const mod = parseInt(lumMod || "100000", 10) / 100000;
+                                    const off = parseInt(lumOff || "0", 10) / 100000;
+                                    base = this.adjustLuminance(base, mod, off);
+                                }
+                                strokeColor = base;
+                            }
+                        }
+                    }
+                }
+
+                const strokeAttrs = strokeColor === "none"
+                    ? `stroke="none"`
+                    : `stroke="${strokeColor}" stroke-width="${strokeWidth}"${strokeDash ? ` stroke-dasharray="${strokeDash}"` : ""}`;
+
+                // ── 3. Drop shadow ───────────────────────────────────────────────────
+                let shadowFilter = "";
+                let filterId = "";
+
+                const outerShdw = spPr?.["a:effectLst"]?.[0]?.["a:outerShdw"]?.[0];
+                if (outerShdw) {
+                    const blurRad = parseInt(outerShdw?.["$"]?.blurRad || "0", 10);
+                    const dist = parseInt(outerShdw?.["$"]?.dist || "0", 10);
+                    const dir = parseInt(outerShdw?.["$"]?.dir || "0", 10);
+
+                    const blurPx = (blurRad / 914400) * 96;
+                    const distPx = (dist / 914400) * 96;
+                    const dirDeg = dir / 60000;
+                    const dirRad = (dirDeg * Math.PI) / 180;
+                    const dx = Math.round(distPx * Math.cos(dirRad));
+                    const dy = Math.round(distPx * Math.sin(dirRad));
+
+                    const shdwClrNode = outerShdw?.["a:prstClr"]?.[0]
+                        || outerShdw?.["a:srgbClr"]?.[0]
+                        || outerShdw?.["a:schemeClr"]?.[0];
+                    const srgbVal = outerShdw?.["a:srgbClr"]?.[0]?.["$"]?.val;
+                    const alphaVal = parseInt(shdwClrNode?.["a:alpha"]?.[0]?.["$"]?.val || "100000", 10);
+                    const alphaFrac = alphaVal / 100000;
+
+                    let shadowRgb = "0,0,0";
+                    if (srgbVal) {
+                        const r = parseInt(srgbVal.slice(0, 2), 16);
+                        const g = parseInt(srgbVal.slice(2, 4), 16);
+                        const b = parseInt(srgbVal.slice(4, 6), 16);
+                        shadowRgb = `${r},${g},${b}`;
+                    }
+
+                    // ✅ use uniqueId (already defined above in convertShapeToHTML) instead of undefined shapeId
+                    filterId = `shadow_${uniqueId}`;
+                    shadowFilter = `
+                        <defs>
+                            <filter id="${filterId}" x="-50%" y="-50%" width="200%" height="200%">
+                                <feDropShadow dx="${dx}" dy="${dy}"
+                                            stdDeviation="${blurPx / 2}"
+                                            flood-color="rgba(${shadowRgb},${alphaFrac})"/>
+                            </filter>
+                        </defs>`;
+                            }
+
+                            const filterAttr = filterId ? `filter="url(#${filterId})"` : "";
+
+                            return `<div class="shape" id="cube" data-name="${shapeName}" style="
+                            position: absolute;
+                            left: ${position.x}px;
+                            top: ${position.y}px;
+                            width: ${cubeW}px;
+                            height: ${cubeH}px;
+                            ${opacity};
+                            transform: rotate(${position.rotation}deg);
+                            z-index: ${zIndex};
+                            overflow: visible;
+                            cursor: move;"
+                        data-interactive-type="shape"
+                        data-interactive-init="1">
+
+                    <svg width="100%" height="100%"
+                        viewBox="0 0 ${cubeW} ${cubeH}"
+                        xmlns="http://www.w3.org/2000/svg"
+                        style="overflow:visible">
+
+                        ${shadowFilter}
+
+                        <g ${filterAttr}>
+                            <!-- Front face -->
+                            <rect x="0" y="${d}" width="${fw}" height="${fh}"
+                                fill="${fillColor}" ${strokeAttrs}/>
+
+                            <!-- Top face -->
+                            <path d="M0 ${d} L${d} 0 L${cubeW} 0 L${fw} ${d}Z"
+                                fill="${fillColor}" ${strokeAttrs} opacity="0.85"/>
+
+                            <!-- Right face -->
+                            <path d="M${fw} ${d} L${cubeW} 0 L${cubeW} ${fh} L${fw} ${cubeH}Z"
+                                fill="${fillColor}" ${strokeAttrs} opacity="0.7"/>
+                        </g>
+
+                        ${textContent}
+                    </svg>
+
+                    <div class="resize-handle top-left"></div>
+                    <div class="resize-handle top-center"></div>
+                    <div class="resize-handle top-right"></div>
+                    <div class="resize-handle left-center"></div>
+                    <div class="resize-handle right-center"></div>
+                    <div class="resize-handle bottom-left"></div>
+                    <div class="resize-handle bottom-center"></div>
+                    <div class="resize-handle bottom-right"></div>
+                    <div class="delete-btn" title="Delete">×</div>
+                    <div class="rotate-handle" title="Rotate">↻</div>
+                </div>`;
+
+            }
             case "can":
                 const cylinderWidth = position.width || 200;
                 const cylinderHeight = position.height || 400;

@@ -1466,9 +1466,111 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
             case 'chartX':
                 pptSlide.addShape(pptx.shapes.CHART_X, shapeOptions);
                 break;
-            case 'chevron':
-                pptSlide.addShape(pptx.shapes.CHEVRON, shapeOptions);
+            case 'chevron': {
+                const svgEl = shapeElement.querySelector('svg');
+                const polygonEl = svgEl?.querySelector('polygon');
+
+                // Fallback only if SVG/polygon is missing
+                if (!svgEl || !polygonEl) {
+                    pptSlide.addShape(pptx.shapes.CHEVRON, {
+                        ...shapeOptions,
+                        hidden: false
+                    });
+                    break;
+                }
+
+                // Read actual SVG viewBox
+                const viewBox = svgEl.getAttribute('viewBox') || '0 0 100 100';
+                const vbParts = viewBox.trim().split(/\s+/).map(Number);
+                const vbW = vbParts[2] || 100;
+                const vbH = vbParts[3] || 100;
+
+                // Read exact polygon points from HTML
+                const rawPoints = (polygonEl.getAttribute('points') || '')
+                    .trim()
+                    .split(/\s+/)
+                    .map(pt => pt.trim())
+                    .filter(Boolean);
+
+                if (rawPoints.length < 3) {
+                    pptSlide.addShape(pptx.shapes.CHEVRON, {
+                        ...shapeOptions,
+                        hidden: false
+                    });
+                    break;
+                }
+
+                // Convert polygon points -> SVG path
+                let pathD = '';
+                rawPoints.forEach((pt, index) => {
+                    const [xStr, yStr] = pt.split(',');
+                    const x = parseFloat(xStr);
+                    const y = parseFloat(yStr);
+
+                    if (Number.isNaN(x) || Number.isNaN(y)) return;
+
+                    if (!pathD) {
+                        pathD = `M ${x} ${y}`;
+                    } else {
+                        pathD += ` L ${x} ${y}`;
+                    }
+                });
+                pathD += ' Z';
+
+                // Convert SVG path -> pptx custGeom points
+                const custGeomPoints = svgAddToSlide.convertSvgPathToPptxPoints(
+                    pathD,
+                    vbW,
+                    vbH,
+                    shapeOptions.w,
+                    shapeOptions.h
+                );
+
+                if (!custGeomPoints || custGeomPoints.filter(p => !p.close).length < 3) {
+                    pptSlide.addShape(pptx.shapes.CHEVRON, {
+                        ...shapeOptions,
+                        hidden: false
+                    });
+                    break;
+                }
+
+                // Exact fill from SVG polygon
+                const svgFill = polygonEl.getAttribute('fill');
+                const fillColor = svgFill && svgFill !== 'none'
+                    ? rgbToHex(svgFill).replace('#', '').toUpperCase()
+                    : (
+                        shapeOptions.fill?.color
+                            ? String(shapeOptions.fill.color).replace('#', '').toUpperCase()
+                            : '7CCA62'
+                    );
+
+                // Respect no-stroke from SVG
+                const svgStroke = polygonEl.getAttribute('stroke');
+                const svgStrokeWidth = parseFloat(polygonEl.getAttribute('stroke-width') || '0');
+
+                let lineOptions = { color: fillColor, transparency: 100, width: 0 };
+
+                if (svgStroke && svgStroke !== 'none' && svgStroke !== 'transparent' && svgStrokeWidth > 0) {
+                    lineOptions = {
+                        color: rgbToHex(svgStroke).replace('#', '').toUpperCase(),
+                        width: svgStrokeWidth
+                    };
+                }
+
+                pptSlide.addShape('custGeom', {
+                    ...shapeOptions,
+                    hidden: false,
+                    objectName: objName || shapeElement.getAttribute('data-name') || 'chevron',
+                    fill: {
+                        color: fillColor,
+                        transparency: calculatedTransparency || 0
+                    },
+                    line: lineOptions,
+                    points: custGeomPoints
+                });
+
                 break;
+            }
             case 'chord':
                 pptSlide.addShape(pptx.shapes.CHORD, shapeOptions);
                 break;
@@ -1490,9 +1592,136 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
             case 'plus':
                 pptSlide.addShape(pptx.shapes.CROSS, shapeOptions);
                 break;
-            case 'cube':
-                pptSlide.addShape(pptx.shapes.CUBE, shapeOptions);
+            case 'cube': {
+                const svgEl = shapeElement.querySelector('svg');
+
+                // Fallback to preset if no SVG found
+                if (!svgEl) {
+                    pptSlide.addShape(pptx.shapes.CUBE, shapeOptions);
+                    break;
+                }
+
+                // ── ViewBox dimensions ───────────────────────────────────────────────
+                const viewBox = svgEl.getAttribute('viewBox') || '0 0 100 100';
+                const vbParts = viewBox.trim().split(/\s+/).map(Number);
+                const vbW = vbParts[2] || 100;
+                const vbH = vbParts[3] || 100;
+
+                // Shape position/size in inches (already computed above the switch)
+                const baseX = shapeOptions.x;
+                const baseY = shapeOptions.y;
+                const baseW = shapeOptions.w;
+                const baseH = shapeOptions.h;
+
+                // ── Fill color from front face <rect> ────────────────────────────────
+                const frontRect = svgEl.querySelector('rect');
+                const fillAttr = frontRect?.getAttribute('fill') || '#808080';
+                const fillHex = rgbToHex(fillAttr).replace('#', '').toUpperCase();
+
+                // ── Stroke from front face <rect> ────────────────────────────────────
+                const strokeAttr = frontRect?.getAttribute('stroke') || 'none';
+                const strokeWidthPx = parseFloat(frontRect?.getAttribute('stroke-width') || '0');
+                const strokeDashAttr = frontRect?.getAttribute('stroke-dasharray') || '';
+                let lineOpts = null;
+                if (strokeAttr !== 'none' && strokeWidthPx > 0) {
+                    const dashMap = {
+                        '8,4': 'dash', '8,4,2,4': 'dashDot', '2,4': 'dot',
+                        '16,4': 'lgDash', '5,3': 'sysDash', '2,2': 'sysDot'
+                    };
+                    lineOpts = {
+                        color: rgbToHex(strokeAttr).replace('#', '').toUpperCase(),
+                        width: strokeWidthPx * 0.75,                           // px → pt
+                        ...(strokeDashAttr ? { dashType: dashMap[strokeDashAttr.trim()] || 'solid' } : {})
+                    };
+                }
+
+                // ── Shadow from <feDropShadow> ───────────────────────────────────────
+                // Try both cases: browsers keep 'feDropShadow', jsdom lowercases it
+                const feDropShadow = svgEl.querySelector('feDropShadow')
+                    || svgEl.querySelector('fedropshadow');
+                let shadowOpts = null;
+                if (feDropShadow) {
+                    const dx = parseFloat(feDropShadow.getAttribute('dx') || '0');
+                    const dy = parseFloat(feDropShadow.getAttribute('dy') || '0');
+                    const stdDev = parseFloat(
+                        feDropShadow.getAttribute('stdDeviation') ||
+                        feDropShadow.getAttribute('stddeviation') || '0'
+                    );
+                    const floodClr = feDropShadow.getAttribute('flood-color') || 'rgba(0,0,0,0.5)';
+                    const rgba = floodClr.match(/rgba?\((\d+),(\d+),(\d+)(?:,([\d.]+))?\)/);
+                    let sColor = '000000', sOpacity = 0.5;
+                    if (rgba) {
+                        sColor = [rgba[1], rgba[2], rgba[3]]
+                            .map(v => parseInt(v).toString(16).padStart(2, '0'))
+                            .join('').toUpperCase();
+                        sOpacity = parseFloat(rgba[4] ?? '1');
+                    }
+                    const dist = Math.max(Math.round(Math.sqrt(dx * dx + dy * dy) * 0.75), 1);
+                    const blur = Math.max(Math.round(stdDev * 2 * 0.75), 1);
+                    let angle = Math.round(Math.atan2(dy, dx) * (180 / Math.PI));
+                    if (angle < 0) angle += 360;
+                    shadowOpts = { type: 'outer', color: sColor, blur, offset: dist, angle, opacity: sOpacity };
+                }
+
+                // ── Base options shared by all faces ─────────────────────────────────
+                const baseOpts = {
+                    x: baseX, y: baseY, w: baseW, h: baseH,
+                    ...(lineOpts ? { line: lineOpts } : {}),
+                    objectName: objName || 'cube'
+                };
+
+                // ── Front face (<rect>) drawn as custGeom ────────────────────────────
+                // Rect → path string → convertSvgPathToPptxPoints (already in addSvgToSlide.js)
+                if (frontRect) {
+                    const rx = parseFloat(frontRect.getAttribute('x') || '0');
+                    const ry = parseFloat(frontRect.getAttribute('y') || '0');
+                    const rw = parseFloat(frontRect.getAttribute('width') || String(vbW));
+                    const rh = parseFloat(frontRect.getAttribute('height') || String(vbH));
+
+                    const rectPath = `M${rx} ${ry} L${rx + rw} ${ry} L${rx + rw} ${ry + rh} L${rx} ${ry + rh} Z`;
+                    const frontPts = svgAddToSlide.convertSvgPathToPptxPoints(
+                        rectPath, vbW, vbH, baseW, baseH
+                    );
+
+                    if (frontPts.length > 0) {
+                        pptSlide.addShape('custGeom', {
+                            ...baseOpts,
+                            ...(shadowOpts ? { shadow: shadowOpts } : {}), // shadow only on front face
+                            fill: { color: fillHex },
+                            objectName: `${objName || 'cube'}_front`,
+                            points: frontPts
+                        });
+                    }
+                }
+
+                // ── Top and right faces (<path> elements) ────────────────────────────
+                // Read opacity directly from each path element (same values set in shapeHandler.js)
+                // Convert SVG opacity → PPTX fill transparency (e.g. opacity 0.85 → 15% transparent)
+                const pathEls = svgEl.querySelectorAll('path');
+                pathEls.forEach((pathEl, i) => {
+                    const d = pathEl.getAttribute('d') || '';
+                    if (!d.trim()) return;
+
+                    // Use the existing convertSvgPathToPptxPoints — handles M, L, C, Z correctly
+                    const pts = svgAddToSlide.convertSvgPathToPptxPoints(
+                        d, vbW, vbH, baseW, baseH
+                    );
+                    if (pts.filter(p => !p.close).length < 3) return;
+
+                    // Read opacity from element (0.85 top, 0.7 right from shapeHandler.js)
+                    const faceOpacity = parseFloat(pathEl.getAttribute('opacity') || '1');
+                    const transparency = Math.round((1 - faceOpacity) * 100); // 0.85→15, 0.7→30
+
+                    pptSlide.addShape('custGeom', {
+                        ...baseOpts,
+                        fill: { color: fillHex, transparency },
+                        objectName: `${objName || 'cube'}_face${i + 1}`,
+                        points: pts
+                    });
+                });
+
                 break;
+            }
             case 'curvedDownArrow':
                 pptSlide.addShape(pptx.shapes.CURVED_DOWN_ARROW, shapeOptions);
                 break;
@@ -1671,9 +1900,228 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
             case 'horizontalScroll':
                 pptSlide.addShape(pptx.shapes.HORIZONTAL_SCROLL, shapeOptions);
                 break;
-            case 'triangle':
-                pptSlide.addShape(pptx.shapes.ISOSCELES_TRIANGLE, shapeOptions);
+            case 'triangle': {
+                const triSvgEl = shapeElement.querySelector('svg');
+                if (!triSvgEl) {
+                    pptSlide.addShape(pptx.shapes.ISOSCELES_TRIANGLE, { ...shapeOptions, hidden: false });
+                    break;
+                }
+
+                // ── 1. Position / size (px → inches, 72 DPI) ─────────────────────
+                const triStyleStr = shapeElement.getAttribute('style') || '';
+                const triGetPx = (prop) => {
+                    const m = triStyleStr.match(new RegExp(prop + '\\s*:\\s*([0-9.-]+)px', 'i'));
+                    return m ? parseFloat(m[1]) : null;
+                };
+                const triLeft = triGetPx('left') ?? parseFloat(style.left || '0');
+                const triTop = triGetPx('top') ?? parseFloat(style.top || '0');
+                const triWidth = triGetPx('width') ?? parseFloat(style.width || '0');
+                const triHeight = triGetPx('height') ?? parseFloat(style.height || '0');
+                const triX = triLeft / 72, triY = triTop / 72;
+                const triW = triWidth / 72, triH = triHeight / 72;
+
+                // ── 2. Rotation — parse rotate() from transform (supports fractions) ─
+                const triTransform = triStyleStr.match(/transform\s*:\s*([^;]+)/i)?.[1]?.trim() || '';
+                const triRotMatch = triTransform.match(/rotate\(\s*([-\d.]+)deg\s*\)/i);
+                const triRotation = triRotMatch ? parseFloat(triRotMatch[1]) : 0;
+
+                // ── 3. Flip — scaleX(-1) / scaleY(-1) in CSS transform ───────────
+                const triScaleX = triTransform.match(/scaleX\(\s*([-\d.]+)\s*\)/i);
+                const triScaleY = triTransform.match(/scaleY\(\s*([-\d.]+)\s*\)/i);
+                const triFlipH = triScaleX ? parseFloat(triScaleX[1]) < 0 : false;
+                const triFlipV = triScaleY ? parseFloat(triScaleY[1]) < 0 : false;
+
+                // ── 4. Opacity → fill transparency ────────────────────────────────
+                // Pre-switch block gates opacity on hasVisibleBackground (always
+                // false for SVG triangles), so we read it directly from the style string.
+                const triOpacityRaw = triStyleStr.match(/(?:^|;)\s*opacity\s*:\s*([\d.]+)/i)?.[1]
+                    ?? style.opacity ?? '1';
+                const triOpacity = Math.min(1, Math.max(0, parseFloat(triOpacityRaw) || 1));
+                const triFillTrsp = Math.round((1 - triOpacity) * 100);
+
+                // ── 5. SVG viewBox ────────────────────────────────────────────────
+                const triVbParts = (triSvgEl.getAttribute('viewBox') || `0 0 ${triWidth} ${triHeight}`)
+                    .trim().split(/\s+/).map(Number);
+                const triVbW = triVbParts[2] || triWidth;
+                const triVbH = triVbParts[3] || triHeight;
+
+                // ── 6. Filter type detection ──────────────────────────────────────
+                // Two patterns used in triangle SVGs:
+                // A) <feDropShadow>  → outer drop shadow (Triangle 5, 11)
+                // B) feGaussianBlur + feFlood + feComposite(operator=atop)
+                //    → white or black overlay composited ATOP the shape
+                //    → creates the 3D highlight / shadow effect (Triangle 7,8,14,15)
+                //    → approximated by blending flood-color into fill at flood-opacity
+
+                // Pattern A: feDropShadow
+                const triFeDS = triSvgEl.querySelector('feDropShadow')
+                    || triSvgEl.querySelector('fedropshadow');
+                let triShadow = null;
+                if (triFeDS) {
+                    const sdx = parseFloat(triFeDS.getAttribute('dx') || '0');
+                    const sdy = parseFloat(triFeDS.getAttribute('dy') || '0');
+                    const stdDev = parseFloat(
+                        triFeDS.getAttribute('stdDeviation') ||
+                        triFeDS.getAttribute('stddeviation') || '0'
+                    );
+                    const floodClr = triFeDS.getAttribute('flood-color') || '#000000';
+                    const floodOp = parseFloat(triFeDS.getAttribute('flood-opacity') || '1');
+
+                    const rgbaM = floodClr.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+                    let sColor = '000000', sOpacity = floodOp;
+                    if (rgbaM) {
+                        sColor = [rgbaM[1], rgbaM[2], rgbaM[3]]
+                            .map(v => parseInt(v).toString(16).padStart(2, '0'))
+                            .join('').toUpperCase();
+                        if (rgbaM[4]) sOpacity = parseFloat(rgbaM[4]) * floodOp;
+                    } else if (floodClr.startsWith('#')) {
+                        sColor = floodClr.replace('#', '').toUpperCase();
+                    }
+                    const dist = Math.max(Math.round(Math.sqrt(sdx * sdx + sdy * sdy) * 0.75), 1);
+                    const blur = Math.max(Math.round(stdDev * 2 * 0.75), 1);
+                    let angle = Math.round(Math.atan2(sdy, sdx) * (180 / Math.PI));
+                    if (angle < 0) angle += 360;
+                    triShadow = { type: 'outer', color: sColor, blur, offset: dist, angle, opacity: sOpacity };
+                }
+
+                // Pattern B: feGaussianBlur composite highlight/shadow overlay
+                // Detect last feComposite with operator="atop" (composites overlay atop source).
+                // The feFlood before it defines the overlay color and opacity.
+                let triOverlayR = -1, triOverlayG = -1, triOverlayB = -1, triOverlayOp = 0;
+                const triFeComposites = triSvgEl.querySelectorAll('feComposite, fecomposite');
+                let triAtopComposite = null;
+                triFeComposites.forEach(fc => {
+                    const op = fc.getAttribute('operator') || '';
+                    if (op === 'atop') triAtopComposite = fc;
+                });
+                if (triAtopComposite && !triFeDS) {
+                    // Walk backwards to find the preceding feFlood
+                    const triFeFloods = triSvgEl.querySelectorAll('feFlood, feflood');
+                    const lastFlood = triFeFloods[triFeFloods.length - 1];
+                    if (lastFlood) {
+                        const fc = lastFlood.getAttribute('flood-color') || lastFlood.getAttribute('floodColor') || '#000000';
+                        triOverlayOp = parseFloat(lastFlood.getAttribute('flood-opacity') || lastFlood.getAttribute('floodOpacity') || '0');
+                        const fcM = fc.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+                        if (fcM) {
+                            triOverlayR = parseInt(fcM[1]);
+                            triOverlayG = parseInt(fcM[2]);
+                            triOverlayB = parseInt(fcM[3]);
+                        } else if (fc.startsWith('#')) {
+                            const h = fc.replace('#', '').padStart(6, '0');
+                            triOverlayR = parseInt(h.slice(0, 2), 16);
+                            triOverlayG = parseInt(h.slice(2, 4), 16);
+                            triOverlayB = parseInt(h.slice(4, 6), 16);
+                        } else if (/^white$/i.test(fc)) { triOverlayR = triOverlayG = triOverlayB = 255; }
+                        else if (/^black$/i.test(fc)) { triOverlayR = triOverlayG = triOverlayB = 0; }
+                    }
+                }
+                // Helper: blend base fill color with overlay (simulates feComposite atop)
+                function applyOverlay(hexFill) {
+                    if (triOverlayR < 0 || triOverlayOp <= 0) return hexFill;
+                    const bR = parseInt(hexFill.slice(0, 2), 16);
+                    const bG = parseInt(hexFill.slice(2, 4), 16);
+                    const bB = parseInt(hexFill.slice(4, 6), 16);
+                    const blend = (b, o) => Math.min(255, Math.max(0, Math.round(b * (1 - triOverlayOp) + o * triOverlayOp)));
+                    return [blend(bR, triOverlayR), blend(bG, triOverlayG), blend(bB, triOverlayB)]
+                        .map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase();
+                }
+
+                // ── 7. adj (apex position) ────────────────────────────────────────
+                const triAdjRaw = shapeElement.getAttribute('data-adj');
+                const triAdj = triAdjRaw ? parseInt(triAdjRaw, 10) : 50000;
+
+                // ── 8. Shared base options ────────────────────────────────────────
+                const triBase = {
+                    x: triX, y: triY, w: triW, h: triH,
+                    rotate: triRotation,
+                    flipH: triFlipH,
+                    flipV: triFlipV,
+                    hidden: false
+                };
+
+                // ── 9. Process each polygon in the SVG ───────────────────────────
+                // Some triangles contain two polygons:
+                //   .triangle-outer       → filled body (use ISOSCELES_TRIANGLE preset)
+                //   .triangle-inner-border → border-only inset (use custGeom, exact points)
+                // Single-polygon triangles contain only .triangle-outer.
+                const triAllPolygons = Array.from(triSvgEl.querySelectorAll('polygon'));
+                const triName = objName || shapeElement.getAttribute('data-name') || 'triangle';
+
+                triAllPolygons.forEach((triPoly, triPolyIdx) => {
+                    const polyFill = triPoly.getAttribute('fill') || 'none';
+                    const polyStroke = triPoly.getAttribute('stroke') || 'none';
+                    const polyStrokeW = parseFloat(triPoly.getAttribute('stroke-width') || '0');
+                    const isOuter = triPoly.classList.contains('triangle-outer') || triPolyIdx === 0;
+                    const isBorder = triPoly.classList.contains('triangle-inner-border');
+                    const polyName = triAllPolygons.length > 1
+                        ? `${triName}_${isOuter ? 'outer' : 'border'}`
+                        : triName;
+
+                    // Build line options for this polygon
+                    let polyLineOpts;
+                    if (polyStroke !== 'none' && polyStroke !== 'transparent' && polyStrokeW > 0) {
+                        polyLineOpts = {
+                            color: rgbToHex(polyStroke).replace('#', '').toUpperCase(),
+                            width: polyStrokeW * 0.75   // px → pt
+                        };
+                    } else {
+                        // Suppress pptxgenjs default border
+                        const noStrokeColor = polyFill !== 'none'
+                            ? rgbToHex(polyFill).replace('#', '').toUpperCase()
+                            : 'FFFFFF';
+                        polyLineOpts = { color: noStrokeColor, transparency: 100, width: 0 };
+                    }
+
+                    if (isBorder || polyFill === 'none') {
+                        // ── Border-only polygon → custGeom with exact points ──────
+                        // This preserves the precise inner border inset regardless
+                        // of rotation/flip (points are in viewBox local space).
+                        const rawPtStr = triPoly.getAttribute('points') || '';
+                        const rawPts = rawPtStr.trim().split(/\s+/).filter(Boolean);
+                        if (rawPts.length < 3) return;
+                        let borderPath = '';
+                        rawPts.forEach((pt, i) => {
+                            const [px, py] = pt.split(',').map(Number);
+                            if (Number.isNaN(px) || Number.isNaN(py)) return;
+                            borderPath += i === 0 ? `M ${px} ${py}` : ` L ${px} ${py}`;
+                        });
+                        borderPath += ' Z';
+                        const borderPts = svgAddToSlide.convertSvgPathToPptxPoints(
+                            borderPath, triVbW, triVbH, triW, triH
+                        );
+                        if (!borderPts || borderPts.filter(p => !p.close).length < 3) return;
+                        pptSlide.addShape('custGeom', {
+                            ...triBase,
+                            objectName: polyName,
+                            fill: { color: 'FFFFFF', transparency: 100 },
+                            line: polyLineOpts,
+                            points: borderPts
+                        });
+
+                    } else {
+                        // ── Filled polygon → ISOSCELES_TRIANGLE preset ────────────
+                        // Apply feGaussianBlur overlay blend to get correct face color.
+                        let polyFillHex = rgbToHex(polyFill).replace('#', '').toUpperCase();
+                        polyFillHex = applyOverlay(polyFillHex);
+
+                        const presetOpts = {
+                            ...triBase,
+                            objectName: polyName,
+                            fill: { color: polyFillHex, transparency: triFillTrsp },
+                            line: polyLineOpts,
+                            // Shadow and glow apply only to the primary (outer) polygon
+                            ...(isOuter && triShadow ? { shadow: triShadow } : {}),
+                            ...(isOuter && glowOptions ? { glow: glowOptions } : {})
+                        };
+                        // adj only on the primary polygon and when non-default
+                        if (isOuter && triAdj !== 50000) presetOpts.adj = triAdj;
+
+                        pptSlide.addShape(pptx.shapes.ISOSCELES_TRIANGLE, presetOpts);
+                    }
+                });
+
                 break;
+            }
             case 'leftArrow':
                 pptSlide.addShape(pptx.shapes.LEFT_ARROW, shapeOptions);
                 break;
@@ -1968,9 +2416,77 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
             case 'pentagon':
                 pptSlide.addShape(pptx.shapes.REGULAR_PENTAGON, shapeOptions);
                 break;
-            case 'rightArrow':
-                pptSlide.addShape(pptx.shapes.RIGHT_ARROW, shapeOptions);
+            case 'rightArrow': {
+                const clipPathValue =
+                    shapeElement.style.clipPath ||
+                    shapeElement.style.webkitClipPath ||
+                    shapeElement.getAttribute('data-clip-path') ||
+                    '';
+
+                const polygonMatch = clipPathValue.match(/polygon\((.*)\)/i);
+
+                // Fallback to preset arrow if polygon is missing
+                if (!polygonMatch || !polygonMatch[1]) {
+                    pptSlide.addShape(pptx.shapes.RIGHT_ARROW, shapeOptions);
+                    break;
+                }
+
+                // Example input:
+                // polygon(0% 17.9925%, 92.6457% 17.9925%, 92.6457% 0%, 100% 50%, 92.6457% 100%, 92.6457% 82.0075%, 0% 82.0075%)
+                const rawPoints = polygonMatch[1]
+                    .split(',')
+                    .map(p => p.trim())
+                    .filter(Boolean);
+
+                const parsedPoints = [];
+
+                for (const pt of rawPoints) {
+                    const m = pt.match(/(-?\d*\.?\d+)%\s+(-?\d*\.?\d+)%/);
+                    if (!m) continue;
+
+                    const xPct = parseFloat(m[1]);
+                    const yPct = parseFloat(m[2]);
+
+                    if (Number.isNaN(xPct) || Number.isNaN(yPct)) continue;
+
+                    parsedPoints.push({ x: xPct, y: yPct });
+                }
+
+                // Need at least 3 points for a valid custom geometry
+                if (parsedPoints.length < 3) {
+                    pptSlide.addShape(pptx.shapes.RIGHT_ARROW, shapeOptions);
+                    break;
+                }
+
+                // Build SVG path in a normalized 100x100 viewBox
+                let pathD = `M ${parsedPoints[0].x} ${parsedPoints[0].y}`;
+                for (let i = 1; i < parsedPoints.length; i++) {
+                    pathD += ` L ${parsedPoints[i].x} ${parsedPoints[i].y}`;
+                }
+                pathD += ' Z';
+
+                // Convert normalized polygon -> pptx custGeom points
+                const custGeomPoints = svgAddToSlide.convertSvgPathToPptxPoints(
+                    pathD,
+                    100,              // viewBox width
+                    100,              // viewBox height
+                    shapeOptions.w,   // actual width in inches
+                    shapeOptions.h    // actual height in inches
+                );
+
+                if (!custGeomPoints || custGeomPoints.filter(p => !p.close).length < 3) {
+                    pptSlide.addShape(pptx.shapes.RIGHT_ARROW, shapeOptions);
+                    break;
+                }
+
+                pptSlide.addShape('custGeom', {
+                    ...shapeOptions,
+                    objectName: objName || 'rightArrow',
+                    points: custGeomPoints
+                });
+
                 break;
+            }
             case 'rightArrowCallout':
                 pptSlide.addShape(pptx.shapes.RIGHT_ARROW_CALLOUT, shapeOptions);
                 break;

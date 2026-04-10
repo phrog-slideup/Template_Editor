@@ -101,7 +101,7 @@ class ShapeHandler {
     }
 
 
-    async convertAllShapesToHTML(shapeNodes, lineShapeTag, graphicNodes, themeXML, masterXML, zIndexMap = null) {
+    async convertAllShapesToHTML(shapeNodes, lineShapeTag, graphicNodes, themeXML, masterXML, zIndexMap = null, groupNodes = []) {
 
         this.zIndexMap = zIndexMap;
 
@@ -127,6 +127,37 @@ class ShapeHandler {
                 console.error('Non-string shape HTML:', typeof shapeHtml, shapeHtml);
             }
             allHtmlElements.push(shapeHtml);
+        }
+
+        // ✅ Process group shapes (p:grpSp) — children inherit group's z-index
+        for (const grpSpNode of groupNodes) {
+            const groupName = grpSpNode?.["p:nvGrpSpPr"]?.[0]?.["p:cNvPr"]?.[0]?.["$"]?.name;
+            const groupZIndex = this.getZIndexForShape(groupName);
+
+            // Get all p:sp children inside this group
+            const groupChildShapes = grpSpNode?.["p:sp"] || [];
+
+            for (const childShape of groupChildShapes) {
+                if (this.isMasterPlaceholder(childShape, masterXML)) continue;
+
+                const childHtml = await this.convertShapeToHTML(childShape, themeXML, masterXML, groupZIndex);
+                if (typeof childHtml === 'string') {
+                    allHtmlElements.push(childHtml);
+                }
+            }
+
+            // Handle nested grpSp inside grpSp (one level deep)
+            const nestedGroups = grpSpNode?.["p:grpSp"] || [];
+            for (const nestedGrp of nestedGroups) {
+                const nestedChildShapes = nestedGrp?.["p:sp"] || [];
+                for (const childShape of nestedChildShapes) {
+                    if (this.isMasterPlaceholder(childShape, masterXML)) continue;
+                    const childHtml = await this.convertShapeToHTML(childShape, themeXML, masterXML, groupZIndex);
+                    if (typeof childHtml === 'string') {
+                        allHtmlElements.push(childHtml);
+                    }
+                }
+            }
         }
 
         // Process connectors
@@ -329,7 +360,7 @@ class ShapeHandler {
         }
     }
 
-    async convertShapeToHTML(shapeNode, themeXML, masterXML) {
+    async convertShapeToHTML(shapeNode, themeXML, masterXML, groupZIndex = null) {
         // Add this helper function at the top
         const sanitizeShapeName = (name) => {
             if (!name) return '';
@@ -341,7 +372,7 @@ class ShapeHandler {
 
         const line = shapeNode?.["p:spPr"]?.[0]?.["a:ln"]?.[0];
 
-        const zIndex = this.getZIndexForShape(shapeName);
+        const zIndex = this.getZIndexForShape(shapeName, null);
         let strokeWidth = "1px";
         let strokeColor = "#042433";
 
@@ -350,6 +381,95 @@ class ShapeHandler {
         // Check if this shape is a placeholder
         const isPlaceholder = this.isPlaceholder(shapeNode);
         const placeholderClass = isPlaceholder ? ' placeholder-picture' : '';
+
+        const custGeomEarly = shapeNode?.["p:spPr"]?.[0]?.["a:custGeom"]?.[0];
+
+        if (blip && blip["$"] && blip["$"]["r:embed"] && custGeomEarly) {
+            const imageInfo = await this.getImageFromPicture(
+                shapeNode, this.slidePath, this.relationshipsXML
+            );
+
+            if (imageInfo) {
+                const position = this.getShapePosition(shapeNode, this.masterXML);
+                const rotation = pptTextAllInfo.getRotation(shapeNode);
+
+                const xfrm = shapeNode?.["p:spPr"]?.[0]?.["a:xfrm"]?.[0];
+                const flipH = xfrm?.["$"]?.flipH === "1";
+                const flipV = xfrm?.["$"]?.flipV === "1";
+
+                const W = position.width;
+                const H = position.height;
+
+                const blipOpacity = blip?.["a:alphaModFix"]?.[0]?.["$"]?.amt
+                    ? parseFloat(blip["a:alphaModFix"][0]["$"].amt) / 100000
+                    : 1;
+
+                // ✅ Generate path WITH flipping baked into coordinates
+                // So the clipPath boundary is already in final flipped space
+                const { pathD } = freeFormShape.generateCustomShapePathOnly(
+                    shapeNode, custGeomEarly, position, { skipFlip: false }
+                );
+
+                const clipId = `custGeomClip_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+
+                // ✅ Build image transform to flip the image to match the path
+                // The path is already flipped, so image must also be flipped
+                // to align with the clipped region
+                let imageTransform = "";
+                if (flipH && flipV) {
+                    imageTransform = `scale(-1,-1) translate(${-W}, ${-H})`;
+                } else if (flipH) {
+                    imageTransform = `scale(-1,1) translate(${-W}, 0)`;
+                } else if (flipV) {
+                    imageTransform = `scale(1,-1) translate(0, ${-H})`;
+                }
+
+                // ✅ CSS rotation for outer container
+                const cssTransform = rotation ? `rotate(${rotation}deg)` : 'none';
+
+                return `<div class="shape custgeom-image"
+                    data-name="${shapeName}"
+                    style="position:absolute;
+                        left:${position.x}px;
+                        top:${position.y}px;
+                        width:${W}px;
+                        height:${H}px;
+                        transform:${cssTransform};
+                        z-index:${zIndex};
+                        overflow:visible;">
+                    <svg width="${W}" height="${H}"
+                        viewBox="0 0 ${W} ${H}"
+                        xmlns="http://www.w3.org/2000/svg"
+                        style="position:absolute;left:0;top:0;overflow:visible;">
+                        <defs>
+                            <clipPath id="${clipId}">
+                                <path d="${pathD}"/>
+                            </clipPath>
+                        </defs>
+                        <g clip-path="url(#${clipId})">
+                            ${imageTransform
+                        ? `<image
+                                    href="${imageInfo.src}"
+                                    x="0" y="0"
+                                    width="${W}" height="${H}"
+                                    preserveAspectRatio="xMidYMid slice"
+                                    opacity="${blipOpacity}"
+                                    transform="${imageTransform}"
+                                    style="pointer-events:none;"/>`
+                        : `<image
+                                    href="${imageInfo.src}"
+                                    x="0" y="0"
+                                    width="${W}" height="${H}"
+                                    preserveAspectRatio="xMidYMid slice"
+                                    opacity="${blipOpacity}"
+                                    style="pointer-events:none;"/>`
+                    }
+                        </g>
+                    </svg>
+                </div>`;
+            }
+        }
+
 
         if (blip && blip["$"] && blip["$"]["r:embed"]) {
             const imageId = blip?.["$"]?.["r:embed"];
@@ -366,10 +486,37 @@ class ShapeHandler {
                 const croppingStyles = cropData ? this.generateComprehensiveCroppingStyles(cropData) : null;
 
                 // Apply border-radius for ellipse detection
-                const shapeStyle = imageInfo.shape === "ellipse" ? "border-radius: 50%; overflow: hidden;" : "";
+                // ✅ Base ellipse clipping
+                let shapeStyle = imageInfo.shape === "ellipse" ? "border-radius: 50%; overflow: hidden;" : "";
+
+                // ✅ custGeom circle detection — clip circular bezier shapes with border-radius
+                // Keeps <img> tag intact for HTML→PPTX roundtrip (no SVG image wrapping)
+                if (!shapeStyle && shapeNode?.["p:spPr"]?.[0]?.["a:custGeom"]?.[0]) {
+                    const custPath = shapeNode?.["p:spPr"]?.[0]?.["a:custGeom"]?.[0]
+                        ?.["a:pathLst"]?.[0]?.["a:path"]?.[0];
+                    const cpW = parseFloat(custPath?.["$"]?.w || 0);
+                    const cpH = parseFloat(custPath?.["$"]?.h || 0);
+                    const hasBezier = (custPath?.["a:cubicBezTo"] || []).length >= 3;
+                    const noLines = !(custPath?.["a:lnTo"]);
+                    const isCircular = cpW > 0 && cpH > 0
+                        && Math.abs(cpW - cpH) / Math.max(cpW, cpH) < 0.02;
+                    if (hasBezier && noLines && isCircular) {
+                        shapeStyle = "border-radius: 50%; overflow: hidden;";
+                    }
+                }
+
+                // ✅ alphaModFix: handle reduced opacity blips (e.g. amt="15000" = 15% opacity)
+                const alphaModFix = blip?.["a:alphaModFix"]?.[0]?.["$"]?.amt;
+                const blipOpacity = alphaModFix ? parseFloat(alphaModFix) / 100000 : null;
+                const isGrayscale = Boolean(blip?.["a:grayscl"]);
                 const borderCSS = imageInfo.border.width > 0 ? `border: ${imageInfo.border.width}px solid ${imageInfo.border.color};` : "";
                 const boxShadowCSS = (imgcss.shadowOffsetX || imgcss.shadowOffsetY) ? `box-shadow: ${imgcss.shadowOffsetX}px ${imgcss.shadowOffsetY}px ${imgcss.shadowColor};` : "";
-                const combinedFilter = imgcss.blurAmount ? `filter: blur(${imgcss.blurAmount}px) contrast(${imgcss.contrastValue || 1});` : "filter:none;";
+                let combinedFilter = '';
+                if (!isGrayscale) {
+                    combinedFilter = imgcss.blurAmount ? `filter: blur(${imgcss.blurAmount}px) contrast(${imgcss.contrastValue || 1});` : "filter:none;";
+                } else {
+                    combinedFilter = 'filter: grayscale(100%);';
+                }
 
                 // Apply cropping styles if available
                 const containerCroppingStyles = croppingStyles ? croppingStyles.containerStyles : 'overflow: hidden;';
@@ -434,13 +581,12 @@ class ShapeHandler {
                                         ${shapeStyle}
                                         ${boxShadowCSS}
                                         ${containerCroppingStyles}
-                                        transform: ${imgcss.transform} rotate(${rotation}deg);
                                         z-index:${zIndex};">
                             
                                             <img src="${imageInfo.src}" alt="Img"
                                                 style="${imageCroppingStyles}
                                                 transform: ${imgcss.flipH} ${imgcss.flipV} rotate(${rotation}deg);
-                                                opacity:${imgcss.opacity};
+                                                opacity:${blipOpacity !== null ? blipOpacity : imgcss.opacity};
                                                 z-index:0;
                                                 object-fit: cover;
                                                 ${boxShadowCSS}
@@ -623,12 +769,21 @@ class ShapeHandler {
             const flipH = position.flipH || false;
             const flipV = position.flipV || false;
 
-            // ✅ FIX: Resolve <a:ln> stroke schemeClr through theme + lumMod/lumOff
-            // before passing to SVG. extractStrokeProperties() may miss these modifiers
-            // for custGeom shapes, causing the stroke to fall back to #000.
+            // ✅ FIX: Resolve <a:ln> stroke color (solidFill OR gradFill) through
+            // theme + lumMod/lumOff before passing to SVG.
             let resolvedStroke = { ...stroke };
             const lnNode = shapeNode?.["p:spPr"]?.[0]?.["a:ln"]?.[0];
             if (lnNode) {
+                // ── Default width fix: when <a:ln> exists but has no 'w' attr ──
+                if (!lnNode?.["a:noFill"] && resolvedStroke.width === 0) {
+                    const emuW = lnNode?.["$"]?.w;
+                    resolvedStroke = {
+                        ...resolvedStroke,
+                        width: emuW ? parseInt(emuW, 10) / this.getEMUDivisor() : 1
+                    };
+                }
+
+                // ── solidFill schemeClr override ──────────────────────────────
                 const schClrNode = lnNode?.["a:solidFill"]?.[0]?.["a:schemeClr"]?.[0];
                 if (schClrNode) {
                     const schVal = schClrNode["$"]?.val;
@@ -643,6 +798,75 @@ class ShapeHandler {
                         }
                         resolvedStroke = { ...resolvedStroke, color: resolvedColor };
                     }
+                }
+
+                // ── gradFill override ─────────────────────────────────────────
+                // extractStrokeProperties() already parsed gradFill into
+                // stroke.strokeType / stroke.gradientStops / stroke.gradientAngle.
+                // Re-resolve here so schemeClr stops benefit from masterXMLToUse
+                // (which is not available inside extractStrokeProperties).
+                const gradFillNode = lnNode?.["a:gradFill"]?.[0];
+                if (gradFillNode) {
+                    const resolvedStops = [];
+                    const gsList = gradFillNode["a:gsLst"]?.[0]?.["a:gs"] || [];
+
+                    for (const gs of gsList) {
+                        const posVal = parseInt(gs["$"]?.pos || "0", 10);
+                        const offsetPct = `${(posVal / 1000).toFixed(1)}%`;
+                        let stopColor = "#000000";
+
+                        const srgbClr = gs["a:srgbClr"]?.[0];
+                        const schemeClr = gs["a:schemeClr"]?.[0];
+                        const sysClr = gs["a:sysClr"]?.[0];
+                        const prstClr = gs["a:prstClr"]?.[0];
+
+                        if (srgbClr) {
+                            stopColor = `#${srgbClr["$"].val}`;
+                            const lumMod = srgbClr["a:lumMod"]?.[0]?.["$"]?.val;
+                            const lumOff = srgbClr["a:lumOff"]?.[0]?.["$"]?.val;
+                            if (lumMod && lumOff) {
+                                stopColor = pptBackgroundColors.applyLuminanceModifier(stopColor, lumMod, lumOff);
+                            } else if (lumMod) {
+                                stopColor = colorHelper.applyLumMod(stopColor, lumMod);
+                            }
+                        } else if (schemeClr) {
+                            const schVal = schemeClr["$"]?.val;
+                            // Use masterXMLToUse here — not available in extractStrokeProperties
+                            stopColor = colorHelper.resolveThemeColorHelper(schVal, themeXML, masterXMLToUse);
+                            const lumMod = schemeClr["a:lumMod"]?.[0]?.["$"]?.val;
+                            const lumOff = schemeClr["a:lumOff"]?.[0]?.["$"]?.val;
+                            if (lumMod && lumOff) {
+                                stopColor = pptBackgroundColors.applyLuminanceModifier(stopColor, lumMod, lumOff);
+                            } else if (lumMod) {
+                                stopColor = colorHelper.applyLumMod(stopColor, lumMod);
+                            }
+                        } else if (sysClr) {
+                            const lastClr = sysClr["$"]?.lastClr;
+                            stopColor = lastClr ? `#${lastClr}` : (this.resolveColor(sysClr["$"]?.val) || "#000000");
+                        } else if (prstClr) {
+                            stopColor = this.resolvePresetColorFromTheme(prstClr["$"]?.val, themeXML)
+                                || this.getPresetColorFallback(prstClr["$"]?.val);
+                        }
+
+                        resolvedStops.push({ offset: offsetPct, color: stopColor });
+                    }
+
+                    // Compute gradient angle from <a:lin ang="...">
+                    let resolvedGradAngle = resolvedStroke.gradientAngle || 0;
+                    const linNode = gradFillNode["a:lin"]?.[0];
+                    if (linNode) {
+                        const pptxAng = parseInt(linNode["$"]?.ang || "0", 10) / 60000;
+                        resolvedGradAngle = (270 - pptxAng + 360) % 360;
+                    }
+
+                    resolvedStroke = {
+                        ...resolvedStroke,
+                        strokeType: "gradient",
+                        gradientStops: resolvedStops,
+                        gradientAngle: resolvedGradAngle,
+                        // First stop as solid fallback for consumers that don't support gradient stroke
+                        color: resolvedStops.length > 0 ? resolvedStops[0].color : resolvedStroke.color,
+                    };
                 }
             }
 
@@ -1324,7 +1548,7 @@ class ShapeHandler {
                 caseName = "upDownArrow";
                 clipPath = "polygon( 50% 0%,70% 20%, 60% 20%, 60% 45%, 80% 45%,50% 75%,20% 45%, 40% 45%, 40% 20%,  30% 20%,50% 0%,50% 75%,  80% 45%,  60% 45%, 60% 80%,  70% 80%, 50% 100%,30% 80%, 40% 80%,  40% 45%, 20% 45%,50% 75%)";
                 break;
-             case "chevron": {
+            case "chevron": {
                 caseName = "chevron";
 
                 const w = Math.max(position.width || 1, 1);
@@ -2357,11 +2581,11 @@ class ShapeHandler {
                                             flood-color="rgba(${shadowRgb},${alphaFrac})"/>
                             </filter>
                         </defs>`;
-                            }
+                }
 
-                            const filterAttr = filterId ? `filter="url(#${filterId})"` : "";
+                const filterAttr = filterId ? `filter="url(#${filterId})"` : "";
 
-                            return `<div class="shape" id="cube" data-name="${shapeName}" style="
+                return `<div class="shape" id="cube" data-name="${shapeName}" style="
                             position: absolute;
                             left: ${position.x}px;
                             top: ${position.y}px;
@@ -3107,6 +3331,12 @@ class ShapeHandler {
         // Extract stroke color from various color types
         const solidFill = outline?.["a:solidFill"]?.[0];
 
+        // ── gradient stroke support ──────────────────────────────────────────
+        let strokeType = "solid";           // "solid" | "gradient"
+        let gradientStops = [];             // [{ offset: "0%", color: "#rrggbb" }, ...]
+        let gradientAngle = 0;              // CSS/SVG degrees (0 = left→right)
+        // ─────────────────────────────────────────────────────────────────────
+
         if (solidFill) {
             // Handle direct RGB colors (srgbClr)
             if (solidFill["a:srgbClr"]) {
@@ -3149,7 +3379,7 @@ class ShapeHandler {
                 const r = Math.round(parseFloat(scrgbNode.r || 0) * 255);
                 const g = Math.round(parseFloat(scrgbNode.g || 0) * 255);
                 const b = Math.round(parseFloat(scrgbNode.b || 0) * 255);
-                strokeColor = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+                strokeColor = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '00')}`;
             }
             // Handle HSL colors (hslClr)
             else if (solidFill["a:hslClr"]) {
@@ -3187,12 +3417,82 @@ class ShapeHandler {
                 }
             }
         }
+        // ── Handle gradient stroke fill (<a:gradFill> inside <a:ln>) ──────────
+        else {
+            const gradFill = outline?.["a:gradFill"]?.[0];
+            if (gradFill) {
+                strokeType = "gradient";
+
+                // ── Resolve gradient angle ───────────────────────────────────
+                // <a:lin ang="10800000"> — PPTX stores angle in 60000ths of a degree.
+                // 10800000 / 60000 = 180° in PPTX convention (measures clockwise from
+                // the top). SVG linearGradient uses standard math angles, so we convert:
+                //   SVG angle = (270 - pptx_deg) mod 360
+                const linNode = gradFill["a:lin"]?.[0];
+                if (linNode) {
+                    const pptxAng = parseInt(linNode["$"]?.ang || "0", 10) / 60000;
+                    gradientAngle = (270 - pptxAng + 360) % 360;
+                }
+
+                // ── Resolve each gradient stop ───────────────────────────────
+                const gsList = gradFill["a:gsLst"]?.[0]?.["a:gs"] || [];
+                for (const gs of gsList) {
+                    // pos is in 1000ths of a percent (0–100000)
+                    const posVal = parseInt(gs["$"]?.pos || "0", 10);
+                    const offsetPct = `${(posVal / 1000).toFixed(1)}%`;
+
+                    let stopColor = "#000000";
+
+                    const srgbClr = gs["a:srgbClr"]?.[0];
+                    const schemeClr = gs["a:schemeClr"]?.[0];
+                    const sysClr = gs["a:sysClr"]?.[0];
+                    const prstClr = gs["a:prstClr"]?.[0];
+
+                    if (srgbClr) {
+                        stopColor = `#${srgbClr["$"].val}`;
+                        const lumMod = srgbClr["a:lumMod"]?.[0]?.["$"]?.val;
+                        const lumOff = srgbClr["a:lumOff"]?.[0]?.["$"]?.val;
+                        if (lumMod && lumOff) {
+                            stopColor = pptBackgroundColors.applyLuminanceModifier(stopColor, lumMod, lumOff);
+                        } else if (lumMod) {
+                            stopColor = colorHelper.applyLumMod(stopColor, lumMod);
+                        }
+                    } else if (schemeClr) {
+                        const schVal = schemeClr["$"]?.val;
+                        stopColor = colorHelper.resolveThemeColorHelper(schVal, themeXML || this.themeXML, this.masterXML);
+                        const lumMod = schemeClr["a:lumMod"]?.[0]?.["$"]?.val;
+                        const lumOff = schemeClr["a:lumOff"]?.[0]?.["$"]?.val;
+                        if (lumMod && lumOff) {
+                            stopColor = pptBackgroundColors.applyLuminanceModifier(stopColor, lumMod, lumOff);
+                        } else if (lumMod) {
+                            stopColor = colorHelper.applyLumMod(stopColor, lumMod);
+                        }
+                    } else if (sysClr) {
+                        const lastClr = sysClr["$"]?.lastClr;
+                        stopColor = lastClr ? `#${lastClr}` : (this.resolveColor(sysClr["$"]?.val) || "#000000");
+                    } else if (prstClr) {
+                        stopColor = this.resolvePresetColorFromTheme(prstClr["$"]?.val, themeXML || this.themeXML)
+                            || this.getPresetColorFallback(prstClr["$"]?.val);
+                    }
+
+                    gradientStops.push({ offset: offsetPct, color: stopColor });
+                }
+
+                // Use the first stop color as a solid fallback for non-SVG consumers
+                strokeColor = gradientStops.length > 0 ? gradientStops[0].color : "#000000";
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────
 
         return {
             width: strokeWidth,
             color: strokeColor,
             cap: strokeCap,
-            dashArray: strokeDashArray
+            dashArray: strokeDashArray,
+            // gradient extras (present for every call; empty when strokeType==="solid")
+            strokeType,
+            gradientStops,
+            gradientAngle,
         };
     }
 
@@ -3236,7 +3536,7 @@ class ShapeHandler {
         return commonPresets[presetValue] || '#000000';
     }
 
-    getZIndexForShape(shapeName) {
+    getZIndexForShape(shapeName, groupZIndex = null) {
 
         if (this.zIndexMap) {
             if (!this.shapeNameOccurrences[shapeName]) {
@@ -3248,6 +3548,9 @@ class ShapeHandler {
             this.shapeNameOccurrences[shapeName]++;
             const zIndex = this.zIndexMap[uniqueKey] || 0;
 
+            if (groupZIndex !== null) {
+                return groupZIndex;
+            }
             return zIndex;
         }
 

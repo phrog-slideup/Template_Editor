@@ -484,10 +484,6 @@ function isInsideDefs(node) {
  * Safely extract the background / background-image value from a DOM element's
  * raw style attribute.
  *
- * IMPORTANT: We MUST read the raw attribute string, NOT element.style.background.
- * JSDOM's CSS parser silently drops complex values like radial-gradient() from
- * the CSSOM (element.style.*), so element.style.background always returns "".
- * Reading the raw attribute bypasses the broken CSSOM and works reliably.
  */
 function extractRawBackground(element) {
     if (!element) return '';
@@ -512,18 +508,6 @@ function extractRawBoxShadow(element) {
 /**
  * Parse a CSS box-shadow string into a pptxgenjs shadow options object.
  *
- * CSS:  box-shadow: inset 0px 0px 60px rgba(0,0,0,1)
- * PPTX: { type:'inner', color:'000000', blur:60, offset:0, angle:0, opacity:1 }
- *
- * pptxgenjs shadow API:
- *   type    : 'outer' | 'inner'
- *   color   : hex string without #  e.g. '000000'
- *   blur    : blur radius in POINTS  (pptxgenjs calls valToPts internally)
- *   offset  : distance in POINTS
- *   angle   : direction in DEGREES
- *   opacity : 0–1
- *
- * Returns null if no valid shadow found.
  */
 function parseBoxShadowForPptxgenjs(boxShadow) {
     if (!boxShadow || boxShadow === 'none') return null;
@@ -581,12 +565,6 @@ function parseBoxShadowForPptxgenjs(boxShadow) {
     }
 }
 
-/**
- * Parse a CSS gradient string (linear-gradient / radial-gradient) into a
- * structured object compatible with the svgGradientFillStore schema:
- *   { type, stops:[{color,alpha,pos}], focusX, focusY, radialPath, angleDeg }
- * Returns null on failure.
- */
 function parseCssGradient(cssGradStr) {
     if (!cssGradStr || !cssGradStr.includes('gradient')) return null;
     try {
@@ -695,19 +673,6 @@ function collectNodeStyles(node, svgElement) {
 /**
  * parseDropShadowFilter(svgElement)
  *
- * Reads CSS  filter: drop-shadow(offX offY blur color)  from the <svg>
- * element's raw style attribute (JSDOM-safe — reads getAttribute('style'),
- * NOT element.style.filter which JSDOM silently drops).
- *
- * Returns a pptxgenjs shadow object:
- *   { type:'outer', color:'000000', blur:4, offset:9, angle:45, opacity:0.4 }
- * or null when no drop-shadow is found.
- *
- * IMPORTANT — shadow opacity handling:
- *   pptxgenjs may not reliably write <a:alpha> for shadow colors on custGeom
- *   shapes.  After calling this, always register the result in svgShadowStore
- *   (done in addSvgToSlide) so injectSvgShadowOpacityIntoSlideXML() can
- *   patch the alpha directly into the raw OOXML as a guaranteed fallback.
  */
 function parseDropShadowFilter(svgElement) {
     if (!svgElement) return null;
@@ -718,9 +683,7 @@ function parseDropShadowFilter(svgElement) {
 
         const filterVal = filterMatch[1].trim();
         // Use a paren-aware regex so rgba(r,g,b,a) nested inside drop-shadow(...)
-        // does not cause the outer match to stop at rgba's closing ')' prematurely.
-        // Old:  /drop-shadow\(\s*([^)]+)\)/  ← stops at first ')' = cuts rgba value
-        // New:  handles one level of nested parens via ((?:[^)(]|\([^)]*\))+)
+       
         const dsMatch = filterVal.match(/drop-shadow\(((?:[^)(]|\([^)]*\))+)\)/i);
         if (!dsMatch) return null;
 
@@ -781,17 +744,6 @@ function parseDropShadowFilter(svgElement) {
 /**
  * parseSvgGradientElement(gradEl, svgElement)
  *
- * Parse a <linearGradient> or <radialGradient> DOM element into the same
- * schema as parseCssGradient():
- *   { type, stops:[{color,alpha,pos}], angleDeg, focusX, focusY, radialPath }
- *
- * Handles:
- *  • stop-color/stop-opacity via style attribute (JSDOM-safe raw attr read)
- *  • stop-color/stop-opacity as standalone attributes
- *  • offset as percentage ("1%") or fraction ("0.01")
- *  • linearGradient x1/y1 → x2/y2 → CSS angle conversion
- *  • radialGradient cx/cy focal point
- *  • href / xlink:href gradient inheritance
  */
 function parseSvgGradientElement(gradEl, svgElement) {
     if (!gradEl) return null;
@@ -905,31 +857,6 @@ function parseSvgGradientElement(gradEl, svgElement) {
 /**
  * injectSvgShadowOpacityIntoSlideXML(slideXml)
  *
- * Post-processing step: for each shape in global.svgShadowStore, find the
- * shadow color element in the slide XML and inject <a:alpha val="N"/> so the
- * shadow's rgba() transparency is preserved in the PPTX.
- *
- * WHY THIS IS NEEDED:
- *   pptxgenjs may not reliably write <a:alpha> for the shadow color node on
- *   custGeom shapes, causing the shadow to appear fully opaque (solid black)
- *   instead of semi-transparent.  This function guarantees the alpha is written
- *   by patching the raw OOXML after pptxgenjs generates it — the same pattern
- *   used by injectSvgGradientFillsIntoSlideXML.
- *
- * OOXML shadow structure that pptxgenjs writes:
- *   <a:effectLst>
- *     <a:outerShdw blurRad="N" dist="N" dir="N" ...>
- *       <a:srgbClr val="000000"/>          ← self-closing, no alpha
- *       OR
- *       <a:srgbClr val="000000"></a:srgbClr>  ← no alpha child
- *     </a:outerShdw>
- *   </a:effectLst>
- *
- * After injection:
- *   <a:srgbClr val="000000"><a:alpha val="40000"/></a:srgbClr>
- *
- * @param {string} slideXml - raw slide XML string from the PPTX ZIP
- * @returns {string} - modified slide XML with shadow alpha injected
  */
 function injectSvgShadowOpacityIntoSlideXML(slideXml) {
     if (!global.svgShadowStore || global.svgShadowStore.size === 0) return slideXml;
@@ -944,8 +871,7 @@ function injectSvgShadowOpacityIntoSlideXML(slideXml) {
         const shadowTag = (type === 'inner') ? 'innerShdw' : 'outerShdw';
 
         // ── Find every <p:sp> block that owns this shape name ─────────────────
-        // pptxgenjs writes:  <p:cNvPr id="N" name="objectName"/>
-        // We walk the XML to find enclosing <p:sp>…</p:sp> blocks.
+     
         const spOpenTag  = '<p:sp>';
         const spCloseTag = '</p:sp>';
         let pos = 0;
@@ -963,8 +889,7 @@ function injectSvgShadowOpacityIntoSlideXML(slideXml) {
                 let newBlock = spBlock;
 
                 // ── Locate the shadow tag block first, then patch color inside it ──
-                // This two-step approach avoids [\s\S]*? overshooting the shadow
-                // boundary and prevents double-injection across sibling elements.
+               
                 newBlock = newBlock.replace(
                     new RegExp(`(<a:${shadowTag}[^>]*>)([\\s\\S]*?)(</a:${shadowTag}>)`, 'g'),
                     (shadowMatch, shadowOpen, shadowInner, shadowClose) => {
@@ -1010,8 +935,7 @@ function collectSvgDrawables(svgElement) {
     const nodes = Array.from(svgElement.querySelectorAll('path, polygon, polyline, rect, circle, ellipse'));
 
     // ── Filter out nodes inside <defs> ──────────────────────────────────────
-    // querySelectorAll descends into <defs>, picking up clipPath paths that are
-    // used as clip masks only — not rendered shapes. Filter them out first.
+    
     const visibleNodes = nodes.filter(node => !isInsideDefs(node));
 
     const drawables = visibleNodes
@@ -1030,10 +954,7 @@ function collectSvgDrawables(svgElement) {
         .filter(Boolean);
 
     // ── Resolve url(#id) gradient fill references ─────────────────────────────
-    // When a <path> has fill="url(#gradientId)", collectNodeStyles() stores
-    // that string verbatim.  extractColor() returns null for url() refs, so the
-    // shape gets NO fill and NO gradient unless we resolve it here.
-    // Fix: look up the <linearGradient>/<radialGradient> in <defs>, parse it,
+    
     // store in drawable.gradient, and set a solid fallback as styles.fill.
     for (const drawable of drawables) {
         const fillAttr = drawable.styles.fill || '';
@@ -1056,25 +977,12 @@ function collectSvgDrawables(svgElement) {
 
         drawable.gradient = parsed;
         // Solid fallback colour so pptxgenjs has a placeholder until the
-        // post-processor injects the proper <a:gradFill> XML.
+      
         drawable.styles.fill = `#${parsed.stops[0].color}`;
     }
 
     // ── Handle foreignObject + clipPath gradient pattern ─────────────────────
-    // Pattern used for gradient-filled custom shapes:
-    //   <clipPath id="X"><path d="…"/></clipPath>
-    //   <foreignObject clip-path="url(#X)">
-    //     <div style="background: radial-gradient(…)"/>
-    //   </foreignObject>
-    //
-    // The clipPath path was filtered above (it's inside <defs>). The gradient
-    // lives in the foreignObject div. We detect this pattern when the normal
-    // drawable list is empty and synthesise a drawable that carries the gradient.
-    //
-    // ⚠ JSDOM BUG WORKAROUND: element.style.background / backgroundImage always
-    // returns "" for radial-gradient / linear-gradient values because JSDOM's
-    // CSSOM parser rejects them. We MUST read the raw style attribute string via
-    // getAttribute('style') and regex-extract the gradient value ourselves.
+  
     if (drawables.length === 0) {
         const foreignObjects = Array.from(svgElement.querySelectorAll('foreignObject'));
         for (const fo of foreignObjects) {
@@ -1108,16 +1016,12 @@ function collectSvgDrawables(svgElement) {
                     gradient = parseCssGradient(bg);
                 }
 
-                // ── Extract box-shadow (JSDOM-safe) ──────────────────────────
-                // JSDOM silently drops box-shadow from element.style, so we
-                // must read the raw style attribute string via getAttribute().
+             
                 const rawShadow = extractRawBoxShadow(divEl);
                 if (rawShadow) shadow = parseBoxShadowForPptxgenjs(rawShadow);
             }
 
-            // Dominant (first stop) colour as solid fallback.
-            // pptxgenjs will render this initially; the post-processing
-            // injection step replaces it with a proper <a:gradFill>.
+          
             const fallbackHex = gradient?.stops?.[0]?.color || 'CCCCCC';
 
             drawables.push({
@@ -1156,13 +1060,7 @@ function createDynamicShapeOptions(element, slideContext, points, svgStyles) {
     };
 
     // ── Opacity / Transparency ────────────────────────────────────────────────
-    // BUG FIX: Compute opacity BEFORE setting fill so transparency can be
-    // embedded directly inside the fill object (see below).
-    //
-    // BUG FIX: `style.opacity` (JSDOM CSSStyleDeclaration) sometimes returns
-    // '' or undefined for multi-line inline-style attributes in certain JSDOM
-    // versions.  Use a raw getAttribute() regex as a guaranteed fallback — the
-    // same JSDOM-safe pattern already used elsewhere in this file (e.g. for
+   
     // background-gradient extraction).
     let opacityStr = style.opacity;
     if ((opacityStr === '' || opacityStr == null) && element.getAttribute) {
@@ -1171,19 +1069,14 @@ function createDynamicShapeOptions(element, slideContext, points, svgStyles) {
         if (m) opacityStr = m[1];
     }
 
-    // SVG node-level opacity/fill-opacity are secondary sources.
-    // Use != '1' guard so the default '1' placeholder doesn't mask a real
-    // container opacity that JSDOM failed to surface via element.style.
+  
     const svgNodeOpacity = (svgStyles.opacity !== '1' && svgStyles.opacity != null) ? svgStyles.opacity : null;
     const rawOpacity = parseFloat(opacityStr || svgNodeOpacity || svgStyles.fillOpacity || '1');
     const opacity = Number.isFinite(rawOpacity) ? Math.max(0, Math.min(1, rawOpacity)) : 1;
     const transparency = opacity < 1 ? Math.round((1 - opacity) * 100) : 0;
 
     // ── Fill ──────────────────────────────────────────────────────────────────
-    // BUG FIX: pptxgenjs does NOT reliably apply a top-level `transparency`
-    // property to a *string* fill for custGeom shapes.  Embed transparency
-    // directly inside the fill object so the <a:alpha> element is always
-    // written into the XML regardless of which pptxgenjs code path runs.
+    
     const fillColor = extractColor(svgStyles.fill);
     if (fillColor) {
         shapeOptions.fill = (transparency > 0 && transparency <= 100)
@@ -1198,12 +1091,8 @@ function createDynamicShapeOptions(element, slideContext, points, svgStyles) {
         shapeOptions.line = { color: strokeColor, width: Math.min(strokeWidth, 10) };
     }
 
-    // Keep top-level transparency as well for older pptxgenjs compatibility
-    // and for shapes that have no explicit fill (stroke-only outlines).
     if (transparency > 0 && transparency <= 100) shapeOptions.transparency = transparency;
 
-    // Stash raw opacity (0-1) for the post-processing XML-injection step.
-    // Removed before calling pptxgenjs.addShape (see addSvgToSlide below).
     if (opacity < 1) shapeOptions._opacity = opacity;
 
     const transform = style.transform || '';
@@ -1227,11 +1116,7 @@ function createDynamicShapeOptions(element, slideContext, points, svgStyles) {
     }
 
     // ── Shadow ────────────────────────────────────────────────────────────────
-    // Read box-shadow from the parent wrapper element via raw attribute
-    // (JSDOM silently drops box-shadow from element.style, so getAttribute is required).
-    // This covers outer box-shadow on the wrapper div.
-    // Inset shadows on foreignObject > div are handled in collectSvgDrawables
-    // and passed in via drawable.shadow, which overrides this value in addSvgToSlide.
+  
     const rawWrapperShadow = extractRawBoxShadow(element);
     if (rawWrapperShadow) {
         const parsedShadow = parseBoxShadowForPptxgenjs(rawWrapperShadow);
@@ -1246,8 +1131,8 @@ function validateShapeOptions(shapeOptions) {
     if (!shapeOptions.points || shapeOptions.points.length === 0) return false;
     if (!shapeOptions.points.some(point => point.moveTo === true)) return false;
 
-    shapeOptions.x = Math.max(0, shapeOptions.x || 0);
-    shapeOptions.y = Math.max(0, shapeOptions.y || 0);
+    shapeOptions.x = Number.isFinite(shapeOptions.x) ? shapeOptions.x : 0;
+    shapeOptions.y = Number.isFinite(shapeOptions.y) ? shapeOptions.y : 0;
 
     const hasFill = shapeOptions.fill !== undefined && shapeOptions.fill !== null;
     const hasStroke = shapeOptions.line && shapeOptions.line.width > 0;
@@ -1321,11 +1206,7 @@ function addSvgToSlide(pptSlide, svgElement, elementStyle, slideContext) {
             const baseName = normalizeSvgObjectBaseName(parentElement.dataset?.name || parentElement.className || 'unnamed');
             shapeOptions.objectName = `Custom SVG Shape (${baseName}) #${index + 1}`;
 
-            // ── Register opacity for post-processing XML injection ────────────
-            // pptxgenjs may not write <a:alpha> for custGeom shapes in every
-            // version. We mirror the svgGradientFillStore / patternFillStore
-            // pattern so injectSvgOpacityIntoSlideXML() can patch the fill
-            // element directly in the raw OOXML after file generation.
+            
             if (shapeOptions._opacity !== undefined && shapeOptions._opacity < 1) {
                 if (!global.svgOpacityStore) global.svgOpacityStore = new Map();
                 global.svgOpacityStore.set(shapeOptions.objectName, {
@@ -1338,44 +1219,22 @@ function addSvgToSlide(pptSlide, svgElement, elementStyle, slideContext) {
             // Remove internal property before handing options to pptxgenjs
             delete shapeOptions._opacity;
 
-            // ── Register gradient for post-processing XML injection ───────────
-            // pptxgenjs has no gradient-fill API for custGeom shapes; the solid
-            // fill above is just a placeholder. We store the gradient data here
-            // keyed by objectName so injectSvgGradientFillsIntoSlideXML() can
-            // replace it with proper <a:gradFill> XML after file generation.
+           
             if (drawable.gradient) {
                 if (!global.svgGradientFillStore) global.svgGradientFillStore = new Map();
                 global.svgGradientFillStore.set(shapeOptions.objectName, drawable.gradient);
             }
 
-            // ── Shadow from foreignObject > div (inset box-shadow) ────────────
-            // drawable.shadow is parsed by collectSvgDrawables from the raw
-            // style attribute of the <div> inside <foreignObject>.
+          
             if (drawable.shadow) {
                 shapeOptions.shadow = drawable.shadow;
             }
 
-            // ── Drop-shadow filter on the <svg> element itself ────────────────
-            // CSS  filter: drop-shadow(offX offY blur color)  is placed directly
-            // on the <svg> tag (NOT the wrapper div), so createDynamicShapeOptions
-            // — which only reads box-shadow from the wrapper div — misses it.
-            // Priority: drawable.shadow (inset) > <svg> drop-shadow > wrapper box-shadow.
             if (!shapeOptions.shadow) {
                 const svgDropShadow = parseDropShadowFilter(svgElement);
                 if (svgDropShadow) shapeOptions.shadow = svgDropShadow;
             }
 
-            // ── Register shadow opacity for post-processing XML injection ─────
-            // pptxgenjs may not reliably write <a:alpha> for the shadow color
-            // node on custGeom shapes, causing the shadow to appear fully opaque
-            // instead of semi-transparent.
-            //
-            // We mirror the svgGradientFillStore pattern: store the alpha value
-            // here so injectSvgShadowOpacityIntoSlideXML() (exported from this
-            // file) can patch the raw OOXML after pptxgenjs generates the file.
-            //
-            // OOXML alpha scale: 100000 = fully opaque, 0 = fully transparent.
-            // e.g. rgba(0,0,0,0.4) → opacity=0.4 → alphaVal=40000
             const activeShadow = shapeOptions.shadow;
             if (activeShadow && typeof activeShadow.opacity === 'number' && activeShadow.opacity < 1) {
                 if (!global.svgShadowStore) global.svgShadowStore = new Map();

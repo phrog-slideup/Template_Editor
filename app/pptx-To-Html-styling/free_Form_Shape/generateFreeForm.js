@@ -629,8 +629,122 @@ function handleFallbackPath(moveTos, lineTos, closes, getPoint) {
     return result;
 }
 
+// In freeFormShape.js — add this export:
+function generateCustomShapePathOnly(shapeNode, custGeom, position, options = {}) {
+    try {
+        const { skipFlip = false } = options;  // ✅ NEW option
+
+        const pathLst = custGeom?.["a:pathLst"]?.[0]?.["a:path"] || [];
+        if (!pathLst.length) return { pathD: "" };
+
+        const xfrm = shapeNode?.["p:spPr"]?.[0]?.["a:xfrm"]?.[0];
+        
+        // ✅ Only read flip values if NOT skipping
+        const flipH = !skipFlip && xfrm?.["$"]?.flipH === "1";
+        const flipV = !skipFlip && xfrm?.["$"]?.flipV === "1";
+
+        const W = position.width;
+        const H = position.height;
+
+        let allPathD = "";
+
+        for (const pathNode of pathLst) {
+            const pathW = parseFloat(pathNode?.["$"]?.w || 1);
+            const pathH = parseFloat(pathNode?.["$"]?.h || 1);
+
+            const scaleX = W / pathW;
+            const scaleY = H / pathH;
+
+            const scalePoint = (x, y) => {
+                let sx = parseFloat(x) * scaleX;
+                let sy = parseFloat(y) * scaleY;
+                if (flipH) sx = W - sx;
+                if (flipV) sy = H - sy;
+                return { x: sx, y: sy };
+            };
+
+            const commands = pathNode?.["$$"] || [];
+            let d = "";
+
+            for (const cmd of commands) {
+                const type = cmd["#name"];
+
+                switch (type) {
+                    case "a:moveTo": {
+                        const pt = cmd?.["a:pt"]?.[0]?.["$"];
+                        if (pt) {
+                            const { x, y } = scalePoint(pt.x, pt.y);
+                            d += `M ${x.toFixed(3)} ${y.toFixed(3)} `;
+                        }
+                        break;
+                    }
+                    case "a:lnTo": {
+                        const pt = cmd?.["a:pt"]?.[0]?.["$"];
+                        if (pt) {
+                            const { x, y } = scalePoint(pt.x, pt.y);
+                            d += `L ${x.toFixed(3)} ${y.toFixed(3)} `;
+                        }
+                        break;
+                    }
+                    case "a:cubicBezTo": {
+                        const pts = cmd?.["a:pt"] || [];
+                        if (pts.length === 3) {
+                            const p1 = scalePoint(pts[0]["$"].x, pts[0]["$"].y);
+                            const p2 = scalePoint(pts[1]["$"].x, pts[1]["$"].y);
+                            const p3 = scalePoint(pts[2]["$"].x, pts[2]["$"].y);
+                            d += `C ${p1.x.toFixed(3)} ${p1.y.toFixed(3)}, `;
+                            d += `${p2.x.toFixed(3)} ${p2.y.toFixed(3)}, `;
+                            d += `${p3.x.toFixed(3)} ${p3.y.toFixed(3)} `;
+                        }
+                        break;
+                    }
+                    case "a:quadBezTo": {
+                        const pts = cmd?.["a:pt"] || [];
+                        if (pts.length === 2) {
+                            const p1 = scalePoint(pts[0]["$"].x, pts[0]["$"].y);
+                            const p2 = scalePoint(pts[1]["$"].x, pts[1]["$"].y);
+                            d += `Q ${p1.x.toFixed(3)} ${p1.y.toFixed(3)}, `;
+                            d += `${p2.x.toFixed(3)} ${p2.y.toFixed(3)} `;
+                        }
+                        break;
+                    }
+                    case "a:arcTo": {
+                        const $ = cmd?.["$"] || {};
+                        const wR = parseFloat($.wR || 0) * scaleX;
+                        const hR = parseFloat($.hR || 0) * scaleY;
+                        const stAng = parseFloat($.stAng || 0) / 60000;
+                        const swAng = parseFloat($.swAng || 0) / 60000;
+                        const endAng = stAng + swAng;
+                        const endX = (W / 2 + wR * Math.cos((endAng * Math.PI) / 180)).toFixed(3);
+                        const endY = (H / 2 + hR * Math.sin((endAng * Math.PI) / 180)).toFixed(3);
+                        const largeArc = Math.abs(swAng) > 180 ? 1 : 0;
+                        const sweep = swAng > 0 ? 1 : 0;
+                        d += `A ${wR.toFixed(3)} ${hR.toFixed(3)} 0 ${largeArc} ${sweep} ${endX} ${endY} `;
+                        break;
+                    }
+                    case "a:close": {
+                        d += "Z ";
+                        break;
+                    }
+                    default:
+                        break;
+                }
+            }
+
+            allPathD += d.trim() + " ";
+        }
+
+        return { pathD: allPathD.trim() };
+
+    } catch (err) {
+        console.error("generateCustomShapePathOnly error:", err);
+        return { pathD: "" };
+    }
+}
+
 
 
 module.exports = {
     generateCustomShapeSVG,
+    generateCustomShapePathOnly
 };

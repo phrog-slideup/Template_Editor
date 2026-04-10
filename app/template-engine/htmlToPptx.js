@@ -29,6 +29,7 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         global.patternFillStore = new Map();
         global.svgGradientFillStore = new Map();
         global.softEdgeStore = new Map();
+        global.grayscaleImageStore = new Map();
         clearGradientMetadata();
         clearReflectionStore();
         const dom = new JSDOM(htmlString);
@@ -200,6 +201,24 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         if (softEdgeResult.injected > 0) {
             console.log(`   ✅ Injected soft edges into ${softEdgeResult.injected} shape(s)`);
         }
+
+
+        // ========================================
+        // 🔲 STEP 6.5D: INJECT GRAYSCALE IMAGES
+        // ========================================
+        const grayscaleResult = await injectGrayscaleIntoSlideXML(slideXmlsDir);
+        if (grayscaleResult.injected > 0) {
+            console.log(`   ✅ Injected grayscale into ${grayscaleResult.injected} image(s)`);
+        }
+
+        // ========================================
+        // 🖼️ STEP 6.5E: INJECT CUSTGEOM IMAGE CLIPS
+        // ========================================
+        const custGeomImageResult = await injectCustGeomImagesIntoSlideXML(slideXmlsDir);
+        if (custGeomImageResult.injected > 0) {
+            console.log(`   ✅ Injected custGeom clips into ${custGeomImageResult.injected} image(s)`);
+        }
+
         // NEW STEP 6.7: Fix chart relationships
         const chartRelsResult = await fixChartRelationships(slideXmlsDir);
 
@@ -255,6 +274,79 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         });
     }
 }
+
+async function injectGrayscaleIntoSlideXML(slideXmlsDir) {
+    try {
+        if (!global.grayscaleImageStore || global.grayscaleImageStore.size === 0) {
+            return { success: true, injected: 0 };
+        }
+
+        const slidesDir = path.join(slideXmlsDir, 'slides');
+        if (!await checkDirectoryExists(slidesDir)) {
+            return { success: true, injected: 0 };
+        }
+
+        const slideFiles = await fsPromises.readdir(slidesDir);
+        const slideXmlFiles = slideFiles.filter(f => f.match(/^slide\d+\.xml$/));
+        let totalInjected = 0;
+
+        for (const slideFile of slideXmlFiles) {
+            const slidePath = path.join(slidesDir, slideFile);
+            let xml = await fsPromises.readFile(slidePath, 'utf8');
+            let modified = false;
+
+            // Normalize <p:cNvPr> to self-closing before regex matching
+            xml = xml.replace(/<p:cNvPr([^>]*)>\s*<\/p:cNvPr>/g, '<p:cNvPr$1/>');
+
+            for (const [key, data] of global.grayscaleImageStore.entries()) {
+                const shapeName = data.objectName || key;
+                if (!shapeName) continue;
+
+                const escapedName = shapeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+                // Match the pic shape block containing this name, then find its blip
+                const shapeBlockRegex = new RegExp(
+                    `(<p:pic>[\\s\\S]*?<p:cNvPr[^>]*name="${escapedName}"[^>]*/>[\\s\\S]*?` +
+                    `<a:blip)(\\s[^>]*?)(\\/?>)`,
+                    'g'
+                );
+
+                const newXml = xml.replace(shapeBlockRegex, (match, before, attrs, closing) => {
+                    // Already has grayscale — skip
+                    if (match.includes('<a:grayscl')) return match;
+
+                    if (closing.trim() === '/>') {
+                        // Self-closing <a:blip .../> → open tag + grayscl + close tag
+                        return `${before}${attrs}><a:grayscl/></a:blip`;
+                    } else {
+                        // Already open tag <a:blip ...> → insert grayscl after
+                        return `${before}${attrs}${closing}<a:grayscl/>`;
+                    }
+                });
+
+                if (newXml !== xml) {
+                    xml = newXml;
+                    modified = true;
+                    totalInjected++;
+                    console.log(`   🔲 Injected <a:grayscl/> for image: "${shapeName}"`);
+                }
+            }
+
+            if (modified) {
+                await fsPromises.writeFile(slidePath, xml, 'utf8');
+                console.log(`   ✅ Grayscale injected into ${slideFile}`);
+            }
+        }
+
+        global.grayscaleImageStore.clear();
+        return { success: true, injected: totalInjected };
+
+    } catch (error) {
+        console.error('   ❌ Error in injectGrayscaleIntoSlideXML:', error);
+        return { success: false, error: error.message, injected: 0 };
+    }
+}
+
 
 async function injectSoftEdgesIntoSlideXML(slideXmlsDir) {
     try {
@@ -813,6 +905,11 @@ async function processSlideContent(pptx, pptSlide, slideElement, slideContext) {
                 continue;
             }
 
+            if (element.classList.contains('custgeom-image')) {
+                await processCustGeomImage(pptx, pptSlide, element, slideContext);
+                processedElements.add(element);
+                continue;
+            }
 
             // FIX Bug 4: sli-svg-container (e.g. isometric inline graphics) must also route
             // through processShapeElement so their SVG paths are converted to custGeom shapes.
@@ -2723,6 +2820,192 @@ async function fixPptxFile(filePath) {
         return false;
     }
 }
+
+async function processCustGeomImage(pptx, pptSlide, element, slideContext) {
+    try {
+        const position = extractElementPosition(element, slideContext);
+        const shapeName = element.getAttribute('data-name') || 'custgeom-image';
+
+        // Extract rotation from element style
+        const styleAttr = element.getAttribute('style') || '';
+        const rotMatch = styleAttr.match(/rotate\(([-\d.]+)deg\)/);
+        const rotation = rotMatch ? parseFloat(rotMatch[1]) : 0;
+
+        // Get the <image> element inside the SVG
+        const svgEl = element.querySelector('svg');
+        const imageEl = svgEl ? svgEl.querySelector('image') : null;
+
+        if (!imageEl) {
+            console.warn(`   ⚠️ custgeom-image: no <image> found in "${shapeName}"`);
+            return;
+        }
+
+        // href attribute (SVG uses href or xlink:href)
+        const imageSrc = imageEl.getAttribute('href') || imageEl.getAttribute('xlink:href') || '';
+        if (!imageSrc) {
+            console.warn(`   ⚠️ custgeom-image: no image src in "${shapeName}"`);
+            return;
+        }
+
+        // Opacity from SVG image element
+        const opacityAttr = imageEl.getAttribute('opacity');
+        const opacity = opacityAttr ? parseFloat(opacityAttr) : 1;
+        const transparency = Math.round((1 - opacity) * 100);
+
+        // Resolve image to base64
+        let base64Data = null;
+        if (imageSrc.startsWith('data:')) {
+            base64Data = imageSrc;
+        } else {
+            const resolvedPath = resolveImagePath(imageSrc);
+            if (resolvedPath && fs.existsSync(resolvedPath)) {
+                const buf = fs.readFileSync(resolvedPath);
+                const ext = require('path').extname(resolvedPath).toLowerCase();
+                const mimeMap = { '.jpg': 'jpeg', '.jpeg': 'jpeg', '.png': 'png', '.gif': 'gif', '.webp': 'webp' };
+                const mime = mimeMap[ext] || 'jpeg';
+                base64Data = `data:image/${mime};base64,${buf.toString('base64')}`;
+            }
+        }
+
+        if (!base64Data) {
+            console.warn(`   ⚠️ custgeom-image: could not resolve image for "${shapeName}"`);
+            return;
+        }
+
+        // Extract the custGeom SVG path from the clipPath <path d="...">
+        const clipPathEl = svgEl ? svgEl.querySelector('clipPath path') : null;
+        const pathD = clipPathEl ? clipPathEl.getAttribute('d') : null;
+
+        if (!pathD) {
+            // No clip path found — just add as a plain image
+            pptSlide.addImage({
+                data: base64Data,
+                x: position.x,
+                y: position.y,
+                w: position.w,
+                h: position.h,
+                rotate: rotation,
+                transparency: transparency,
+                objectName: shapeName,
+                sizing: { type: 'cover' }
+            });
+            return;
+        }
+
+        // We have a custGeom path — store the SVG path data for XML post-processing
+        // First add the image normally (it will be a rectangle in PPTX)
+        // Then we inject the custGeom clip via post-processing
+        if (!global.custGeomImageStore) global.custGeomImageStore = new Map();
+
+        global.custGeomImageStore.set(shapeName, {
+            pathD: pathD,
+            shapeName: shapeName,
+            x: position.x,
+            y: position.y,
+            w: position.w,
+            h: position.h
+        });
+
+        pptSlide.addImage({
+            data: base64Data,
+            x: position.x,
+            y: position.y,
+            w: position.w,
+            h: position.h,
+            rotate: rotation,
+            transparency: transparency,
+            objectName: shapeName,
+            sizing: { type: 'cover' }
+        });
+
+        console.log(`   ✅ Added custgeom-image: "${shapeName}"`);
+
+    } catch (err) {
+        console.error(`   ❌ processCustGeomImage error:`, err);
+    }
+}
+
+
+async function injectCustGeomImagesIntoSlideXML(slideXmlsDir) {
+    try {
+        if (!global.custGeomImageStore || global.custGeomImageStore.size === 0) {
+            return { success: true, injected: 0 };
+        }
+
+        const slidesDir = path.join(slideXmlsDir, 'slides');
+        if (!await checkDirectoryExists(slidesDir)) {
+            return { success: true, injected: 0 };
+        }
+
+        const slideFiles = await fsPromises.readdir(slidesDir);
+        const slideXmlFiles = slideFiles.filter(f => f.match(/^slide\d+\.xml$/));
+        let totalInjected = 0;
+
+        for (const slideFile of slideXmlFiles) {
+            const slidePath = path.join(slidesDir, slideFile);
+            let xml = await fsPromises.readFile(slidePath, 'utf8');
+            let modified = false;
+
+            // Normalize cNvPr self-closing
+            xml = xml.replace(/<p:cNvPr([^>]*)>\s*<\/p:cNvPr>/g, '<p:cNvPr$1/>');
+
+            for (const [shapeName, data] of global.custGeomImageStore.entries()) {
+                const escapedName = shapeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+                // Find the <p:pic> block for this image by name
+                const picBlockRegex = new RegExp(
+                    `(<p:pic>[\\s\\S]*?<p:cNvPr[^>]*name="${escapedName}"[^>]*/>[\\s\\S]*?)(<p:spPr[^>]*>)([\\s\\S]*?)(</p:spPr>)`,
+                    'g'
+                );
+
+                const newXml = xml.replace(picBlockRegex, (match, before, spPrOpen, spPrContent, spPrClose) => {
+                    // Already has custGeom — skip
+                    if (spPrContent.includes('<a:custGeom>')) return match;
+
+                    // Convert the SVG path `d` attribute to OOXML custGeom
+                    // For custGeom images in PPTX, we replace prstGeom with custGeom
+                    // The path is already in pixel coords — convert to EMU
+                    const EMU_PER_PX = 12700; // at 72 DPI: 914400/72
+                    const wEMU = Math.round(data.w * 72 * EMU_PER_PX);
+                    const hEMU = Math.round(data.h * 72 * EMU_PER_PX);
+
+                    // Build custGeom XML from SVG path
+                    const custGeomXml = buildCustGeomFromSvgPath(data.pathD, wEMU, hEMU);
+
+                    // Replace prstGeom (rect) with custGeom
+                    let newSpPrContent = spPrContent.replace(
+                        /<a:prstGeom[^>]*>[\s\S]*?<\/a:prstGeom>|<a:prstGeom[^>]*\/>/,
+                        custGeomXml
+                    );
+
+                    if (newSpPrContent === spPrContent) {
+                        // No prstGeom found — append custGeom
+                        newSpPrContent = spPrContent + custGeomXml;
+                    }
+
+                    modified = true;
+                    totalInjected++;
+                    console.log(`   🖼️ Injected custGeom clip for image: "${shapeName}"`);
+                    return before + spPrOpen + newSpPrContent + spPrClose;
+                });
+
+                xml = newXml;
+            }
+
+            if (modified) {
+                await fsPromises.writeFile(slidePath, xml, 'utf8');
+            }
+        }
+
+        global.custGeomImageStore.clear();
+        return { success: true, injected: totalInjected };
+
+    } catch (error) {
+        console.error('   ❌ Error in injectCustGeomImagesIntoSlideXML:', error);
+        return { success: false, error: error.message, injected: 0 };
+    }
+}
+
 
 async function extractAndProcessSlideXMLs(pptxFilePath, customOutputDir = null, slideX) {
     try {

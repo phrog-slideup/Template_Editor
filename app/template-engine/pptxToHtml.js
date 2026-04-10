@@ -552,7 +552,8 @@ class pptxToHtml {
           highestZIndex = Math.max(...zIndexes);
         }
         const overrideClrMapping = this.extractOverrideClrMapping(layoutXML);
-        const nodes = await this.getNodesInCorrectOrder(slideXML, highestZIndex);
+        const originalSlideXML = await this.parseXMLWithoutUngroup(slidePath);
+        const nodes = await this.getNodesInCorrectOrder(originalSlideXML, highestZIndex);
 
         const zIndexMap = {};
         const nameCounts = {};
@@ -614,7 +615,7 @@ class pptxToHtml {
         // Create a ShapeHandler instance
         const shapeHandler = new ShapeHandler(themeXML, clrMap, nodes, this, slidePath, relationshipsXML, masterXML, layoutXML, flag);
 
-        htmlContent += await shapeHandler.convertAllShapesToHTML(allShapeNodes, lineShapeTag, tableNodes, themeXML, layoutXML, zIndexMap);
+        htmlContent += await shapeHandler.convertAllShapesToHTML(allShapeNodes, lineShapeTag, tableNodes, themeXML, layoutXML, zIndexMap, []);
 
         // ==================== FIXED IMAGE PROCESSING LOOP ====================
         for (const picNode of allPicNodes) {
@@ -1184,8 +1185,9 @@ class pptxToHtml {
             nodeType === 'p:grpSp' ||
             nodeType === 'p:graphicFrame') {  // ✅ Added this line
 
-            // Create node info with sequential z-index ID
-            const nodeInfo = { type: nodeType, id: sequentialId++ };
+            const assignedId = sequentialId++;  // ← Every node gets own id
+
+            const nodeInfo = { type: nodeType, id: assignedId };
 
             if (node.$$) {
               const nvPrNode = node.$$.find(child =>
@@ -1234,10 +1236,14 @@ class pptxToHtml {
   }
 
   async getSVGContent(blipNode, relationshipsXML) {
-    const extNodes = blipNode?.["a:extLst"]?.[0]?.["a:ext"] || [];
-    const svgEmbedId = extNodes
-      .map((ext) => ext?.["asvg:svgBlip"]?.[0]?.["$"]?.["r:embed"])
-      .find(Boolean);
+
+    const svgEmbedId = blipNode?.["a:extLst"]?.[0]?.["a:ext"]?.[0]?.["asvg:svgBlip"]?.[0]?.["$"]?.["r:embed"];
+
+    // const extNodes = blipNode?.["a:extLst"]?.[0]?.["a:ext"] || [];
+    // const svgEmbedId = extNodes
+    //   .map((ext) => ext?.["asvg:svgBlip"]?.[0]?.["$"]?.["r:embed"])
+    //   .find(Boolean);
+
     if (!svgEmbedId) {
       return null;
     }
@@ -1266,6 +1272,7 @@ class pptxToHtml {
 
     const processGrpSp = (grpSpNode) => {
       // Get group's own transform for position offset
+      const grpName = grpSpNode?.["p:nvGrpSpPr"]?.[0]?.["p:cNvPr"]?.[0]?.["$"]?.name || null;
       const grpXfrm = grpSpNode?.["p:grpSpPr"]?.[0]?.["a:xfrm"]?.[0];
       const grpOffX = parseInt(grpXfrm?.["a:off"]?.[0]?.["$"]?.x || 0);
       const grpOffY = parseInt(grpXfrm?.["a:off"]?.[0]?.["$"]?.y || 0);
@@ -1304,7 +1311,7 @@ class pptxToHtml {
           xfrm["a:ext"][0]["$"].cx = String(newCx);
           xfrm["a:ext"][0]["$"].cy = String(newCy);
         }
-
+        if (grpName) cloned._parentGroupName = grpName;
         return cloned;
       };
 
@@ -1331,6 +1338,19 @@ class pptxToHtml {
     return result;
   }
 
+  async parseXMLWithoutUngroup(filePath) {
+    const file = this.files[filePath];
+    if (!file) return null;
+    const xmlContent = await file.async("string");
+    const parser = new xml2js.Parser({
+      preserveChildrenOrder: true,
+      explicitChildren: true,
+      explicitArray: true
+    });
+    return await parser.parseStringPromise(xmlContent);
+  }
+
 }
+
 
 module.exports = pptxToHtml;

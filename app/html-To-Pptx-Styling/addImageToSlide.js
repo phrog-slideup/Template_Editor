@@ -166,6 +166,8 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
     let imgOpacity = 1;
     const imgStyleAttr = imgElement.getAttribute('style') || '';
     const imgOpacityMatch = imgStyleAttr.match(/opacity\s*:\s*([0-9.]+)/i);
+    // ✅ ADD THIS - detect grayscale CSS filter
+    const isGrayscale = imgStyleAttr.includes('grayscale(100%)') || imgStyleAttr.includes('grayscale(1)');
     if (imgOpacityMatch && imgOpacityMatch[1]) {
         imgOpacity = parseFloat(imgOpacityMatch[1]);
     }
@@ -305,7 +307,8 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
             rounding: isRounded,
             transparency: transparencyPercentage,
             objectName: objName || '',
-            altText: altText  // ✅ ADD THIS
+            altText: altText,
+            _isGrayscale: isGrayscale,
         };
 
         if (imagePathForPpt) {
@@ -319,16 +322,6 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
         // pptxgenjs requires sizing.type = 'crop' with x, y, w, h in EMU units (0-100000)
         // ========================================
         if (hasCrop) {
-            // Store the raw srcRect values for later XML manipulation
-            // imageOptions.sizing = {
-            //     type: 'crop',
-            //     x: parsedL * 50,
-            //     y: parsedT * 50,
-            //     w: (100000 - parsedL - parsedR) * 50,
-            //     h: (100000 - parsedT - parsedB) * 50
-            // };
-
-
             imageOptions._srcRect = {
                 l: parsedL,
                 r: parsedR,
@@ -382,104 +375,16 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
 
         // Add image to slide
         pptSlide.addImage(imageOptions);
-        // ✅ NOW ADD BORDER as a separate transparent rectangle shape
-        // if (borderWidth > 0) {
-        //     console.log('Adding border rectangle:', {
-        //         color: borderColor.replace('#', ''),
-        //         width: borderWidth * 72 // Convert inches back to points
-        //     });
 
-        //     pptSlide.addShape(pptx.shapes.RECTANGLE, {
-        //         x: x,
-        //         y: y,
-        //         w: w,
-        //         h: h,
-        //         fill: { transparency: 100 }, // Completely transparent
-        //         line: {
-        //             color: borderColor.replace('#', ''),
-        //             width: borderWidth * 72, // Points (1pt ≈ 1/72 inch)
-        //             dashType: 'solid'
-        //         },
-        //         rotate: rotation // Match image rotation
-        //     });
-        // }
-        // ✅ ADD BORDER with style support and fallback
-        // if (borderWidth > 0) {
-        //     // Map CSS border styles to pptxgenjs dashType
-        //     const borderStyleMap = {
-        //         'solid': 'solid',
-        //         'dotted': 'dot',
-        //         'dashed': 'dash',
-        //         'double': 'solid',      // Fallback: use solid
-        //         'groove': 'solid',      // Fallback: use solid
-        //         'ridge': 'solid',       // Fallback: use solid
-        //         'inset': 'solid',       // Fallback: use solid
-        //         'outset': 'solid',      // Fallback: use solid
-        //         'none': 'solid',        // Fallback: use solid
-        //         'hidden': 'solid'       // Fallback: use solid
-        //     };
-
-        //     // Get pptxgenjs dashType with fallback to 'solid'
-        //     const pptxDashType = borderStyleMap[borderStyle.toLowerCase()] || 'solid';
-
-        //     // Adjust width for dotted/dashed styles (they look thinner)
-        //     let adjustedWidth = borderWidth * 72;
-        //     if (pptxDashType === 'dot' || pptxDashType === 'dash') {
-        //         adjustedWidth = Math.max(adjustedWidth * 1.2, 1); // Boost by 20%, minimum 1pt
-        //     }
-
-        //     console.log('Adding border rectangle:', {
-        //         color: borderColor.replace('#', ''),
-        //         width: adjustedWidth,
-        //         dashType: pptxDashType,
-        //         originalStyle: borderStyle
-        //     });
-
-        //     try {
-        //         const parent = imgElement.closest(".image-container");
-        //         const objName = parent.getAttribute("data-name");
-
-        //         const parentStyle = parent ? parent.style : {};
-
-
-        //         pptSlide.addShape(pptx.shapes.RECTANGLE, {
-        //             x: x,
-        //             y: y,
-        //             w: w,
-        //             h: h,
-        //             fill: { transparency: 100 }, // Completely transparent
-        //             line: {
-        //                 color: borderColor.replace('#', ''),
-        //                 width: adjustedWidth,
-        //                 dashType: pptxDashType
-        //             },
-        //             rotate: rotation // Match image rotation
-        //         });
-
-        //         console.log('✅ Border added successfully');
-        //     } catch (borderError) {
-        //         // Fallback: try with just solid border if specific style fails
-        //         console.warn('Border style failed, falling back to solid:', borderError);
-        //         try {
-        //             pptSlide.addShape(pptx.shapes.RECTANGLE, {
-        //                 x: x,
-        //                 y: y,
-        //                 w: w,
-        //                 h: h,
-        //                 fill: { transparency: 100 },
-        //                 line: {
-        //                     color: borderColor.replace('#', ''),
-        //                     width: borderWidth * 72,
-        //                     dashType: 'solid' // Fallback to solid
-        //                 },
-        //                 rotate: rotation
-        //             });
-        //             console.log('✅ Border added with solid fallback');
-        //         } catch (fallbackError) {
-        //             console.error('❌ Border completely failed:', fallbackError);
-        //         }
-        //     }
-        // }
+        if (isGrayscale) {
+            if (!global.grayscaleImageStore) global.grayscaleImageStore = new Map();
+            const storeKey = objName || `img_${x.toFixed(3)}_${y.toFixed(3)}`;
+            global.grayscaleImageStore.set(storeKey, {
+                objectName: objName,
+                x, y, w, h
+            });
+            // console.log(`🔲 Queued grayscale image: "${objName}"`);
+        }
 
     } catch (error) {
         console.error(`❌ Failed to add image (${src}) to slide:`, error);

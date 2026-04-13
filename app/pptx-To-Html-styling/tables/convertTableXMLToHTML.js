@@ -45,25 +45,71 @@ async function convertTableXMLToHTML(tableNode, themeXML, extractor, nodes, flag
     const width = parseInt(xfrm?.["a:ext"]?.[0]?.["$"]?.cx || 0, 10) / getEMUDivisor();
     const height = parseInt(xfrm?.["a:ext"]?.[0]?.["$"]?.cy || 0, 10) / getEMUDivisor(); 
 
+    const tableData = tableNode["a:graphic"]?.[0]?.["a:graphicData"]?.[0]?.["a:tbl"]?.[0];
+    if (!tableData) return "</table></div>";
+
+    const gridCols = tableData["a:tblGrid"]?.[0]?.["a:gridCol"] || [];
+    const rows = tableData["a:tr"] || [];
+    const totalRows = rows.length;
+    const totalDeclaredRowHeight = rows.reduce((sum, currentRow) => {
+        return sum + (parseInt(currentRow["$"]?.h || 0, 10) / getEMUDivisor());
+    }, 0);
+    const horizontalBorderAllowance = Math.max(0, totalRows + 1);
+    const rowHeightScale = totalDeclaredRowHeight > 0
+        ? Math.min(1, Math.max(0.9, (height - horizontalBorderAllowance) / totalDeclaredRowHeight))
+        : 1;
+
+let lastRowBottomBorderStyle = "none";
+if (totalRows > 0) {
+    const lastRowIndex = totalRows - 1;
+    const lastRowCells = rows[lastRowIndex]?.["a:tc"] || [];
+    let lastRowColIndex = 0;
+
+    for (const candidateCell of lastRowCells) {
+        const gridSpan = parseInt(candidateCell["$"]?.gridSpan || 1, 10);
+        const isHMerge = candidateCell["$"]?.hMerge === "1";
+        const isVMerge = candidateCell["$"]?.vMerge === "1";
+
+        if (isHMerge || isVMerge) {
+            lastRowColIndex += gridSpan;
+            continue;
+        }
+
+        const lastRowStyles = await getTableElementStyle(
+            styleConfig,
+            'cell',
+            candidateCell["a:tcPr"]?.[0],
+            lastRowIndex,
+            lastRowColIndex,
+            totalRows,
+            gridCols.length,
+            themeXML
+        );
+
+        if (lastRowStyles.borderBottom && lastRowStyles.borderBottom !== 'none') {
+            lastRowBottomBorderStyle = lastRowStyles.borderBottom;
+        }
+        break;
+    }
+}
+
     let tableHTML = `<div class="table-container" 
                             style="position: absolute; 
                             left: ${x}px; 
                             top: ${y}px; 
                             width: ${width}px; 
                             height: ${height}px;
+                            overflow: hidden;
                             z-index: ${zIndex};">
 
                                 <table class="pptx-table" 
                                     style="width: 100%; 
-                                    height: 100%; 
+                                    height: auto; 
                                     border-collapse: collapse; 
+                                    border-spacing: 0;
                                     table-layout: fixed; 
                                     font-size: ${pointsToCssPx(tableFontSize)}px;">`;
 
-    const tableData = tableNode["a:graphic"]?.[0]?.["a:graphicData"]?.[0]?.["a:tbl"]?.[0];
-    if (!tableData) return "</table></div>";
-
-    const gridCols = tableData["a:tblGrid"]?.[0]?.["a:gridCol"] || [];
     if (gridCols.length > 0) {
         tableHTML += "<colgroup>";
         const totalWidth = gridCols.reduce((sum, col) => sum + parseInt(col["$"]?.w || 0, 10), 0);
@@ -77,18 +123,16 @@ async function convertTableXMLToHTML(tableNode, themeXML, extractor, nodes, flag
 
     tableHTML += "<tbody>";
 
-
-  
-const rows = tableData["a:tr"] || [];
-const totalRows = rows.length;
-
 // ✅ ADD THIS: Track cells occupied by rowSpan from previous rows
 const occupiedCells = new Map(); // Key: "rowIndex-colIndex", Value: true
 
 for (let rowIndex = 0; rowIndex < totalRows; rowIndex++) {
     const row = rows[rowIndex];
-    tableHTML += `<tr style="height: ${parseInt(row["$"]?.h || 0, 10) / getEMUDivisor()}px;">`;
     const cells = row["a:tc"] || [];
+    const rowHeight = (parseInt(row["$"]?.h || 0, 10) / getEMUDivisor()) * rowHeightScale;
+    const renderedRowHeight = rowHeight;
+
+    tableHTML += `<tr style="height: ${renderedRowHeight}px; min-height: ${renderedRowHeight}px; max-height: ${renderedRowHeight}px;">`;
     
     let colIndex = 0; // Actual column position in the grid
 
@@ -165,13 +209,16 @@ for (let rowIndex = 0; rowIndex < totalRows; rowIndex++) {
 
         const marL = parseInt(cellTcPr?.["$"]?.marL || "91440") / getEMUDivisor();
         const marR = parseInt(cellTcPr?.["$"]?.marR || "91440") / getEMUDivisor();
-        const marT = parseInt(cellTcPr?.["$"]?.marT || "45720") / getEMUDivisor();
-        const marB = parseInt(cellTcPr?.["$"]?.marB || "45720") / getEMUDivisor();
+        const rawMarT = parseInt(cellTcPr?.["$"]?.marT || "45720") / getEMUDivisor();
+        const rawMarB = parseInt(cellTcPr?.["$"]?.marB || "45720") / getEMUDivisor();
+        const marT = isHeaderCell ? 0 : rawMarT;
+        const marB = isHeaderCell ? 0 : rawMarB;
 
-        let cellStyles = `padding: ${marT}px ${marR}px ${marB}px ${marL}px; vertical-align: ${verticalAlign}; word-wrap: break-word; overflow: hidden;`;
+        const effectiveCellHeight = renderedRowHeight * Math.max(1, rowSpan);
+        let cellStyles = `padding: ${marT}px ${marR}px ${marB}px ${marL}px; vertical-align: ${verticalAlign}; word-wrap: break-word; overflow: hidden; box-sizing: border-box; height: ${effectiveCellHeight}px; min-height: ${effectiveCellHeight}px; max-height: ${effectiveCellHeight}px;`;
 
-        if (verticalAlign === 'bottom' || verticalAlign === 'middle') {
-            cellStyles += ` height: 100%; display: table-cell;`;
+        if (isHeaderCell) {
+            cellStyles += ` line-height: 1; white-space: nowrap;`;
         }
 
         if (vert === "vert270") {
@@ -217,7 +264,13 @@ for (let rowIndex = 0; rowIndex < totalRows; rowIndex++) {
     tableHTML += `</tr>`;
 }
 
-    tableHTML += "</tbody></table></div>";
+    tableHTML += "</tbody></table>";
+
+    if (lastRowBottomBorderStyle !== "none") {
+        tableHTML += `<div style="position:absolute; left:0; bottom:0; width:100%; border-bottom:${lastRowBottomBorderStyle}; pointer-events:none; box-sizing:border-box;"></div>`;
+    }
+
+    tableHTML += "</div>";
     return tableHTML;
 }
 
@@ -505,18 +558,16 @@ if (solidFill?.["a:schemeClr"]) {
         style.backgroundColor = `#${solidFill["a:srgbClr"][0]["$"].val}`;
     }
 
-    // Extract text color from cell content
-    const textRun = cell["a:txBody"]?.[0]?.["a:p"]?.[0]?.["a:r"]?.[0];
-    if (textRun?.["a:rPr"]?.[0]?.["a:solidFill"]?.[0]) {
-        const textFill = textRun["a:rPr"][0]["a:solidFill"][0];
-        if (textFill["a:schemeClr"]) {
-            const colorVal = textFill["a:schemeClr"][0]["$"]?.val;
-            style.color = getThemeColorValue(colorVal, themeXML);
-        } else if (textFill["a:srgbClr"]) {
-            style.color = `#${textFill["a:srgbClr"][0]["$"].val}`;
-        } else if (textFill["a:prstClr"]) {
-            style.color = textFill["a:prstClr"][0]["$"]?.val === "white" ? "#FFFFFF" : "#000000";
-        }
+    // Extract text color from cell content or infer from the cell background
+    const firstParagraph = cell["a:txBody"]?.[0]?.["a:p"]?.[0];
+    const textRun = firstParagraph?.["a:r"]?.[0];
+    style.color =
+        extractColorFromChoiceNode(textRun?.["a:rPr"]?.[0]?.["a:solidFill"]?.[0], themeXML) ||
+        extractColorFromChoiceNode(firstParagraph?.["a:endParaRPr"]?.[0]?.["a:solidFill"]?.[0], themeXML) ||
+        extractColorFromChoiceNode(firstParagraph?.["a:pPr"]?.[0]?.["a:defRPr"]?.[0]?.["a:solidFill"]?.[0], themeXML);
+
+    if (!style.color && style.backgroundColor) {
+        style.color = getContrastingTextColor(style.backgroundColor);
     }
 
     // FIXED: Extract borders from slide XML format (a:lnL, a:lnR, a:lnT, a:lnB)
@@ -814,13 +865,14 @@ async function extractCellContent(cell, isHeader = false, shapeNode = null, them
         const isEmptyPara = isEmptyParagraph(paragraph);
 
         if (isEmptyPara) {
-            // Close any open list for empty paragraphs
+            // PowerPoint table cells often contain empty paragraphs used only for
+            // internal text-box spacing. Rendering them as <br> inflates compact
+            // headers like the month title cells in calendar tables.
             if (currentListTag) {
                 content.push(`</${currentListTag}>`);
                 currentListTag = null;
                 currentListType = null;
             }
-            content.push('<br>');
             continue;
         }
 
@@ -983,7 +1035,8 @@ async function extractCellContent(cell, isHeader = false, shapeNode = null, them
             }
 
             if (hasContent) {
-                content.push(`<p style="margin: 0; line-height: ${lineHeight};${paragraphTextAlign ? ` text-align: ${paragraphTextAlign};` : ''}">${runTexts.join('')}</p>`);
+                const paragraphLineHeight = isHeader ? '1' : lineHeight;
+                content.push(`<p style="margin: 0; line-height: ${paragraphLineHeight};${paragraphTextAlign ? ` text-align: ${paragraphTextAlign};` : ''}">${runTexts.join('')}</p>`);
             } else if (runTexts.length > 0 || lineBreaks.length > 0) {
                 // Don't add extra <br> for empty paragraphs in tables
             }
@@ -1060,12 +1113,12 @@ function parseTableElementStyle(styleElement, directTcPr = null, isHeader = fals
         const tcTxStyle = styleElement["a:tcTxStyle"]?.[0];
 if (tcTxStyle) {
     // ✅ Extract text color from schemeClr (not from a:color node)
-    const schemeClrNode = tcTxStyle["a:schemeClr"]?.[0];
-    if (schemeClrNode) {
-        const schemeVal = schemeClrNode["$"]?.val;
-        if (schemeVal) {
-            styles.color = getThemeColorValue(schemeVal, themeXML);
-        }
+    const textColor =
+        extractColorFromChoiceNode(tcTxStyle["a:color"]?.[0], themeXML) ||
+        extractColorFromChoiceNode(tcTxStyle["a:solidFill"]?.[0], themeXML) ||
+        extractColorFromChoiceNode({ "a:schemeClr": tcTxStyle["a:schemeClr"] }, themeXML);
+    if (textColor) {
+        styles.color = textColor;
     }
 
             // Extract font size
@@ -1168,6 +1221,14 @@ if (fillNode?.["a:schemeClr"]) {
                 });
             }
         }
+    }
+
+    if (!styles.color && styles.backgroundColor) {
+        styles.color = getContrastingTextColor(styles.backgroundColor);
+    }
+
+    if (!styles.color && isHeader) {
+        styles.color = getThemeColorValue("lt1", themeXML) || "#FFFFFF";
     }
 
     // 2. Merge direct cell properties (`tcPr`) if provided
@@ -1334,6 +1395,66 @@ function parseBorderStyle(borderElement, themeXML) {
             : width;
 
     return `${adjustedWidth}px ${finalLineStyle} ${color}`;
+}
+
+function extractColorFromChoiceNode(colorNode, themeXML) {
+    if (!colorNode) return null;
+
+    if (colorNode["a:srgbClr"]?.[0]?.["$"]?.val) {
+        return `#${colorNode["a:srgbClr"][0]["$"].val}`;
+    }
+
+    if (colorNode["a:schemeClr"]?.[0]?.["$"]?.val) {
+        const schemeClrNode = colorNode["a:schemeClr"][0];
+        let color = getThemeColorValue(schemeClrNode["$"].val, themeXML);
+        const tint = schemeClrNode["a:tint"]?.[0]?.["$"]?.val;
+        const shade = schemeClrNode["a:shade"]?.[0]?.["$"]?.val;
+        const lumMod = schemeClrNode["a:lumMod"]?.[0]?.["$"]?.val;
+        const lumOff = schemeClrNode["a:lumOff"]?.[0]?.["$"]?.val;
+
+        if (color) {
+            if (lumMod || lumOff) {
+                color = pptBackgroundColors.applyLuminanceModifier
+                    ? pptBackgroundColors.applyLuminanceModifier(color, lumMod || "100000", lumOff || "0")
+                    : color;
+            } else if (tint) {
+                color = applyTintToColor(color, parseInt(tint, 10));
+            } else if (shade) {
+                color = applyTintToColor(color, -parseInt(shade, 10));
+            }
+        }
+
+        return color;
+    }
+
+    if (colorNode["a:prstClr"]?.[0]?.["$"]?.val) {
+        const presetVal = colorNode["a:prstClr"][0]["$"].val;
+        if (presetVal === "white") return "#FFFFFF";
+        if (presetVal === "black") return "#000000";
+        return colorHelper.resolvePresetColor ? colorHelper.resolvePresetColor(presetVal) : null;
+    }
+
+    if (colorNode["a:sysClr"]?.[0]?.["$"]?.lastClr) {
+        return `#${colorNode["a:sysClr"][0]["$"].lastClr}`;
+    }
+
+    return null;
+}
+
+function getContrastingTextColor(backgroundColor) {
+    if (!backgroundColor || typeof backgroundColor !== "string" || !backgroundColor.startsWith("#")) {
+        return null;
+    }
+
+    const hex = backgroundColor.slice(1);
+    if (hex.length !== 6) return null;
+
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+
+    return luminance < 0.55 ? "#FFFFFF" : "#000000";
 }
 
 function getThemeColorValue(schemeVal, themeXML) {

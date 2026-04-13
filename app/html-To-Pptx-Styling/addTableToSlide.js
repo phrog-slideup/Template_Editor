@@ -79,20 +79,28 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
         return Math.round(num * TABLE_FONT_BOOST * 100) / 100;
     }
 
+    function roundMarginInches(value) {
+        return Math.round(value * 1000) / 1000;
+    }
+
     function expandCellMarginValue(margin) {
+        const topBottomBoost = 0.75 / 72;
+        const leftRightBoost = 1.5 / 72;
+        const uniformBoost = 1.25 / 72;
+
         if (Array.isArray(margin)) {
             const [top = 0, right = 0, bottom = 0, left = 0] = margin;
             return [
-                Math.round((top + 0.75) * 100) / 100,
-                Math.round((right + 1.5) * 100) / 100,
-                Math.round((bottom + 0.75) * 100) / 100,
-                Math.round((left + 1.5) * 100) / 100
+                roundMarginInches(top + topBottomBoost),
+                roundMarginInches(right + leftRightBoost),
+                roundMarginInches(bottom + topBottomBoost),
+                roundMarginInches(left + leftRightBoost)
             ];
         }
 
         const num = parseFloat(margin);
         if (!Number.isFinite(num)) return margin;
-        return Math.round((num + 1.25) * 100) / 100;
+        return roundMarginInches(num + uniformBoost);
     }
 
     function extractBackgroundColor(element, inlineOnly = false) {
@@ -633,47 +641,44 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
             const paddingLeft = cellStyleAttr.match(/padding-left:\s*([^;]+)/i)?.[1];
             const paddingAll = cellStyleAttr.match(/(?:^|;)\s*padding:\s*([^;]+)/i)?.[1];
 
-            const parsePaddingToPoints = (value) => {
+            const parsePaddingToInches = (value) => {
                 if (!value) return null;
                 const num = parseFloat(value);
                 if (isNaN(num)) return null;
 
-                // PptxGenJS expects points, converts internally: points * 12700 = EMUs
-
                 if (value.includes('px')) {
-                    // These HTML px values originate from PowerPoint points in this pipeline.
-                    return num;
+                    return num / 72;
                 } else if (value.includes('pt')) {
-                    return num; // Already in points
+                    return num / 72;
                 } else if (value.includes('in')) {
-                    return num * 72; // inches to points (72pt = 1in)
+                    return num;
                 } else {
-                    return num; // Default to the same PPT-style px scale
+                    return num / 72;
                 }
             };
 
             if (paddingAll) {
                 const parts = paddingAll.trim().split(/\s+/);
                 if (parts.length === 1) {
-                    const pt = parsePaddingToPoints(parts[0]);
-                    if (pt !== null) cellOpts.margin = expandCellMarginValue(pt);
+                    const marginInches = parsePaddingToInches(parts[0]);
+                    if (marginInches !== null) cellOpts.margin = expandCellMarginValue(marginInches);
                 } else if (parts.length === 2) {
-                    const ptV = parsePaddingToPoints(parts[0]);
-                    const ptH = parsePaddingToPoints(parts[1]);
-                    if (ptV !== null && ptH !== null) {
-                        cellOpts.margin = expandCellMarginValue([ptV, ptH, ptV, ptH]);
+                    const marginV = parsePaddingToInches(parts[0]);
+                    const marginH = parsePaddingToInches(parts[1]);
+                    if (marginV !== null && marginH !== null) {
+                        cellOpts.margin = expandCellMarginValue([marginV, marginH, marginV, marginH]);
                     }
                 } else if (parts.length === 4) {
-                    const margins = parts.map(p => parsePaddingToPoints(p));
+                    const margins = parts.map(p => parsePaddingToInches(p));
                     if (margins.every(m => m !== null)) {
                         cellOpts.margin = expandCellMarginValue(margins);
                     }
                 }
             } else if (paddingTop || paddingRight || paddingBottom || paddingLeft) {
-                const ptT = parsePaddingToPoints(paddingTop) || 0;
-                const ptR = parsePaddingToPoints(paddingRight) || 0;
-                const ptB = parsePaddingToPoints(paddingBottom) || 0;
-                const ptL = parsePaddingToPoints(paddingLeft) || 0;
+                const ptT = parsePaddingToInches(paddingTop) || 0;
+                const ptR = parsePaddingToInches(paddingRight) || 0;
+                const ptB = parsePaddingToInches(paddingBottom) || 0;
+                const ptL = parsePaddingToInches(paddingLeft) || 0;
 
                 cellOpts.margin = expandCellMarginValue([ptT, ptR, ptB, ptL]);
             }
@@ -781,24 +786,24 @@ function addTableToSlide(slide, tableElement, slideContext, containerElement = n
                 const currentMargin = cellOpts.margin || [0, 0, 0, 0];
                 const expanded = Array.isArray(currentMargin)
                     ? [
-                        Math.round((currentMargin[0] + 1.5) * 100) / 100,
-                        Math.round((currentMargin[1] + 1.75) * 100) / 100,
-                        Math.round((currentMargin[2] + 1.5) * 100) / 100,
-                        Math.round((currentMargin[3] + 1.75) * 100) / 100
+                        roundMarginInches(currentMargin[0] + (1.5 / 72)),
+                        roundMarginInches(currentMargin[1] + (1.75 / 72)),
+                        roundMarginInches(currentMargin[2] + (1.5 / 72)),
+                        roundMarginInches(currentMargin[3] + (1.75 / 72))
                     ]
-                    : Math.round((parseFloat(currentMargin) + 1.5) * 100) / 100;
+                    : roundMarginInches(parseFloat(currentMargin) + (1.5 / 72));
                 cellOpts.margin = expanded;
             }
             if (insideDashedRegion) {
                 const currentMargin = cellOpts.margin || [0, 0, 0, 0];
                 cellOpts.margin = Array.isArray(currentMargin)
                     ? [
-                        Math.round((currentMargin[0] + 1.25) * 100) / 100,
-                        Math.round((currentMargin[1] + 1.25) * 100) / 100,
-                        Math.round((currentMargin[2] + 1.25) * 100) / 100,
-                        Math.round((currentMargin[3] + 1.25) * 100) / 100
+                        roundMarginInches(currentMargin[0] + (1.25 / 72)),
+                        roundMarginInches(currentMargin[1] + (1.25 / 72)),
+                        roundMarginInches(currentMargin[2] + (1.25 / 72)),
+                        roundMarginInches(currentMargin[3] + (1.25 / 72))
                     ]
-                    : Math.round((parseFloat(currentMargin) + 1.25) * 100) / 100;
+                    : roundMarginInches(parseFloat(currentMargin) + (1.25 / 72));
             }
 
 

@@ -1016,7 +1016,6 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
             shapeId === 'roundRect' ||
             shapeId === 'round1Rect' ||
             shapeId === 'round2DiagRect' ||
-            shapeId === 'round2SameRect' ||
             shapeId === 'snip1Rect' ||
             shapeId === 'snip2DiagRect' ||
             shapeId === 'snip2SameRect' ||
@@ -1454,9 +1453,249 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
             case 'blockArc':
                 pptSlide.addShape(pptx.shapes.BLOCK_ARC, shapeOptions);
                 break;
-            case 'can':
-                pptSlide.addShape(pptx.shapes.CAN, shapeOptions);
+            case 'can': {
+                const svgEl = shapeElement.querySelector('svg');
+
+                // Fallback if svg missing
+                if (!svgEl) {
+                    pptSlide.addShape(pptx.shapes.CAN, {
+                        ...shapeOptions,
+                        hidden: false,
+                        objectName: objName || shapeElement.getAttribute("data-name") || "can"
+                    });
+                    break;
+                }
+
+                const dataAdj = parseInt(shapeElement.getAttribute('data-adj') || '50000', 10);
+                const wrapperOpacity = !isNaN(parseFloat(style.opacity)) ? parseFloat(style.opacity) : 1;
+
+                // -----------------------------
+                // helpers
+                // -----------------------------
+                const normalizeHex = (val) => {
+                    if (!val) return null;
+                    let c = String(val).trim();
+
+                    if (c === 'none' || c === 'transparent') return null;
+
+                    // rgb / rgba
+                    if (c.startsWith('rgb')) {
+                        return rgbToHex(c).replace('#', '').toUpperCase();
+                    }
+
+                    // #hex
+                    if (c.startsWith('#')) {
+                        c = c.replace('#', '').trim();
+                        if (c.length === 3) {
+                            c = c.split('').map(ch => ch + ch).join('');
+                        }
+                        if (/^[0-9A-Fa-f]{6}$/.test(c)) {
+                            return c.toUpperCase();
+                        }
+                    }
+
+                    // raw 6 hex
+                    if (/^[0-9A-Fa-f]{6}$/.test(c)) {
+                        return c.toUpperCase();
+                    }
+
+                    return null;
+                };
+
+                const parseOpacityValue = (val, fallback = 1) => {
+                    const n = parseFloat(val);
+                    return isNaN(n) ? fallback : n;
+                };
+
+                const getGradientById = (svgNode, id) => {
+                    if (!id) return null;
+                    const all = svgNode.querySelectorAll('linearGradient, radialGradient');
+                    for (const node of all) {
+                        if (node.getAttribute('id') === id) return node;
+                    }
+                    return null;
+                };
+
+                const parseGradientFillFromSvg = (svgNode, fillValue, wrapperOpacityVal) => {
+                    if (!fillValue) return null;
+
+                    const m = String(fillValue).match(/^url\(#(.+)\)$/);
+                    if (!m) return null;
+
+                    const gradId = m[1];
+                    const gradEl = getGradientById(svgNode, gradId);
+                    if (!gradEl) return null;
+
+                    const tag = (gradEl.tagName || '').toLowerCase();
+                    const stopEls = Array.from(gradEl.querySelectorAll('stop'));
+                    if (!stopEls.length) return null;
+
+                    const colors = [];
+                    const stops = [];
+                    const transparency = [];
+
+                    for (const stopEl of stopEls) {
+                        let stopColor =
+                            stopEl.getAttribute('stop-color') ||
+                            null;
+
+                        if (!stopColor) {
+                            const styleAttr = stopEl.getAttribute('style') || '';
+                            const colorMatch = styleAttr.match(/stop-color\s*:\s*([^;]+)/i);
+                            if (colorMatch) stopColor = colorMatch[1].trim();
+                        }
+
+                        const hex = normalizeHex(stopColor);
+                        if (!hex) continue;
+
+                        let offsetRaw = stopEl.getAttribute('offset') || '0%';
+                        let offsetNum = 0;
+
+                        if (offsetRaw.includes('%')) {
+                            offsetNum = parseFloat(offsetRaw) / 100;
+                        } else {
+                            offsetNum = parseFloat(offsetRaw);
+                            if (offsetNum > 1) offsetNum = offsetNum / 100;
+                        }
+                        if (isNaN(offsetNum)) offsetNum = 0;
+
+                        let stopOpacity =
+                            stopEl.getAttribute('stop-opacity');
+
+                        if (stopOpacity == null || stopOpacity === '') {
+                            const styleAttr = stopEl.getAttribute('style') || '';
+                            const opacityMatch = styleAttr.match(/stop-opacity\s*:\s*([^;]+)/i);
+                            if (opacityMatch) stopOpacity = opacityMatch[1].trim();
+                        }
+
+                        const alpha = parseOpacityValue(stopOpacity, 1) * wrapperOpacityVal;
+                        const tr = Math.max(0, Math.min(100, Math.round((1 - alpha) * 100)));
+
+                        colors.push(hex);
+                        stops.push(Math.max(0, Math.min(1, offsetNum)));
+                        transparency.push(tr);
+                    }
+
+                    if (!colors.length) return null;
+
+                    if (tag === 'lineargradient') {
+                        const x1 = parseFloat(gradEl.getAttribute('x1') || '0');
+                        const y1 = parseFloat(gradEl.getAttribute('y1') || '0');
+                        const x2 = parseFloat(gradEl.getAttribute('x2') || '0');
+                        const y2 = parseFloat(gradEl.getAttribute('y2') || '100');
+
+                        const dx = x2 - x1;
+                        const dy = y2 - y1;
+
+                        let angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+                        if (angleDeg < 0) angleDeg += 360;
+
+                        return {
+                            type: 'gradient',
+                            gradient: {
+                                type: 'linear',
+                                angleDeg,
+                                colors,
+                                stops,
+                                transparency
+                            }
+                        };
+                    }
+
+                    return {
+                        type: 'gradient',
+                        gradient: {
+                            type: 'radial',
+                            path: 'circle',
+                            focusX: 50,
+                            focusY: 50,
+                            colors,
+                            stops,
+                            transparency
+                        }
+                    };
+                };
+
+                // -----------------------------
+                // use actual generated SVG nodes
+                // -----------------------------
+                const ellipseEls = svgEl.querySelectorAll('ellipse');
+                const pathEls = svgEl.querySelectorAll('path');
+
+                const topEllipse = ellipseEls[0] || null;
+                const bodyPath = pathEls[0] || null;
+                const bottomPath = pathEls[1] || null;
+
+                // Prefer body path for fill/stroke because that is your main can wall
+                const primaryFill =
+                    bodyPath?.getAttribute('fill') ||
+                    topEllipse?.getAttribute('fill') ||
+                    null;
+
+                const primaryStroke =
+                    bodyPath?.getAttribute('stroke') ||
+                    topEllipse?.getAttribute('stroke') ||
+                    null;
+
+                const primaryStrokeWidth =
+                    bodyPath?.getAttribute('stroke-width') ||
+                    topEllipse?.getAttribute('stroke-width') ||
+                    '0';
+
+                const primaryStrokeOpacity =
+                    bodyPath?.getAttribute('stroke-opacity') ||
+                    topEllipse?.getAttribute('stroke-opacity') ||
+                    '1';
+
+                const gradientFill = parseGradientFillFromSvg(svgEl, primaryFill, wrapperOpacity);
+                const solidFillHex = normalizeHex(primaryFill);
+                const strokeHex = normalizeHex(primaryStroke);
+                const strokeWidthNum = parseFloat(String(primaryStrokeWidth).replace('px', '')) || 0;
+                const strokeOpacityNum = parseOpacityValue(primaryStrokeOpacity, 1) * wrapperOpacity;
+
+                const canOptions = {
+                    ...shapeOptions,
+                    hidden: false,
+                    objectName: objName || shapeElement.getAttribute("data-name") || "can"
+                };
+
+                // keep adj for later XML patching if needed
+                canOptions.adjustPoint = dataAdj;
+
+                // fill
+                if (gradientFill) {
+                    canOptions.fill = gradientFill;
+                } else if (solidFillHex) {
+                    canOptions.fill = {
+                        color: solidFillHex,
+                        transparency: Math.max(0, Math.min(100, Math.round((1 - wrapperOpacity) * 100)))
+                    };
+                } else {
+                    // safe fallback
+                    canOptions.fill = {
+                        color: 'D9D9D9',
+                        transparency: Math.max(0, Math.min(100, Math.round((1 - wrapperOpacity) * 100)))
+                    };
+                }
+
+                // line
+                if (!strokeHex || strokeWidthNum <= 0 || primaryStroke === 'none') {
+                    canOptions.line = {
+                        color: '000000',
+                        transparency: 100,
+                        width: 0
+                    };
+                } else {
+                    canOptions.line = {
+                        color: strokeHex,
+                        width: strokeWidthNum,
+                        transparency: Math.max(0, Math.min(100, Math.round((1 - strokeOpacityNum) * 100)))
+                    };
+                }
+
+                pptSlide.addShape(pptx.shapes.CAN, canOptions);
                 break;
+            }
             case 'chartPlus':
                 pptSlide.addShape(pptx.shapes.CHART_PLUS, shapeOptions);
                 break;
@@ -1808,9 +2047,161 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
             case 'flowChartDisplay':
                 pptSlide.addShape(pptx.shapes.FLOWCHART_DISPLAY, shapeOptions);
                 break;
-            case 'flowChartDocument':
-                pptSlide.addShape(pptx.shapes.FLOWCHART_DOCUMENT, shapeOptions);
+            case 'flowChartDocument': {
+                const svgEl = shapeElement.querySelector('svg');
+                const pathEl = svgEl?.querySelector('path');
+
+                // Fallback if SVG/path missing
+                if (!svgEl || !pathEl) {
+                    pptSlide.addShape(pptx.shapes.FLOWCHART_DOCUMENT, {
+                        ...shapeOptions,
+                        hidden: false
+                    });
+                    break;
+                }
+
+                const rawStyleAttr = shapeElement.getAttribute('style') || '';
+
+                const transformMatch = rawStyleAttr.match(/transform\s*:\s*([^;]+)/i);
+                const rawTransform = transformMatch ? transformMatch[1].trim() : '';
+
+                const rotationMatchLocal = rawTransform.match(/rotate\(\s*([-\d.]+)deg\s*\)/i);
+                const scaleXMatchLocal = rawTransform.match(/scaleX\(\s*(-?\d*\.?\d+)\s*\)/i);
+                const scaleYMatchLocal = rawTransform.match(/scaleY\(\s*(-?\d*\.?\d+)\s*\)/i);
+
+                let localRotate = 0;
+                let localFlipH = false;
+                let localFlipV = false;
+
+                if (rotationMatchLocal && !isNaN(parseFloat(rotationMatchLocal[1]))) {
+                    localRotate = parseFloat(rotationMatchLocal[1]);
+                }
+
+                if (scaleXMatchLocal && parseFloat(scaleXMatchLocal[1]) < 0) {
+                    localFlipH = true;
+                }
+
+                if (scaleYMatchLocal && parseFloat(scaleYMatchLocal[1]) < 0) {
+                    localFlipV = true;
+                }
+
+                localRotate = ((localRotate % 360) + 360) % 360;
+
+                const flowDocShapeOptions = {
+                    ...shapeOptions,
+                    rotate: localRotate
+                };
+
+                if (localFlipH) flowDocShapeOptions.flipH = true;
+                else delete flowDocShapeOptions.flipH;
+
+                if (localFlipV) flowDocShapeOptions.flipV = true;
+                else delete flowDocShapeOptions.flipV;
+
+                const viewBox = svgEl.getAttribute('viewBox') || '0 0 100 100';
+                const vbParts = viewBox.trim().split(/\s+/).map(Number);
+
+                const vbW = (Number.isFinite(vbParts[2]) && vbParts[2] > 0) ? vbParts[2] : 100;
+                const vbH = (Number.isFinite(vbParts[3]) && vbParts[3] > 0) ? vbParts[3] : 100;
+
+                const pathD = (pathEl.getAttribute('d') || '').trim();
+
+                if (!pathD) {
+                    pptSlide.addShape(pptx.shapes.FLOWCHART_DOCUMENT, {
+                        ...flowDocShapeOptions,
+                        hidden: false
+                    });
+                    break;
+                }
+
+                const custGeomPoints = svgAddToSlide.convertSvgPathToPptxPoints(
+                    pathD,
+                    vbW,
+                    vbH,
+                    flowDocShapeOptions.w,
+                    flowDocShapeOptions.h
+                );
+
+                if (!custGeomPoints || custGeomPoints.filter(p => !p.close).length < 3) {
+                    pptSlide.addShape(pptx.shapes.FLOWCHART_DOCUMENT, {
+                        ...flowDocShapeOptions,
+                        hidden: false
+                    });
+                    break;
+                }
+
+                const svgFill = pathEl.getAttribute('fill');
+                let fillOptions = {
+                    color: 'E7E6E6'
+                };
+
+                if (svgFill && svgFill !== 'none' && svgFill !== 'transparent') {
+                    fillOptions = {
+                        color: rgbToHex(svgFill).replace('#', '').toUpperCase(),
+                        transparency: calculatedTransparency || 0
+                    };
+                }
+
+                // Preserve original theme color if available
+                if (
+                    originalThemeColor &&
+                    originalThemeColor !== 'null' &&
+                    originalThemeColor !== 'undefined'
+                ) {
+                    const themeColorObj = createThemeColorObject(
+                        originalThemeColor,
+                        originalLumMod,
+                        originalLumOff,
+                        originalAlpha
+                    );
+
+                    if (themeColorObj) {
+                        fillOptions = { color: themeColorObj };
+                    }
+                }
+
+                const svgStroke = pathEl.getAttribute('stroke');
+                const svgStrokeWidth = parseFloat(pathEl.getAttribute('stroke-width') || '0');
+
+                let lineOptions = { color: '000000', transparency: 100, width: 0 };
+
+                if (
+                    svgStroke &&
+                    svgStroke !== 'none' &&
+                    svgStroke !== 'transparent' &&
+                    !isNaN(svgStrokeWidth) &&
+                    svgStrokeWidth > 0
+                ) {
+                    lineOptions = {
+                        color: rgbToHex(svgStroke).replace('#', '').toUpperCase(),
+                        width: svgStrokeWidth
+                    };
+                } else if (flowDocShapeOptions.line) {
+                    lineOptions = flowDocShapeOptions.line;
+                }
+
+                const pathOpacityRaw = pathEl.getAttribute('opacity');
+                if (pathOpacityRaw !== null && pathOpacityRaw !== '') {
+                    const pathOpacity = parseFloat(pathOpacityRaw);
+                    if (!isNaN(pathOpacity) && pathOpacity >= 0 && pathOpacity < 1) {
+                        fillOptions = {
+                            ...fillOptions,
+                            transparency: Math.round((1 - pathOpacity) * 100)
+                        };
+                    }
+                }
+
+                pptSlide.addShape('custGeom', {
+                    ...flowDocShapeOptions,
+                    hidden: false,
+                    objectName: objName || shapeElement.getAttribute('data-name') || 'flowChartDocument',
+                    fill: fillOptions,
+                    line: lineOptions,
+                    points: custGeomPoints
+                });
+
                 break;
+            }
             case 'flowChartExtract':
                 pptSlide.addShape(pptx.shapes.FLOWCHART_EXTRACT, shapeOptions);
                 break;
@@ -1859,9 +2250,222 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
             case 'flowChartSort':
                 pptSlide.addShape(pptx.shapes.FLOWCHART_SORT, shapeOptions);
                 break;
-            case 'flowChartOnlineStorage':
-                pptSlide.addShape(pptx.shapes.FLOWCHART_STORED_DATA, shapeOptions);
+            case 'flowChartOnlineStorage': {
+                const rawStyle = shapeElement.getAttribute('style') || '';
+                const svgEl = shapeElement.querySelector('svg');
+                const pathEl = svgEl?.querySelector('path');
+
+                if (!svgEl || !pathEl) {
+                    pptSlide.addShape(pptx.shapes.FLOWCHART_STORED_DATA, {
+                        ...shapeOptions,
+                        hidden: false
+                    });
+                    break;
+                }
+
+                // ── helpers ─────────────────────────────────────────────────────
+                const getPx = (prop) => {
+                    const m = rawStyle.match(new RegExp(prop + '\\s*:\\s*([0-9.-]+)px', 'i'));
+                    return m ? parseFloat(m[1]) : 0;
+                };
+
+                const toHex = (val) => {
+                    if (!val) return null;
+                    const s = String(val).trim();
+                    if (!s || s === 'none' || s === 'transparent') return null;
+
+                    if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.replace('#', '').toUpperCase();
+                    if (/^[0-9a-fA-F]{6}$/.test(s)) return s.toUpperCase();
+
+                    const rgb = s.match(/^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+                    if (rgb) {
+                        return [rgb[1], rgb[2], rgb[3]]
+                            .map(v => Math.max(0, Math.min(255, parseInt(v, 10))).toString(16).padStart(2, '0'))
+                            .join('')
+                            .toUpperCase();
+                    }
+
+                    const rgba = s.match(/^rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([0-9.]+)\s*\)$/i);
+                    if (rgba) {
+                        return [rgba[1], rgba[2], rgba[3]]
+                            .map(v => Math.max(0, Math.min(255, parseInt(v, 10))).toString(16).padStart(2, '0'))
+                            .join('')
+                            .toUpperCase();
+                    }
+
+                    return null;
+                };
+
+                const mapJoin = (joinVal) => {
+                    const v = String(joinVal || '').toLowerCase();
+                    if (v === 'miter') return 'miter';
+                    if (v === 'bevel') return 'bevel';
+                    return 'round';
+                };
+
+                const mapCap = (capVal) => {
+                    const v = String(capVal || '').toLowerCase();
+                    if (v === 'round') return 'round';
+                    if (v === 'square') return 'square';
+                    return 'flat';
+                };
+
+                const parseDashType = (pathEl) => {
+                    const dashArray = pathEl.getAttribute('stroke-dasharray');
+                    if (!dashArray) return undefined;
+
+                    const arr = dashArray
+                        .split(/[ ,]+/)
+                        .map(v => parseFloat(v))
+                        .filter(v => !isNaN(v));
+
+                    if (!arr.length) return undefined;
+                    if (arr.length === 2) {
+                        if (arr[0] <= 2) return 'sysDot';
+                        return 'dash';
+                    }
+                    if (arr.length === 4) return 'dashDot';
+                    if (arr.length >= 6) return 'lgDashDotDot';
+                    return undefined;
+                };
+
+                // ── exact position / size from HTML ───────────────────────────
+                const fosLeft = getPx('left');
+                const fosTop = getPx('top');
+                const fosWidth = getPx('width');
+                const fosHeight = getPx('height');
+
+                const fosX = fosLeft / 72;
+                const fosY = fosTop / 72;
+                const fosW = fosWidth / 72;
+                const fosH = fosHeight / 72;
+
+                // ── exact transform from HTML style string ────────────────────
+                const fosTransform = rawStyle.match(/transform\s*:\s*([^;]+)/i)?.[1]?.trim() || '';
+
+                const fosRotMatch = fosTransform.match(/rotate\(\s*([-\d.]+)deg\s*\)/i);
+                const fosRotation = fosRotMatch ? parseFloat(fosRotMatch[1]) : 0;
+
+                const fosScaleXMatch = fosTransform.match(/scaleX\(\s*([-\d.]+)\s*\)/i);
+                const fosScaleYMatch = fosTransform.match(/scaleY\(\s*([-\d.]+)\s*\)/i);
+                const fosScaleMatch = fosTransform.match(/scale\(\s*([-\d.]+)(?:\s*,\s*([-\d.]+))?\s*\)/i);
+
+                let fosFlipH = false;
+                let fosFlipV = false;
+
+                if (fosScaleXMatch && parseFloat(fosScaleXMatch[1]) < 0) fosFlipH = true;
+                if (fosScaleYMatch && parseFloat(fosScaleYMatch[1]) < 0) fosFlipV = true;
+
+                if (fosScaleMatch) {
+                    const sx = parseFloat(fosScaleMatch[1]);
+                    const sy = fosScaleMatch[2] !== undefined ? parseFloat(fosScaleMatch[2]) : sx;
+                    if (!isNaN(sx) && sx < 0) fosFlipH = true;
+                    if (!isNaN(sy) && sy < 0) fosFlipV = true;
+                }
+
+                // ── original SVG path, no pre-transform ───────────────────────
+                const d = pathEl.getAttribute('d') || '';
+                if (!d.trim()) {
+                    pptSlide.addShape(pptx.shapes.FLOWCHART_STORED_DATA, {
+                        ...shapeOptions,
+                        hidden: false
+                    });
+                    break;
+                }
+
+                const viewBox = (svgEl.getAttribute('viewBox') || `0 0 ${fosWidth || 100} ${fosHeight || 100}`)
+                    .trim()
+                    .split(/\s+/)
+                    .map(Number);
+
+                const vbX = viewBox[0] || 0;
+                const vbY = viewBox[1] || 0;
+                const vbW = viewBox[2] || fosWidth || 100;
+                const vbH = viewBox[3] || fosHeight || 100;
+
+                let fosPts = svgAddToSlide.convertSvgPathToPptxPoints(
+                    d,
+                    vbW,
+                    vbH,
+                    fosW,
+                    fosH
+                );
+
+                if (!fosPts || fosPts.filter(p => !p.close).length < 3) {
+                    pptSlide.addShape(pptx.shapes.FLOWCHART_STORED_DATA, {
+                        ...shapeOptions,
+                        hidden: false
+                    });
+                    break;
+                }
+
+                // adjust if viewBox origin is not 0,0
+                if (vbX !== 0 || vbY !== 0) {
+                    const sx = fosW / vbW;
+                    const sy = fosH / vbH;
+
+                    fosPts = fosPts.map(pt => {
+                        if (pt.close) return pt;
+                        return {
+                            ...pt,
+                            x: pt.x - (vbX * sx),
+                            y: pt.y - (vbY * sy)
+                        };
+                    });
+                }
+
+                // ── fill ──────────────────────────────────────────────────────
+                const fosFillHex = toHex(pathEl.getAttribute('fill')) || 'FFFFFF';
+                const fosFill = { color: fosFillHex };
+
+                // ── line ──────────────────────────────────────────────────────
+                const fosStroke = pathEl.getAttribute('stroke');
+                const fosStrokeHex = toHex(fosStroke);
+                const fosStrokeWidth = parseFloat(pathEl.getAttribute('stroke-width') || '0');
+                const fosStrokeJoin = pathEl.getAttribute('stroke-linejoin') || 'round';
+                const fosStrokeCap = pathEl.getAttribute('stroke-linecap') || 'butt';
+
+                let fosLine = {
+                    color: fosFillHex,
+                    transparency: 100,
+                    width: 0
+                };
+
+                if (fosStrokeHex && fosStroke !== 'none' && !isNaN(fosStrokeWidth) && fosStrokeWidth > 0) {
+                    fosLine = {
+                        color: fosStrokeHex,
+                        width: fosStrokeWidth,
+                        join: mapJoin(fosStrokeJoin),
+                        cap: mapCap(fosStrokeCap)
+                    };
+
+                    const dashType = parseDashType(pathEl);
+                    if (dashType) fosLine.dashType = dashType;
+                }
+
+                // ── final shape options: transform goes to XML xfrm ──────────
+                const fosShapeOptions = {
+                    x: fosX,
+                    y: fosY,
+                    w: fosW,
+                    h: fosH,
+                    rotate: fosRotation,
+                    fill: fosFill,
+                    line: fosLine,
+                    objectName: objName || shapeElement.getAttribute('data-name') || 'flowChartOnlineStorage',
+                    hidden: false,
+                    points: fosPts
+                };
+
+                if (fosFlipH) fosShapeOptions.flipH = true;
+                if (fosFlipV) fosShapeOptions.flipV = true;
+
+                if (shapeOptions.shadow) fosShapeOptions.shadow = shapeOptions.shadow;
+                if (shapeOptions.glow) fosShapeOptions.glow = shapeOptions.glow;
+
+                pptSlide.addShape('custGeom', fosShapeOptions);
                 break;
+            }
             case 'flowChartSummingJunction':
                 pptSlide.addShape(pptx.shapes.FLOWCHART_SUMMING_JUNCTION, shapeOptions);
                 break;
@@ -2389,9 +2993,164 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
             case 'homePlate':
                 pptSlide.addShape(pptx.shapes.PENTAGON, shapeOptions);
                 break;
-            case 'pie':
-                pptSlide.addShape(pptx.shapes.PIE, shapeOptions);
+            case 'pie': {
+                let pieAdj1 = shapeElement.getAttribute('data-adj1');
+                let pieAdj2 = shapeElement.getAttribute('data-adj2');
+
+                pieAdj1 = pieAdj1 !== null && pieAdj1 !== '' ? parseInt(pieAdj1, 10) : null;
+                pieAdj2 = pieAdj2 !== null && pieAdj2 !== '' ? parseInt(pieAdj2, 10) : null;
+
+                // If adj values are missing, fallback to preset PIE rather than broken custGeom
+                if (
+                    pieAdj1 === null || Number.isNaN(pieAdj1) ||
+                    pieAdj2 === null || Number.isNaN(pieAdj2)
+                ) {
+                    pptSlide.addShape(pptx.shapes.PIE, {
+                        ...shapeOptions,
+                        hidden: false
+                    });
+                    break;
+                }
+
+                const pieX = x;
+                const pieY = y;
+                const pieW = w;
+                const pieH = h;
+
+                // local shape dimensions in px (not inches)
+                const localW = parseFloat(rawWidth);
+                const localH = parseFloat(rawHeight);
+
+                const cx = localW / 2;
+                const cy = localH / 2;
+                const rx = localW / 2;
+                const ry = localH / 2;
+
+                const normDeg = (deg) => {
+                    let d = deg % 360;
+                    if (d < 0) d += 360;
+                    return d;
+                };
+
+                // OOXML angle units -> degrees
+                const startDeg = pieAdj1 / 60000;
+                const endDeg = pieAdj2 / 60000;
+
+                let sweepDeg = normDeg(endDeg - startDeg);
+                if (sweepDeg === 0) sweepDeg = 360;
+
+                // sample arc into many line points
+                const pointCount = Math.max(24, Math.ceil(sweepDeg / 6));
+
+                const toLocalPoint = (deg) => {
+                    const rad = (normDeg(deg) * Math.PI) / 180;
+                    return {
+                        x: cx + rx * Math.cos(rad),
+                        y: cy + ry * Math.sin(rad)
+                    };
+                };
+
+                const ptsPx = [];
+                ptsPx.push({ x: cx, y: cy }); // center
+
+                for (let i = 0; i <= pointCount; i++) {
+                    const t = i / pointCount;
+                    const deg = startDeg + sweepDeg * t;
+                    ptsPx.push(toLocalPoint(deg));
+                }
+
+                // convert to custGeom points in ppt local units
+                const custGeomPoints = ptsPx.map((pt) => ({
+                    x: (pt.x / localW) * pieW,
+                    y: (pt.y / localH) * pieH
+                }));
+
+                custGeomPoints.push({ close: true });
+
+                // fill
+                let pieFill = shapeOptions.fill || { color: '808080' };
+
+                // line
+                let pieLine = shapeOptions.line || { color: '000000', transparency: 100, width: 0 };
+
+                // If SVG exists, prefer exact fill/stroke from it
+                const svgEl = shapeElement.querySelector('svg');
+                const pathEl = svgEl?.querySelector('path');
+
+                if (pathEl) {
+                    const svgFill = pathEl.getAttribute('fill');
+                    if (svgFill && svgFill !== 'none' && svgFill !== 'transparent') {
+                        pieFill = {
+                            color: rgbToHex(svgFill).replace('#', '').toUpperCase(),
+                            transparency: calculatedTransparency || 0
+                        };
+                    }
+
+                    const svgStroke = pathEl.getAttribute('stroke');
+                    const svgStrokeWidth = parseFloat(pathEl.getAttribute('stroke-width') || '0');
+
+                    if (
+                        svgStroke &&
+                        svgStroke !== 'none' &&
+                        svgStroke !== 'transparent' &&
+                        !Number.isNaN(svgStrokeWidth) &&
+                        svgStrokeWidth > 0
+                    ) {
+                        pieLine = {
+                            color: rgbToHex(svgStroke).replace('#', '').toUpperCase(),
+                            width: svgStrokeWidth
+                        };
+                    } else {
+                        pieLine = { color: '000000', transparency: 100, width: 0 };
+                    }
+
+                    const fillOpacityRaw = pathEl.getAttribute('fill-opacity') || pathEl.getAttribute('opacity');
+                    if (fillOpacityRaw !== null && fillOpacityRaw !== '') {
+                        const fillOpacity = parseFloat(fillOpacityRaw);
+                        if (!Number.isNaN(fillOpacity) && fillOpacity >= 0 && fillOpacity < 1) {
+                            pieFill.transparency = Math.round((1 - fillOpacity) * 100);
+                        }
+                    }
+                }
+
+                // preserve original theme fill if available
+                if (
+                    originalThemeColor &&
+                    originalThemeColor !== 'null' &&
+                    originalThemeColor !== 'undefined'
+                ) {
+                    const themeColorObj = createThemeColorObject(
+                        originalThemeColor,
+                        originalLumMod,
+                        originalLumOff,
+                        originalAlpha
+                    );
+                    if (themeColorObj) {
+                        pieFill = { color: themeColorObj };
+                    }
+                }
+
+                const pieShapeOptions = {
+                    x: pieX,
+                    y: pieY,
+                    w: pieW,
+                    h: pieH,
+                    rotate: rotation,
+                    objectName: objName || shapeElement.getAttribute('data-name') || 'pie',
+                    hidden: false,
+                    fill: pieFill,
+                    line: pieLine,
+                    points: custGeomPoints,
+                    ...(shapeOptions.shadow ? { shadow: shapeOptions.shadow } : {}),
+                    ...(shapeOptions.glow ? { glow: shapeOptions.glow } : {})
+                };
+
+                if (shapeOptions.flipH) pieShapeOptions.flipH = true;
+                if (shapeOptions.flipV) pieShapeOptions.flipV = true;
+
+                pptSlide.addShape('custGeom', pieShapeOptions);
                 break;
+            }
             case 'pieWedge':
                 pptSlide.addShape(pptx.shapes.PIE_WEDGE, shapeOptions);
                 break;
@@ -2511,9 +3270,99 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
             case 'round2DiagRect':
                 pptSlide.addShape(pptx.shapes.ROUND_2_DIAG_RECTANGLE, shapeOptions);
                 break;
-            case 'round2SameRect':
-                pptSlide.addShape(pptx.shapes.ROUND_2_SAME_RECTANGLE, shapeOptions);
+            case 'round2SameRect': {
+                const svgEl = shapeElement.querySelector('svg');
+                const styleAttr = shapeElement.getAttribute('style') || '';
+
+                let rTopPx = 0;     // top-left + top-right
+                let rBottomPx = 0;  // bottom-right + bottom-left
+
+                // 1. Try clip-path first
+                const clipMatch = styleAttr.match(
+                    /clip-path\s*:\s*inset\([^)]*round\s+([\d.]+)px\s+([\d.]+)px\s+([\d.]+)px\s+([\d.]+)px/i
+                );
+                if (clipMatch) {
+                    rTopPx = parseFloat(clipMatch[1] || '0');
+                    rBottomPx = parseFloat(clipMatch[3] || '0');
+                } else {
+                    // 2. Fallback to border-radius
+                    const brMatch = styleAttr.match(
+                        /border-radius\s*:\s*([\d.]+)px(?:\s+([\d.]+)px)?(?:\s+([\d.]+)px)?(?:\s+([\d.]+)px)?/i
+                    );
+                    if (brMatch) {
+                        rTopPx = parseFloat(brMatch[1] || '0');
+                        rBottomPx = parseFloat(brMatch[3] || brMatch[1] || '0');
+                    }
+                }
+
+                const shapeWpx = Math.max(widthPx || 0, 1);
+                const shapeHpx = Math.max(heightPx || 0, 1);
+                const minDimPx = Math.min(shapeWpx, shapeHpx);
+
+                rTopPx = Math.max(0, Math.min(rTopPx, minDimPx / 2));
+                rBottomPx = Math.max(0, Math.min(rBottomPx, minDimPx / 2));
+
+                // Convert px radii into the local SVG/viewBox space
+                let vbW = shapeWpx;
+                let vbH = shapeHpx;
+                if (svgEl) {
+                    const vb = (svgEl.getAttribute('viewBox') || '').trim().split(/\s+/).map(Number);
+                    if (vb.length === 4 && Number.isFinite(vb[2]) && Number.isFinite(vb[3]) && vb[2] > 0 && vb[3] > 0) {
+                        vbW = vb[2];
+                        vbH = vb[3];
+                    }
+                }
+
+                const sx = vbW / shapeWpx;
+                const sy = vbH / shapeHpx;
+                const rt = rTopPx * Math.min(sx, sy);
+                const rb = rBottomPx * Math.min(sx, sy);
+
+                // Cubic bezier approximation for quarter circle
+                const K = 0.5522847498307936;
+
+                const pathD = [
+                    `M ${rt} 0`,
+                    `L ${vbW - rt} 0`,
+                    `C ${vbW - rt + rt * K} 0 ${vbW} ${rt - rt * K} ${vbW} ${rt}`,
+                    `L ${vbW} ${vbH - rb}`,
+                    `C ${vbW} ${vbH - rb + rb * K} ${vbW - rb + rb * K} ${vbH} ${vbW - rb} ${vbH}`,
+                    `L ${rb} ${vbH}`,
+                    `C ${rb - rb * K} ${vbH} 0 ${vbH - rb + rb * K} 0 ${vbH - rb}`,
+                    `L 0 ${rt}`,
+                    `C 0 ${rt - rt * K} ${rt - rt * K} 0 ${rt} 0`,
+                    'Z'
+                ].join(' ');
+
+                const custGeomPoints = svgAddToSlide.convertSvgPathToPptxPoints(
+                    pathD,
+                    vbW,
+                    vbH,
+                    shapeOptions.w,
+                    shapeOptions.h
+                );
+
+                if (!custGeomPoints || custGeomPoints.filter(p => !p.close).length < 3) {
+                    // safe fallback
+                    pptSlide.addShape(pptx.shapes.ROUNDED_RECTANGLE, {
+                        ...shapeOptions,
+                        objectName: objName || 'round2SameRect'
+                    });
+                    break;
+                }
+
+                const customOpts = {
+                    ...shapeOptions,
+                    objectName: objName || 'round2SameRect',
+                    points: custGeomPoints
+                };
+
+                // rectRadius must NOT be present on custGeom
+                delete customOpts.rectRadius;
+
+                pptSlide.addShape('custGeom', customOpts);
                 break;
+            }
             case 'smileyFace':
                 pptSlide.addShape(pptx.shapes.SMILEY_FACE, shapeOptions);
                 break;
@@ -2573,9 +3422,88 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
             case 'swooshArrow':
                 pptSlide.addShape(pptx.shapes.SWOOSH_ARROW, shapeOptions);
                 break;
-            case 'teardrop':
-                pptSlide.addShape(pptx.shapes.TEAR, shapeOptions);
+            case 'teardrop': {
+
+                const tdRawStyle = shapeElement.getAttribute('style') || '';
+
+                // ── Position (px → inches at 72 DPI) ──────────────────────────────
+                const tdGet = (prop) => {
+                    const m = tdRawStyle.match(new RegExp(prop + '\\s*:\\s*([0-9.-]+)px', 'i'));
+                    return m ? parseFloat(m[1]) : 0;
+                };
+                const tdX = tdGet('left') / 72;
+                const tdY = tdGet('top') / 72;
+                const tdW = tdGet('width') / 72;
+                const tdH = tdGet('height') / 72;
+
+                // ── Rotation (degrees) ─────────────────────────────────────────────
+                const tdRotM = tdRawStyle.match(/rotate\(([-\d.]+)deg\)/i);
+                const tdRotation = tdRotM ? parseFloat(tdRotM[1]) : 0;
+
+                // ── Flip (explicit data attributes written by shapeHandler.js) ─────
+                const tdFlipH = shapeElement.getAttribute('data-flip-h') === '1';
+                const tdFlipV = shapeElement.getAttribute('data-flip-v') === '1';
+
+                // ── Fill color from SVG <path fill="..."> ─────────────────────────
+                let tdFillColor = 'FFFFFF';
+                const tdSvgPath = shapeElement.querySelector('svg path');
+                if (tdSvgPath) {
+                    const tdFillRaw = tdSvgPath.getAttribute('fill') || '';
+                    if (tdFillRaw && tdFillRaw !== 'none' && tdFillRaw !== 'transparent') {
+                        tdFillColor = rgbToHex(tdFillRaw).replace('#', '').toUpperCase();
+                    }
+                }
+
+                // ── Stroke from SVG <path stroke="..."> ───────────────────────────
+                let tdLineOptions = undefined;  // undefined = no line (noFill in PPTX)
+                if (tdSvgPath) {
+                    const tdStrokeRaw = tdSvgPath.getAttribute('stroke') || 'none';
+                    const tdStrokeWidth = parseFloat(tdSvgPath.getAttribute('stroke-width') || '0');
+                    if (tdStrokeRaw !== 'none' && tdStrokeRaw !== 'transparent' && tdStrokeWidth > 0) {
+                        tdLineOptions = {
+                            color: rgbToHex(tdStrokeRaw).replace('#', '').toUpperCase(),
+                            width: tdStrokeWidth
+                        };
+                    }
+                }
+
+                // ── Opacity ────────────────────────────────────────────────────────
+                let tdTransparency = undefined;
+                const tdOpacityM = tdRawStyle.match(/(?:^|;)\s*opacity\s*:\s*([\d.]+)/i);
+                if (tdOpacityM) {
+                    const tdOp = parseFloat(tdOpacityM[1]);
+                    if (!isNaN(tdOp) && tdOp < 1) {
+                        tdTransparency = Math.round((1 - tdOp) * 100);
+                    }
+                }
+
+                // ── adj (tip sharpness) ────────────────────────────────────────────
+                const tdAdj = parseInt(shapeElement.getAttribute('data-adj') || '100000', 10);
+
+                // ── Build final shape options ──────────────────────────────────────
+                const tdShapeOptions = {
+                    x: tdX,
+                    y: tdY,
+                    w: tdW,
+                    h: tdH,
+                    rotate: tdRotation,
+                    fill: { color: tdFillColor },
+                    objectName: objName || '',
+                };
+
+                if (tdFlipH) tdShapeOptions.flipH = true;
+                if (tdFlipV) tdShapeOptions.flipV = true;
+                if (tdLineOptions) tdShapeOptions.line = tdLineOptions;
+                if (tdTransparency !== undefined) tdShapeOptions.transparency = tdTransparency;
+                if (!isNaN(tdAdj) && tdAdj !== 100000) tdShapeOptions.adjVal1 = tdAdj;
+
+                // Carry over shadow / glow if present
+                if (shapeOptions.shadow) tdShapeOptions.shadow = shapeOptions.shadow;
+                if (shapeOptions.glow) tdShapeOptions.glow = shapeOptions.glow;
+
+                pptSlide.addShape(pptx.shapes.TEAR, tdShapeOptions);
                 break;
+            }
             case 'trapezoid':
                 pptSlide.addShape(pptx.shapes.TRAPEZOID, shapeOptions);
                 break;

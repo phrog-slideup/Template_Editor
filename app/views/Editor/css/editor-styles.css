@@ -1730,6 +1730,8 @@ body {
 /* Handles often sit slightly outside the element; avoid clipping */
 .shape.hover,
 .shape.selected,
+.custom-shape.hover,
+.custom-shape.selected,
 .shape-group.hover,
 .shape-group.selected,
 .sli-slide .image-container.hover,
@@ -1913,12 +1915,12 @@ body {
       regardless of overflow:visible.
       Visual clipping (triangle, arrow shapes) must go on .shape-inner
       or the child <svg>, not the wrapper.                           */
-.shape,
+/* .shape,
 .shape-group {
     clip-path: none !important;
     -webkit-clip-path: none !important;
     overflow: visible !important;
-}
+} */
 
 /* 2. DEFAULT — no outline on plain uninteracted shapes             */
 .shape, .custom-shape {

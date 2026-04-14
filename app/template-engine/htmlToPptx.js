@@ -28,6 +28,7 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
     try {
         global.patternFillStore = new Map();
         global.svgGradientFillStore = new Map();
+        global.svgLineStyleStore = new Map();
         global.softEdgeStore = new Map();
         global.grayscaleImageStore = new Map();
         clearGradientMetadata();
@@ -190,6 +191,11 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         // ========================================
         // 🪞 STEP 6.5B: INJECT SHAPE REFLECTIONS
         // ========================================
+        const svgLineResult = await injectSvgLineStylesIntoSlideXML(slideXmlsDir);
+        if (svgLineResult.injected > 0) {
+            console.log(`   Injected SVG line styles into ${svgLineResult.injected} shape(s)`);
+        }
+
         const reflectionResult = await injectReflectionsIntoSlideXML(slideXmlsDir);
         if (reflectionResult.shapesInjected > 0) {
             console.log(`   ✅ Injected reflections into ${reflectionResult.shapesInjected} shape(s)`);
@@ -2283,6 +2289,149 @@ async function injectSvgGradientFillsIntoSlideXML(slideXmlsDir) {
     } catch (error) {
         console.error('   ❌ Error in injectSvgGradientFillsIntoSlideXML:', error);
         return { success: false, error: error.message };
+    }
+}
+
+function mapSvgCapToPptCap(capStyle, isOpenPath) {
+    const normalizedCap = String(capStyle || '').trim().toLowerCase();
+
+    if (normalizedCap === 'round') return 'rnd';
+    if (normalizedCap === 'square') return 'sq';
+    if (normalizedCap === 'butt') return 'flat';
+    if (!normalizedCap && isOpenPath) return 'flat';
+
+    return null;
+}
+
+function buildSvgLineJoinXml(joinStyle, isOpenPath) {
+    const normalizedJoin = String(joinStyle || '').trim().toLowerCase();
+
+    if (normalizedJoin === 'round') return '<a:round/>';
+    if (normalizedJoin === 'bevel') return '<a:bevel/>';
+    if (normalizedJoin === 'miter' || normalizedJoin === 'miter-clip' || normalizedJoin === 'arcs') {
+        return '<a:miter lim="800000"/>';
+    }
+
+    return isOpenPath ? '<a:miter lim="800000"/>' : '';
+}
+
+function buildSvgLineXml(lineData) {
+    const strokeWidth = Number.isFinite(lineData?.strokeWidth) && lineData.strokeWidth > 0 ? lineData.strokeWidth : 1;
+    const lineWidthEmu = Math.max(1, Math.round(strokeWidth * 12700));
+    const strokeColor = String(lineData?.strokeColor || '000000').replace('#', '').toUpperCase();
+    const dashType = lineData?.dashType || 'solid';
+    const capValue = mapSvgCapToPptCap(lineData?.cap, lineData?.isOpenPath);
+    const capAttr = capValue ? ` cap="${capValue}"` : '';
+    const joinXml = buildSvgLineJoinXml(lineData?.join, lineData?.isOpenPath);
+    const lineFillXml = lineData?.strokeGradient
+        ? buildGradFillXml(lineData.strokeGradient)
+        : `<a:solidFill><a:srgbClr val="${strokeColor}"/></a:solidFill>`;
+
+    return `<a:ln w="${lineWidthEmu}"${capAttr} cmpd="sng" algn="ctr">` +
+        `${lineFillXml}` +
+        `<a:prstDash val="${dashType}"/>` +
+        `${joinXml}</a:ln>`;
+}
+
+function ensureSvgShapeNoFill(spPrContent) {
+    const stripped = spPrContent.replace(
+        /<a:(solidFill|gradFill|blipFill|pattFill)>[\s\S]*?<\/a:\1>|<a:noFill\s*\/>/g,
+        ''
+    );
+
+    const insertedAfterCustGeom = stripped.replace(/(<\/a:custGeom>)/, '$1<a:noFill/>');
+    if (insertedAfterCustGeom !== stripped) return insertedAfterCustGeom;
+
+    const insertedAfterXfrm = stripped.replace(/(<\/a:xfrm>)/, '$1<a:noFill/>');
+    if (insertedAfterXfrm !== stripped) return insertedAfterXfrm;
+
+    return `<a:noFill/>${stripped}`;
+}
+
+async function injectSvgLineStylesIntoSlideXML(slideXmlsDir) {
+    try {
+        if (!global.svgLineStyleStore || global.svgLineStyleStore.size === 0) {
+            return { success: true, injected: 0 };
+        }
+
+        const slidesDir = path.join(slideXmlsDir, 'slides');
+        if (!await checkDirectoryExists(slidesDir)) {
+            return { success: true, injected: 0 };
+        }
+
+        const slideFiles = await fsPromises.readdir(slidesDir);
+        const slideXmlFiles = slideFiles.filter(file => file.match(/^slide\d+\.xml$/));
+        let totalInjected = 0;
+
+        for (const slideFile of slideXmlFiles) {
+            const slidePath = path.join(slidesDir, slideFile);
+            let xml = await fsPromises.readFile(slidePath, 'utf8');
+            let modified = false;
+
+            xml = xml.replace(/<p:cNvPr([^>]*)>\s*<\/p:cNvPr>/g, '<p:cNvPr$1/>');
+
+            for (const [shapeName, lineData] of global.svgLineStyleStore.entries()) {
+                if (!shapeName) continue;
+
+                const escapedName = shapeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const shapeBlockRegex = new RegExp(
+                    `(<p:sp>[\\s\\S]*?<p:cNvPr[^>]*name="${escapedName}"[^>]*/>[\\s\\S]*?<p:spPr[^>]*>)([\\s\\S]*?)(</p:spPr>)`,
+                    'g'
+                );
+
+                const updatedXml = xml.replace(shapeBlockRegex, (match, before, spPrContent, after) => {
+                    let nextSpPrContent = spPrContent;
+                    let changed = false;
+
+                    if (lineData?.noFill) {
+                        const noFillContent = ensureSvgShapeNoFill(nextSpPrContent);
+                        if (noFillContent !== nextSpPrContent) {
+                            nextSpPrContent = noFillContent;
+                            changed = true;
+                        }
+                    }
+
+                    if (lineData?.strokeColor && Number.isFinite(lineData?.strokeWidth) && lineData.strokeWidth > 0) {
+                        const lineXml = buildSvgLineXml(lineData);
+                        const lineRegex = /<a:ln\b[^>]*(?:\/>|>[\s\S]*?<\/a:ln>)/;
+                        const replacedLine = nextSpPrContent.replace(lineRegex, lineXml);
+
+                        if (replacedLine !== nextSpPrContent) {
+                            nextSpPrContent = replacedLine;
+                            changed = true;
+                        } else {
+                            const insertedAfterFill = nextSpPrContent.replace(/(<a:noFill\s*\/>|<\/a:(?:solidFill|gradFill|blipFill|pattFill)>)/, `$1${lineXml}`);
+                            if (insertedAfterFill !== nextSpPrContent) {
+                                nextSpPrContent = insertedAfterFill;
+                                changed = true;
+                            } else {
+                                nextSpPrContent = nextSpPrContent.replace(/(<\/a:xfrm>)/, `$1${lineXml}`);
+                                if (nextSpPrContent !== spPrContent) changed = true;
+                            }
+                        }
+                    }
+
+                    if (!changed) return match;
+
+                    modified = true;
+                    totalInjected++;
+                    return before + nextSpPrContent + after;
+                });
+
+                xml = updatedXml;
+            }
+
+            if (modified) {
+                await fsPromises.writeFile(slidePath, xml, 'utf8');
+                console.log(`   SVG line styles injected into ${slideFile}`);
+            }
+        }
+
+        global.svgLineStyleStore.clear();
+        return { success: true, injected: totalInjected };
+    } catch (error) {
+        console.error('   âŒ Error in injectSvgLineStylesIntoSlideXML:', error);
+        return { success: false, error: error.message, injected: 0 };
     }
 }
 

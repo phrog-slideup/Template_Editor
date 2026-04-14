@@ -870,7 +870,73 @@ class ShapeHandler {
                 }
             }
 
-            const svgMarkup = freeFormShape.generateCustomShapeSVG(shapeNode, custGeom, position, fillColor, resolvedStroke, { flipH, flipV });
+            const hasNoFill = shapeNode?.["p:spPr"]?.[0]?.["a:noFill"] !== undefined;
+            const customPaths = custGeom?.["a:pathLst"]?.[0]?.["a:path"] || [];
+            const hasClosedPath = customPaths.some(path => {
+                const closeNode = path?.["a:close"];
+                return Array.isArray(closeNode) ? closeNode.length > 0 : Boolean(closeNode);
+            });
+            const isOpenLineOnlyFreeform = hasNoFill && !hasClosedPath;
+            const customFillColor = hasNoFill || (!hasClosedPath && (!fillColor || fillColor === "transparent" || fillColor === "none"))
+                ? "none"
+                : fillColor;
+
+            // PPT renders open noFill freeforms like thick lines with rectangular caps.
+            // If we leave cap/join implicit, some HTML/SVG consumers can show pointed ends.
+            if (isOpenLineOnlyFreeform) {
+                if (!resolvedStroke.join) {
+                    resolvedStroke = { ...resolvedStroke, join: "miter" };
+                }
+            }
+
+            let svgMarkup = freeFormShape.generateCustomShapeSVG(shapeNode, custGeom, position, customFillColor, resolvedStroke, { flipH, flipV });
+
+            // ── Gradient stroke post-processing ───────────────────────────────
+            // generateCustomShapeSVG() only uses stroke.color (solid fallback).
+            // When the PPTX line fill is <a:gradFill>, resolvedStroke.strokeType
+            // is "gradient" with fully-resolved gradientStops and gradientAngle.
+            // SVG cannot express a gradient stroke via stroke="#hex"; it needs a
+            // <linearGradient> in <defs> referenced via stroke="url(#id)".
+            if (resolvedStroke.strokeType === "gradient" && resolvedStroke.gradientStops?.length >= 2) {
+                const gradId = `lnGrad_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+
+                // Convert angle (degrees, SVG math convention) to x1/y1 → x2/y2 percentages
+                const ang = resolvedStroke.gradientAngle || 0;
+                const rad = (ang * Math.PI) / 180;
+                const x1 = `${(50 - Math.cos(rad) * 50).toFixed(2)}%`;
+                const y1 = `${(50 - Math.sin(rad) * 50).toFixed(2)}%`;
+                const x2 = `${(50 + Math.cos(rad) * 50).toFixed(2)}%`;
+                const y2 = `${(50 + Math.sin(rad) * 50).toFixed(2)}%`;
+
+                const stopEls = resolvedStroke.gradientStops
+                    .map(s => `<stop offset="${s.offset}" stop-color="${s.color}"/>`)
+                    .join("");
+
+                const gradDef = `<linearGradient id="${gradId}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" gradientUnits="objectBoundingBox">${stopEls}</linearGradient>`;
+
+                // Inject into existing <defs> or create one inside <svg>
+                if (/<defs>/i.test(svgMarkup)) {
+                    svgMarkup = svgMarkup.replace(/<defs>/i, `<defs>${gradDef}`);
+                } else {
+                    svgMarkup = svgMarkup.replace(/(<svg\b[^>]*>)/i, `$1<defs>${gradDef}</defs>`);
+                }
+
+                // Replace the solid fallback stroke color on path/polyline/polygon
+                // with a reference to the linearGradient defined above.
+                const escapedColor = resolvedStroke.color.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const solidColorRx = new RegExp(`stroke="${escapedColor}"`, 'gi');
+                if (solidColorRx.test(svgMarkup)) {
+                    svgMarkup = svgMarkup.replace(solidColorRx, `stroke="url(#${gradId})"`);
+                } else {
+                    // Fallback: replace any hex stroke on path/polyline/polygon elements
+                    svgMarkup = svgMarkup.replace(
+                        /(<(?:path|polyline|polygon)\b[^>]*)\bstroke="#[0-9a-fA-F]{3,8}"/gi,
+                        `$1stroke="url(#${gradId})"`
+                    );
+                }
+            }
+            // ── End gradient stroke post-processing ───────────────────────────
+
             return `<div id="custGeom" class="custom-shape" data-name="${shapeName}"
                         style="position:absolute; 
                         left:${position.x}px; 
@@ -893,12 +959,28 @@ class ShapeHandler {
         let strokeDashArray = "";
         if (line) {
             const dashType = line?.["a:prstDash"]?.[0]?.["$"]?.val || "solid";
+            // Scale dash/gap lengths by stroke width, per OOXML ECMA-376 §20.1.10.48
+            const _sw = Math.max(parseFloat(strokeWidth) || 1, 1);
             if (dashType === "dash") {
-                strokeDashArray = "5, 5";
+                strokeDashArray = `${3*_sw}, ${3*_sw}`;
             } else if (dashType === "dot") {
-                strokeDashArray = "2, 5";
+                strokeDashArray = `${1*_sw}, ${3*_sw}`;
             } else if (dashType === "dashDot") {
-                strokeDashArray = "5, 5, 2, 5";
+                strokeDashArray = `${3*_sw}, ${3*_sw}, ${1*_sw}, ${3*_sw}`;
+            } else if (dashType === "lgDash") {
+                strokeDashArray = `${8*_sw}, ${3*_sw}`;
+            } else if (dashType === "lgDashDot") {
+                strokeDashArray = `${8*_sw}, ${3*_sw}, ${1*_sw}, ${3*_sw}`;
+            } else if (dashType === "lgDashDotDot") {
+                strokeDashArray = `${8*_sw}, ${3*_sw}, ${1*_sw}, ${3*_sw}, ${1*_sw}, ${3*_sw}`;
+            } else if (dashType === "sysDash") {
+                strokeDashArray = `${2*_sw}, ${2*_sw}`;
+            } else if (dashType === "sysDot") {
+                strokeDashArray = `${1*_sw}, ${1*_sw}`;
+            } else if (dashType === "sysDashDot") {
+                strokeDashArray = `${2*_sw}, ${2*_sw}, ${1*_sw}, ${2*_sw}`;
+            } else if (dashType === "sysDashDotDot") {
+                strokeDashArray = `${2*_sw}, ${2*_sw}, ${1*_sw}, ${2*_sw}, ${1*_sw}, ${2*_sw}`;
             }
         }
 
@@ -3264,6 +3346,7 @@ class ShapeHandler {
         let strokeColor = ""; // Default stroke color
         let strokeCap = "butt"; // Default line cap (CSS default)
         let strokeDashArray = ""; // Default dash pattern
+        let strokeJoin = ""; // Default join uses SVG/PPT defaults unless explicitly set
 
         // Extracting the stroke width from the 'w' attribute and converting from EMUs to pixels
         const emuWidth = outline?.["$"]?.w;
@@ -3288,39 +3371,63 @@ class ShapeHandler {
             }
         }
 
+        if (outline?.["a:round"]) {
+            strokeJoin = "round";
+        } else if (outline?.["a:bevel"]) {
+            strokeJoin = "bevel";
+        } else if (outline?.["a:miter"]) {
+            strokeJoin = "miter";
+        }
+
         // Extract dash pattern
+        // OOXML prstDash values are defined as multiples of the line width (w).
+        // Using hardcoded pixel values (e.g. "5,5") produces invisible dashes on
+        // thick strokes and oversized dashes on thin ones.
+        // ECMA-376 §20.1.10.48 standard multipliers:
+        //   dash      → 3w dash,  3w gap
+        //   dot       → 1w dash,  3w gap
+        //   dashDot   → 3w dash,  3w gap,  1w dot,  3w gap
+        //   lgDash    → 8w dash,  3w gap
+        //   lgDashDot → 8w dash,  3w gap,  1w dot,  3w gap
+        //   lgDashDotDot → 8w dash, 3w gap, 1w dot, 3w gap, 1w dot, 3w gap
+        //   sysDash   → 2w dash,  2w gap   (system-level, shorter period)
+        //   sysDot    → 1w dash,  1w gap
+        //   sysDashDot   → 2w dash, 2w gap, 1w dot, 2w gap
+        //   sysDashDotDot → 2w dash, 2w gap, 1w dot, 2w gap, 1w dot, 2w gap
         const dashType = outline?.["a:prstDash"]?.[0]?.["$"]?.val;
         if (dashType && dashType !== "solid") {
+            // Use stroke width (px) as the unit. Minimum 1 to avoid zero-length dashes.
+            const w = Math.max(strokeWidth, 1);
             switch (dashType) {
                 case "dash":
-                    strokeDashArray = "5, 5";
+                    strokeDashArray = `${3*w}, ${3*w}`;
                     break;
                 case "dot":
-                    strokeDashArray = "2, 5";
+                    strokeDashArray = `${1*w}, ${3*w}`;
                     break;
                 case "dashDot":
-                    strokeDashArray = "5, 5, 2, 5";
+                    strokeDashArray = `${3*w}, ${3*w}, ${1*w}, ${3*w}`;
                     break;
                 case "lgDash":
-                    strokeDashArray = "10, 5";
+                    strokeDashArray = `${8*w}, ${3*w}`;
                     break;
                 case "lgDashDot":
-                    strokeDashArray = "10, 5, 2, 5";
+                    strokeDashArray = `${8*w}, ${3*w}, ${1*w}, ${3*w}`;
                     break;
                 case "lgDashDotDot":
-                    strokeDashArray = "10, 5, 2, 5, 2, 5";
+                    strokeDashArray = `${8*w}, ${3*w}, ${1*w}, ${3*w}, ${1*w}, ${3*w}`;
                     break;
                 case "sysDash":
-                    strokeDashArray = "3, 3";
+                    strokeDashArray = `${2*w}, ${2*w}`;
                     break;
                 case "sysDot":
-                    strokeDashArray = "1, 3";
+                    strokeDashArray = `${1*w}, ${1*w}`;
                     break;
                 case "sysDashDot":
-                    strokeDashArray = "3, 3, 1, 3";
+                    strokeDashArray = `${2*w}, ${2*w}, ${1*w}, ${2*w}`;
                     break;
                 case "sysDashDotDot":
-                    strokeDashArray = "3, 3, 1, 3, 1, 3";
+                    strokeDashArray = `${2*w}, ${2*w}, ${1*w}, ${2*w}, ${1*w}, ${2*w}`;
                     break;
                 default:
                     strokeDashArray = "";
@@ -3488,6 +3595,7 @@ class ShapeHandler {
             width: strokeWidth,
             color: strokeColor,
             cap: strokeCap,
+            join: strokeJoin,
             dashArray: strokeDashArray,
             // gradient extras (present for every call; empty when strokeType==="solid")
             strokeType,

@@ -3,12 +3,17 @@ const path = require("path");
 const pptBackgroundColors = require("../../pptx-To-Html-styling/pptBackgroundColors.js");
 const colorHelper = require("../../api/helper/colorHelper.js");
 
-// Module-level cache for table styles (FIXED: was using 'this' in standalone function)
-let cachedTableStyles = null;
+const tableStylesCache = new WeakMap();
 
 // Add helper method to get the correct divisor
 function getEMUDivisor() {
     return 12700;
+}
+
+function pointsToCssPx(points) {
+    const value = parseFloat(points);
+    if (!Number.isFinite(value)) return 0;
+    return Math.round(value * 100) / 100;
 }
 
 /**
@@ -36,7 +41,55 @@ async function convertTableXMLToHTML(tableNode, themeXML, extractor, nodes, flag
     const x = parseInt(xfrm?.["a:off"]?.[0]?.["$"]?.x || 0, 10) / getEMUDivisor();
     const y = parseInt(xfrm?.["a:off"]?.[0]?.["$"]?.y || 0, 10) / getEMUDivisor();
     const width = parseInt(xfrm?.["a:ext"]?.[0]?.["$"]?.cx || 0, 10) / getEMUDivisor();
-    const height = parseInt(xfrm?.["a:ext"]?.[0]?.["$"]?.cy || 0, 10) / getEMUDivisor(); 
+    const height = parseInt(xfrm?.["a:ext"]?.[0]?.["$"]?.cy || 0, 10) / getEMUDivisor();
+
+    const tableData = tableNode["a:graphic"]?.[0]?.["a:graphicData"]?.[0]?.["a:tbl"]?.[0];
+    if (!tableData) return "</table></div>";
+
+    const gridCols = tableData["a:tblGrid"]?.[0]?.["a:gridCol"] || [];
+    const rows = tableData["a:tr"] || [];
+    const totalRows = rows.length;
+    const totalDeclaredRowHeight = rows.reduce((sum, currentRow) => {
+        return sum + (parseInt(currentRow["$"]?.h || 0, 10) / getEMUDivisor());
+    }, 0);
+    const horizontalBorderAllowance = Math.max(0, totalRows + 1);
+    const rowHeightScale = totalDeclaredRowHeight > 0
+        ? Math.min(1, Math.max(0.9, (height - horizontalBorderAllowance) / totalDeclaredRowHeight))
+        : 1;
+
+    let lastRowBottomBorderStyle = "none";
+    if (totalRows > 0) {
+        const lastRowIndex = totalRows - 1;
+        const lastRowCells = rows[lastRowIndex]?.["a:tc"] || [];
+        let lastRowColIndex = 0;
+
+        for (const candidateCell of lastRowCells) {
+            const gridSpan = parseInt(candidateCell["$"]?.gridSpan || 1, 10);
+            const isHMerge = candidateCell["$"]?.hMerge === "1";
+            const isVMerge = candidateCell["$"]?.vMerge === "1";
+
+            if (isHMerge || isVMerge) {
+                lastRowColIndex += gridSpan;
+                continue;
+            }
+
+            const lastRowStyles = await getTableElementStyle(
+                styleConfig,
+                'cell',
+                candidateCell["a:tcPr"]?.[0],
+                lastRowIndex,
+                lastRowColIndex,
+                totalRows,
+                gridCols.length,
+                themeXML
+            );
+
+            if (lastRowStyles.borderBottom && lastRowStyles.borderBottom !== 'none') {
+                lastRowBottomBorderStyle = lastRowStyles.borderBottom;
+            }
+            break;
+        }
+    }
 
     let tableHTML = `<div class="table-container" 
                             style="position: absolute; 
@@ -44,19 +97,17 @@ async function convertTableXMLToHTML(tableNode, themeXML, extractor, nodes, flag
                             top: ${y}px; 
                             width: ${width}px; 
                             height: ${height}px;
+                            overflow: hidden;
                             z-index: ${zIndex};">
 
                                 <table class="pptx-table" 
                                     style="width: 100%; 
-                                    height: 100%; 
+                                    height: auto; 
                                     border-collapse: collapse; 
+                                    border-spacing: 0;
                                     table-layout: fixed; 
-                                    font-size: ${tableFontSize}px;">`;
+                                    font-size: ${pointsToCssPx(tableFontSize)}px;">`;
 
-    const tableData = tableNode["a:graphic"]?.[0]?.["a:graphicData"]?.[0]?.["a:tbl"]?.[0];
-    if (!tableData) return "</table></div>";
-
-    const gridCols = tableData["a:tblGrid"]?.[0]?.["a:gridCol"] || [];
     if (gridCols.length > 0) {
         tableHTML += "<colgroup>";
         const totalWidth = gridCols.reduce((sum, col) => sum + parseInt(col["$"]?.w || 0, 10), 0);
@@ -70,139 +121,151 @@ async function convertTableXMLToHTML(tableNode, themeXML, extractor, nodes, flag
 
     tableHTML += "<tbody>";
 
+    // ✅ ADD THIS: Track cells occupied by rowSpan from previous rows
+    const occupiedCells = new Map(); // Key: "rowIndex-colIndex", Value: true
 
-  
-const rows = tableData["a:tr"] || [];
-const totalRows = rows.length;
+    for (let rowIndex = 0; rowIndex < totalRows; rowIndex++) {
+        const row = rows[rowIndex];
+        const cells = row["a:tc"] || [];
+        const rowHeight = (parseInt(row["$"]?.h || 0, 10) / getEMUDivisor()) * rowHeightScale;
+        const renderedRowHeight = rowHeight;
 
-// ✅ ADD THIS: Track cells occupied by rowSpan from previous rows
-const occupiedCells = new Map(); // Key: "rowIndex-colIndex", Value: true
+        tableHTML += `<tr style="height: ${renderedRowHeight}px; min-height: ${renderedRowHeight}px; max-height: ${renderedRowHeight}px;">`;
 
-for (let rowIndex = 0; rowIndex < totalRows; rowIndex++) {
-    const row = rows[rowIndex];
-    tableHTML += `<tr style="height: ${parseInt(row["$"]?.h || 0, 10) / getEMUDivisor()}px;">`;
-    const cells = row["a:tc"] || [];
-    
-    let colIndex = 0; // Actual column position in the grid
+        let colIndex = 0; // Actual column position in the grid
 
-    for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
-        // ✅ CRITICAL FIX: Skip columns occupied by previous rows' rowSpan
-        while (occupiedCells.has(`${rowIndex}-${colIndex}`)) {
-            colIndex++;
-        }
-        
-        const cell = cells[cellIndex];
+        for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
+            // ✅ CRITICAL FIX: Skip columns occupied by previous rows' rowSpan
+            while (occupiedCells.has(`${rowIndex}-${colIndex}`)) {
+                colIndex++;
+            }
 
-        const gridSpan = parseInt(cell["$"]?.gridSpan || 1, 10);
-        const rowSpan  = parseInt(cell["$"]?.rowSpan || 1, 10);
+            const cell = cells[cellIndex];
 
-        const isHMerge = cell["$"]?.hMerge === "1";
-        const isVMerge = cell["$"]?.vMerge === "1";
+            const gridSpan = parseInt(cell["$"]?.gridSpan || 1, 10);
+            const rowSpan = parseInt(cell["$"]?.rowSpan || 1, 10);
 
-        if (isHMerge || isVMerge) {
-            colIndex++;
-            continue;   // Skip rendering this merged cell
-        }
+            const isHMerge = cell["$"]?.hMerge === "1";
+            const isVMerge = cell["$"]?.vMerge === "1";
+
+            if (isHMerge || isVMerge) {
+                colIndex++;
+                continue;   // Skip rendering this merged cell
+            }
 
 
-        // ✅ Mark all cells covered by this cell's spans as occupied
-        for (let r = 0; r < rowSpan; r++) {
-            for (let c = 0; c < gridSpan; c++) {
-                if (r > 0 || c > 0) { // Don't mark current cell
-                    occupiedCells.set(`${rowIndex + r}-${colIndex + c}`, true);
+            // ✅ Mark all cells covered by this cell's spans as occupied
+            for (let r = 0; r < rowSpan; r++) {
+                for (let c = 0; c < gridSpan; c++) {
+                    if (r > 0 || c > 0) { // Don't mark current cell
+                        occupiedCells.set(`${rowIndex + r}-${colIndex + c}`, true);
+                    }
                 }
             }
-        }
 
-        const cellTcPr = cell["a:tcPr"]?.[0];
+            const cellTcPr = cell["a:tcPr"]?.[0];
 
-        const finalStyles = await getTableElementStyle(
-            styleConfig,
-            'cell',
-            cellTcPr,
-            rowIndex,
-            colIndex,
-            totalRows,
-            gridCols.length,
-            themeXML
-        );
+            const finalStyles = await getTableElementStyle(
+                styleConfig,
+                'cell',
+                cellTcPr,
+                rowIndex,
+                colIndex,
+                totalRows,
+                gridCols.length,
+                themeXML
+            );
 
-        const isHeaderCell = styleConfig.hasHeaderRow && rowIndex === 0;
+            const isHeaderCell = styleConfig.hasHeaderRow && rowIndex === 0;
 
-        const cellContent = await extractCellContent(
-            cell,
-            isHeaderCell,
-            tableNode,
-            themeXML,
-            tableFontSize,
-            clrMap,
-            masterXML
-        );
+            const cellContent = await extractCellContent(
+                cell,
+                isHeaderCell,
+                tableNode,
+                themeXML,
+                tableFontSize,
+                clrMap,
+                masterXML
+            );
 
-        // ... rest of your cell styling code (anchor, vert, margins, etc.) ...
-        
-        const anchor = cellTcPr?.["$"]?.anchor || "t";
-        const anchorCtr = cellTcPr?.["$"]?.anchorCtr === "1";
-        const vert = cellTcPr?.["$"]?.vert;
+            // ... rest of your cell styling code (anchor, vert, margins, etc.) ...
 
-        let verticalAlign = 'top';
-        if (anchor === "ctr") verticalAlign = 'middle';
-        else if (anchor === "b") verticalAlign = 'bottom';
+            const anchor = cellTcPr?.["$"]?.anchor || "t";
+            const anchorCtr = cellTcPr?.["$"]?.anchorCtr === "1";
+            const vert = cellTcPr?.["$"]?.vert;
 
-        const marL = parseInt(cellTcPr?.["$"]?.marL || "91440") / getEMUDivisor();
-        const marR = parseInt(cellTcPr?.["$"]?.marR || "91440") / getEMUDivisor();
-        const marT = parseInt(cellTcPr?.["$"]?.marT || "45720") / getEMUDivisor();
-        const marB = parseInt(cellTcPr?.["$"]?.marB || "45720") / getEMUDivisor();
+            let verticalAlign = 'top';
+            if (anchor === "ctr") verticalAlign = 'middle';
+            else if (anchor === "b") verticalAlign = 'bottom';
 
-        let cellStyles = `padding: ${marT}px ${marR}px ${marB}px ${marL}px; vertical-align: ${verticalAlign}; word-wrap: break-word; overflow: hidden;`;
-
-        if (verticalAlign === 'bottom' || verticalAlign === 'middle') {
-            cellStyles += ` height: 100%; display: table-cell;`;
-        }
-
-        if (vert === "vert270") {
-            const rowHeight = parseInt(row["$"]?.h || 0, 10) / getEMUDivisor();
-            cellStyles += ` writing-mode: vertical-rl; transform: rotate(180deg); white-space: normal; width: 100%; height: ${rowHeight}px; box-sizing: border-box;`;
-        } else if (vert === "vert" || vert === "vert90") {
-            const rowHeight = parseInt(row["$"]?.h || 0, 10) / getEMUDivisor();
-            cellStyles += ` writing-mode: vertical-rl; white-space: normal; width: 100%; height: ${rowHeight}px; box-sizing: border-box;`;
-        }
-
-        if (isHeaderCell) {
-            if (colIndex === 1) {
-                // finalStyles.textAlign = 'justify';
+            if (!isHeaderCell && rowIndex >= 2) {
+                verticalAlign = 'top';
             }
-        } else if (anchorCtr && !vert) {
-            cellStyles += ` text-align: center;`;
-        }
 
-        if (finalStyles.backgroundColor) cellStyles += ` background-color: ${finalStyles.backgroundColor};`;
-        if (finalStyles.color) cellStyles += ` color: ${finalStyles.color};`;
-        if (finalStyles.fontWeight !== 'normal') cellStyles += ` font-weight: ${finalStyles.fontWeight};`;
-        if (finalStyles.fontSize) cellStyles += ` font-size: ${finalStyles.fontSize};`;
-        if (finalStyles.textAlign) cellStyles += ` text-align: ${finalStyles.textAlign};`;
-        if (finalStyles.borderTop && finalStyles.borderTop !== 'none') cellStyles += ` border-top: ${finalStyles.borderTop};`;
-        if (finalStyles.borderBottom && finalStyles.borderBottom !== 'none') cellStyles += ` border-bottom: ${finalStyles.borderBottom};`;
-        if (finalStyles.borderLeft && finalStyles.borderLeft !== 'none') cellStyles += ` border-left: ${finalStyles.borderLeft};`;
-        if (finalStyles.borderRight && finalStyles.borderRight !== 'none') cellStyles += ` border-right: ${finalStyles.borderRight};`;
+            const marL = parseInt(cellTcPr?.["$"]?.marL || "91440") / getEMUDivisor();
+            const marR = parseInt(cellTcPr?.["$"]?.marR || "91440") / getEMUDivisor();
+            const rawMarT = parseInt(cellTcPr?.["$"]?.marT || "45720") / getEMUDivisor();
+            const rawMarB = parseInt(cellTcPr?.["$"]?.marB || "45720") / getEMUDivisor();
+            const marT = isHeaderCell ? 0 : rawMarT;
+            const marB = isHeaderCell ? 0 : rawMarB;
 
-        const spanAttrs = `
+            const effectiveCellHeight = renderedRowHeight * Math.max(1, rowSpan);
+            let cellStyles = `padding: ${marT}px ${marR}px ${marB}px ${marL}px; vertical-align: ${verticalAlign}; word-wrap: break-word; overflow: hidden; box-sizing: border-box; height: ${effectiveCellHeight}px; min-height: ${effectiveCellHeight}px; max-height: ${effectiveCellHeight}px;`;
+
+            if (isHeaderCell) {
+                cellStyles += ` line-height: 1; white-space: nowrap;`;
+            }
+
+            if (vert === "vert270") {
+                const rowHeight = parseInt(row["$"]?.h || 0, 10) / getEMUDivisor();
+                cellStyles += ` writing-mode: vertical-rl; transform: rotate(180deg); white-space: normal; width: 100%; height: ${rowHeight}px; box-sizing: border-box;`;
+            } else if (vert === "vert" || vert === "vert90") {
+                const rowHeight = parseInt(row["$"]?.h || 0, 10) / getEMUDivisor();
+                cellStyles += ` writing-mode: vertical-rl; white-space: normal; width: 100%; height: ${rowHeight}px; box-sizing: border-box;`;
+            }
+
+            if (isHeaderCell) {
+                if (colIndex === 1) {
+                    // finalStyles.textAlign = 'justify';
+                }
+            } else if (anchorCtr && !vert) {
+                cellStyles += ` text-align: center;`;
+            }
+
+            if (finalStyles.backgroundColor) cellStyles += ` background-color: ${finalStyles.backgroundColor};`;
+            if (finalStyles.backgroundImage) cellStyles += ` background-image: ${finalStyles.backgroundImage};`;
+            if (finalStyles.color) cellStyles += ` color: ${finalStyles.color};`;
+            if (finalStyles.fontWeight !== 'normal') cellStyles += ` font-weight: ${finalStyles.fontWeight};`;
+            if (finalStyles.fontSize) cellStyles += ` font-size: ${finalStyles.fontSize};`;
+            if (finalStyles.textAlign) cellStyles += ` text-align: ${finalStyles.textAlign};`;
+            if (finalStyles.borderTop && finalStyles.borderTop !== 'none') cellStyles += ` border-top: ${finalStyles.borderTop};`;
+            if (finalStyles.borderBottom && finalStyles.borderBottom !== 'none') cellStyles += ` border-bottom: ${finalStyles.borderBottom};`;
+            if (finalStyles.borderLeft && finalStyles.borderLeft !== 'none') cellStyles += ` border-left: ${finalStyles.borderLeft};`;
+            if (finalStyles.borderRight && finalStyles.borderRight !== 'none') cellStyles += ` border-right: ${finalStyles.borderRight};`;
+
+            const spanAttrs = `
             ${gridSpan > 1 ? `colspan="${gridSpan}"` : ""}
             ${rowSpan > 1 ? `rowspan="${rowSpan}"` : ""}
         `.trim();
 
-        const cellTag = isHeaderCell ? "th" : "td";
+            const cellTag = isHeaderCell ? "th" : "td";
 
-        tableHTML += `<${cellTag} style="${cellStyles}" ${spanAttrs}>${cellContent}</${cellTag}>`;
+            tableHTML += `<${cellTag} style="${cellStyles}" ${spanAttrs}>${cellContent}</${cellTag}>`;
 
-        // ✅ Move to next column position
-        colIndex += gridSpan;
+            // ✅ Move to next column position
+            colIndex += gridSpan;
+        }
+
+        tableHTML += `</tr>`;
     }
-    
-    tableHTML += `</tr>`;
-}
 
-    tableHTML += "</tbody></table></div>";
+    tableHTML += "</tbody></table>";
+
+    if (lastRowBottomBorderStyle !== "none") {
+        tableHTML += `<div style="position:absolute; left:0; bottom:0; width:100%; border-bottom:${lastRowBottomBorderStyle}; pointer-events:none; box-sizing:border-box;"></div>`;
+    }
+
+    tableHTML += "</div>";
     return tableHTML;
 }
 
@@ -270,8 +333,8 @@ async function getTableStyleById(styleId, extractor) {
 
     const foundStyle = styles.find(style => style["$"]?.styleId === styleId);
     if (!foundStyle) {
-    console.warn(`Table style not found for ID================================: ${styleId}`);
-} 
+        console.warn(`Table style not found for ID================================: ${styleId}`);
+    }
 
     return foundStyle;
 }
@@ -279,7 +342,7 @@ async function getTableStyleById(styleId, extractor) {
 function extractSlideTableStyle(tableData, tblPr, themeXML) {
     const rows = tableData["a:tr"] || [];
     const hasHeaderRow = tblPr?.["$"]?.firstRow === "1";
-    const hasBandedRows = tblPr?.["$"]?.bandRow !== "0";
+    const hasBandedRows = tblPr?.["$"]?.bandRow === "1";
 
     // Analyze actual cell styling patterns
     const styleAnalysis = analyzeSlideTableCells(rows, hasHeaderRow, themeXML);
@@ -410,32 +473,7 @@ function buildDynamicStyleDefinition(analysis) {
             }]
         }];
 
-        // If we also have first data row style, include it in the definition
-        if (analysis.dataStyle) {
-            const firstDataStyle = analysis.dataStyle;
-            styleDefinition["a:firstRow"][0]["a:tcStyle"] = [{
-                ...(firstDataStyle.backgroundColor ? {
-                    "a:fill": [{
-                        "a:solidFill": [{
-                            "a:srgbClr": [{ "$": { "val": firstDataStyle.backgroundColor.replace('#', '') } }]
-                        }]
-                    }]
-                } : {}),
-                ...(firstDataStyle.borderTop || firstDataStyle.borderBottom || firstDataStyle.borderLeft || firstDataStyle.borderRight ? {
-                    "a:tcBdr": [{
-                        ...(firstDataStyle.borderTop ? { "a:top": [{ "a:ln": [convertBorderToXMLFormat(firstDataStyle.borderTop)] }] } : {}),
-                        ...(firstDataStyle.borderBottom ? { "a:bottom": [{ "a:ln": [convertBorderToXMLFormat(firstDataStyle.borderBottom)] }] } : {}),
-                        ...(firstDataStyle.borderLeft ? { "a:left": [{ "a:ln": [convertBorderToXMLFormat(firstDataStyle.borderLeft)] }] } : {}),
-                        ...(firstDataStyle.borderRight ? { "a:right": [{ "a:ln": [convertBorderToXMLFormat(firstDataStyle.borderRight)] }] } : {})
-                    }]
-                } : {})
-            }];
-        }
     }
-
-    // ✅ FIX ISSUE 1: Build banding styles - band1H should NOT have a fill (use wholeTbl color)
-   // In buildDynamicStyleDefinition function
-
 
     return styleDefinition;
 }
@@ -472,54 +510,52 @@ function extractCellStyleFromSlide(cell, themeXML) {
         borderRight: null
     };
 
-// Extract background color
-const solidFill = tcPr["a:solidFill"]?.[0];
-if (solidFill?.["a:schemeClr"]) {
-    const colorVal = solidFill["a:schemeClr"][0]["$"]?.val;
-    const alpha = solidFill["a:schemeClr"][0]["a:alpha"]?.[0]?.["$"]?.val;
+    // Extract background color
+    const solidFill = tcPr["a:solidFill"]?.[0];
+    if (solidFill?.["a:schemeClr"]) {
+        const colorVal = solidFill["a:schemeClr"][0]["$"]?.val;
+        const alpha = solidFill["a:schemeClr"][0]["a:alpha"]?.[0]?.["$"]?.val;
 
-    if (colorVal) {
-        style.backgroundColor = getThemeColorValue(colorVal, themeXML);
+        if (colorVal) {
+            style.backgroundColor = getThemeColorValue(colorVal, themeXML);
 
-        // ✅ Apply tint/lumMod/lumOff modifiers
-        const tint = solidFill["a:schemeClr"][0]["a:tint"]?.[0]?.["$"]?.val;
-        const lumMod = solidFill["a:schemeClr"][0]["a:lumMod"]?.[0]?.["$"]?.val;
-        const lumOff = solidFill["a:schemeClr"][0]["a:lumOff"]?.[0]?.["$"]?.val;
-        
-        if (tint) {
-            style.backgroundColor = applyTintToColor(style.backgroundColor, parseInt(tint));
-        } else if (lumMod && lumOff) {
-            // Apply both luminance modifiers
-            style.backgroundColor = pptBackgroundColors.applyLuminanceModifier ?
-                pptBackgroundColors.applyLuminanceModifier(style.backgroundColor, lumMod, lumOff) : 
-                style.backgroundColor;
-        } else if (lumMod) {
-            // Apply only lumMod
-            style.backgroundColor = colorHelper.applyLumMod ?
-                colorHelper.applyLumMod(style.backgroundColor, lumMod) : 
-                style.backgroundColor;
+            // ✅ Apply tint/lumMod/lumOff modifiers
+            const tint = solidFill["a:schemeClr"][0]["a:tint"]?.[0]?.["$"]?.val;
+            const lumMod = solidFill["a:schemeClr"][0]["a:lumMod"]?.[0]?.["$"]?.val;
+            const lumOff = solidFill["a:schemeClr"][0]["a:lumOff"]?.[0]?.["$"]?.val;
+
+            if (tint) {
+                style.backgroundColor = applyTintToColor(style.backgroundColor, parseInt(tint));
+            } else if (lumMod && lumOff) {
+                // Apply both luminance modifiers
+                style.backgroundColor = pptBackgroundColors.applyLuminanceModifier ?
+                    pptBackgroundColors.applyLuminanceModifier(style.backgroundColor, lumMod, lumOff) :
+                    style.backgroundColor;
+            } else if (lumMod) {
+                // Apply only lumMod
+                style.backgroundColor = colorHelper.applyLumMod ?
+                    colorHelper.applyLumMod(style.backgroundColor, lumMod) :
+                    style.backgroundColor;
+            }
+            if (alpha && style.backgroundColor) {
+                style.backgroundColor = applyAlphaToColor(style.backgroundColor, alpha);
+            }
+
         }
-        if (alpha && style.backgroundColor) {
-    style.backgroundColor = applyAlphaToColor(style.backgroundColor, alpha);
-}
-
-    }
     } else if (solidFill?.["a:srgbClr"]) {
         style.backgroundColor = `#${solidFill["a:srgbClr"][0]["$"].val}`;
     }
 
-    // Extract text color from cell content
-    const textRun = cell["a:txBody"]?.[0]?.["a:p"]?.[0]?.["a:r"]?.[0];
-    if (textRun?.["a:rPr"]?.[0]?.["a:solidFill"]?.[0]) {
-        const textFill = textRun["a:rPr"][0]["a:solidFill"][0];
-        if (textFill["a:schemeClr"]) {
-            const colorVal = textFill["a:schemeClr"][0]["$"]?.val;
-            style.color = getThemeColorValue(colorVal, themeXML);
-        } else if (textFill["a:srgbClr"]) {
-            style.color = `#${textFill["a:srgbClr"][0]["$"].val}`;
-        } else if (textFill["a:prstClr"]) {
-            style.color = textFill["a:prstClr"][0]["$"]?.val === "white" ? "#FFFFFF" : "#000000";
-        }
+    // Extract text color from cell content or infer from the cell background
+    const firstParagraph = cell["a:txBody"]?.[0]?.["a:p"]?.[0];
+    const textRun = firstParagraph?.["a:r"]?.[0];
+    style.color =
+        extractColorFromChoiceNode(textRun?.["a:rPr"]?.[0]?.["a:solidFill"]?.[0], themeXML) ||
+        extractColorFromChoiceNode(firstParagraph?.["a:endParaRPr"]?.[0]?.["a:solidFill"]?.[0], themeXML) ||
+        extractColorFromChoiceNode(firstParagraph?.["a:pPr"]?.[0]?.["a:defRPr"]?.[0]?.["a:solidFill"]?.[0], themeXML);
+
+    if (!style.color && style.backgroundColor) {
+        style.color = getContrastingTextColor(style.backgroundColor);
     }
 
     // FIXED: Extract borders from slide XML format (a:lnL, a:lnR, a:lnT, a:lnB)
@@ -588,29 +624,18 @@ function parseSlideCellBorder(borderElement, themeXML) {
     // Handle dash patterns
     const dashType = borderElement["a:prstDash"]?.[0]?.["$"]?.val;
     const finalLineStyle = dashType && dashType !== "solid" ? "dashed" : lineStyle;
+    const adjustedWidth =
+        finalLineStyle === "dashed" || finalLineStyle === "dotted"
+            ? Math.max(2, width)
+            : width;
 
-    return `${width}px ${finalLineStyle} ${color}`;
-}
-
-function resolveSystemColor(sysColorValue) {
-    // These are Windows system colors - can be dynamic based on user's system theme
-    const systemColors = {
-        'windowText': '#000000',
-        'window': '#FFFFFF',
-        'captionText': '#000000',
-        'activeCaption': '#0078D4',
-        'inactiveCaption': '#CCCCCC',
-        'menu': '#F0F0F0',
-        'menuText': '#000000'
-    };
-
-    return systemColors[sysColorValue] || '#000000';
+    return `${adjustedWidth}px ${finalLineStyle} ${color}`;
 }
 
 // FIXED: Using module-level cache instead of 'this'
 async function loadTableStyles(extractor) {
-    if (cachedTableStyles) {
-        return cachedTableStyles; // Return cached styles
+    if (extractor && tableStylesCache.has(extractor)) {
+        return tableStylesCache.get(extractor);
     }
 
     try {
@@ -630,8 +655,11 @@ async function loadTableStyles(extractor) {
         const tableStylesXML = await parser.parseStringPromise(xmlContent);
 
         if (tableStylesXML?.["a:tblStyleLst"]) {
-            cachedTableStyles = tableStylesXML["a:tblStyleLst"];
-            return cachedTableStyles;
+            const parsedTableStyles = tableStylesXML["a:tblStyleLst"];
+            if (extractor) {
+                tableStylesCache.set(extractor, parsedTableStyles);
+            }
+            return parsedTableStyles;
         } else {
             console.warn("No table style list found in tableStyles.xml");
             return null;
@@ -656,22 +684,22 @@ async function getTableElementStyle(styleConfig, elementType, cellTcPr, rowIndex
 
 
     // ✅ FIX: If cell has direct tcPr styling, prioritize it completely
-    
+
 
     // 1. Get the base style from wholeTbl
     const baseStyleElement =
-    getTblStylePr(styleDefinition, "wholeTbl") ||
-    styleDefinition["a:wholeTbl"]?.[0]; // fallback for slideXML dynamic styles
+        getTblStylePr(styleDefinition, "wholeTbl") ||
+        styleDefinition["a:wholeTbl"]?.[0]; // fallback for slideXML dynamic styles
 
-   const finalStyles = parseTableElementStyle(
-    baseStyleElement,
-    null,
-    isHeaderRow,
-    themeXML,
-    "wholeTbl",
-    rowIndex,
-    colIndex
-);
+    const finalStyles = parseTableElementStyle(
+        baseStyleElement,
+        null,
+        isHeaderRow,
+        themeXML,
+        "wholeTbl",
+        rowIndex,
+        colIndex
+    );
 
 
 
@@ -687,85 +715,78 @@ async function getTableElementStyle(styleConfig, elementType, cellTcPr, rowIndex
     const isLastCol = colIndex === totalCols - 1;
 
     if (isHeaderRow) {
-    overrideStyleElement =
-        getTblStylePr(styleDefinition, "firstRow") ||
-        styleDefinition["a:firstRow"]?.[0];
-    overrideStyleType = "firstRow";
-}
-else if (isLastRow && hasLastRow) {
-    overrideStyleElement =
-        getTblStylePr(styleDefinition, "lastRow") ||
-        styleDefinition["a:lastRow"]?.[0];
-    overrideStyleType = "lastRow";
-}
-else if (isFirstCol && hasFirstCol) {
-    overrideStyleElement =
-        getTblStylePr(styleDefinition, "firstCol") ||
-        styleDefinition["a:firstCol"]?.[0];
-    overrideStyleType = "firstCol";
-}
-else if (isLastCol && hasLastCol) {
-    overrideStyleElement =
-        getTblStylePr(styleDefinition, "lastCol") ||
-        styleDefinition["a:lastCol"]?.[0];
-    overrideStyleType = "lastCol";
-}
-else if (hasBandedRows && !isHeaderRow) {
-    const dataRowIndex = hasHeaderRow ? rowIndex - 1 : rowIndex;
+        overrideStyleElement =
+            getTblStylePr(styleDefinition, "firstRow") ||
+            styleDefinition["a:firstRow"]?.[0];
+        overrideStyleType = "firstRow";
+    }
+    else if (isLastRow && hasLastRow) {
+        overrideStyleElement =
+            getTblStylePr(styleDefinition, "lastRow") ||
+            styleDefinition["a:lastRow"]?.[0];
+        overrideStyleType = "lastRow";
+    }
+    else if (isFirstCol && hasFirstCol) {
+        overrideStyleElement =
+            getTblStylePr(styleDefinition, "firstCol") ||
+            styleDefinition["a:firstCol"]?.[0];
+        overrideStyleType = "firstCol";
+    }
+    else if (isLastCol && hasLastCol) {
+        overrideStyleElement =
+            getTblStylePr(styleDefinition, "lastCol") ||
+            styleDefinition["a:lastCol"]?.[0];
+        overrideStyleType = "lastCol";
+    }
+    else if (hasBandedCols && !isHeaderRow) {
+        // PowerPoint vertical banding usually alternates data columns after any
+        // explicitly styled first/last column.
+        const bandColIndex =
+            hasFirstCol && !isFirstCol
+                ? colIndex - 1
+                : colIndex;
 
-    if (dataRowIndex % 2 === 1) {
-        overrideStyleElement =
-            getTblStylePr(styleDefinition, "band1H") ||
-            styleDefinition["a:band1H"]?.[0];
-        overrideStyleType = "band1H";
-    } else {
-        overrideStyleElement =
-            getTblStylePr(styleDefinition, "band2H") ||
-            styleDefinition["a:band2H"]?.[0];
-        overrideStyleType = "band2H";
-        
-        // ✅ CRITICAL FIX: If band2H has no fill, use theme lt2 (light gray) instead of inheriting
-        const hasBand2Fill = overrideStyleElement?.["a:tcStyle"]?.[0]?.["a:fill"]?.[0]?.["a:solidFill"];
-        if (!hasBand2Fill) {
-            // Force lt2 background for band2H when no fill is defined
-            overrideStyleElement = {
-                "a:tcStyle": [{
-                    "a:fill": [{
-                        "a:solidFill": [{
-                            "a:schemeClr": [{
-                                "$": { "val": "lt2" }
-                            }]
-                        }]
-                    }]
-                }]
-            };
+        if (bandColIndex >= 0) {
+            const useBand1 = bandColIndex % 2 === 0;
+            overrideStyleElement =
+                getTblStylePr(styleDefinition, useBand1 ? "band1V" : "band2V") ||
+                styleDefinition[useBand1 ? "a:band1V" : "a:band2V"]?.[0];
+            overrideStyleType = useBand1 ? "band1V" : "band2V";
         }
     }
-}
+    else if (hasBandedRows && !isHeaderRow) {
+        const dataRowIndex = hasHeaderRow ? rowIndex - 1 : rowIndex;
+        const useBand1 = dataRowIndex % 2 === 1;
+
+        overrideStyleElement =
+            getTblStylePr(styleDefinition, useBand1 ? "band1H" : "band2H") ||
+            styleDefinition[useBand1 ? "a:band1H" : "a:band2H"]?.[0];
+        overrideStyleType = useBand1 ? "band1H" : "band2H";
+    }
 
 
 
     // 3. Merge override style
-   // 3. Merge override style (only if it was set above)
-if (overrideStyleElement) {
-    const overrideStyles = parseTableElementStyle(
-    overrideStyleElement,
-    null,
-    isHeaderRow,
-    themeXML,
-    overrideStyleType,
-    rowIndex,
-    colIndex
-);
+    // 3. Merge override style (only if it was set above)
+    if (overrideStyleElement) {
+        const overrideStyles = parseTableElementStyle(
+            overrideStyleElement,
+            null,
+            isHeaderRow,
+            themeXML,
+            overrideStyleType,
+            rowIndex,
+            colIndex
+        );
 
 
-    
-    Object.keys(overrideStyles).forEach(key => {
-        if (overrideStyles[key] !== null) {
-            finalStyles[key] = overrideStyles[key];
-        }
-    });
-}
+
+        Object.keys(overrideStyles).forEach(key => {
+            if (overrideStyles[key] !== null) {
+                finalStyles[key] = overrideStyles[key];
+            }
+        });
+    }
 
 
     // 4. Merge direct cell formatting WITHOUT background if already processed
@@ -783,19 +804,19 @@ if (overrideStyleElement) {
 
 function applyAlphaToColor(hexColor, alphaValue) {
     if (!alphaValue || !hexColor) return hexColor;
-    
+
     // Alpha is a percentage (100000 = 100% = fully opaque)
     const opacity = parseInt(alphaValue) / 100000;
-    
+
     // For backgrounds, blend with white based on opacity
     const r = parseInt(hexColor.substr(1, 2), 16);
     const g = parseInt(hexColor.substr(3, 2), 16);
     const b = parseInt(hexColor.substr(5, 2), 16);
-    
+
     const newR = Math.round(r + (255 - r) * (1 - opacity));
     const newG = Math.round(g + (255 - g) * (1 - opacity));
     const newB = Math.round(b + (255 - b) * (1 - opacity));
-    
+
     return `#${newR.toString(16).padStart(2, '0')}${newG.toString(16).padStart(2, '0')}${newB.toString(16).padStart(2, '0')}`;
 }
 
@@ -817,13 +838,14 @@ async function extractCellContent(cell, isHeader = false, shapeNode = null, them
         const isEmptyPara = isEmptyParagraph(paragraph);
 
         if (isEmptyPara) {
-            // Close any open list for empty paragraphs
+            // PowerPoint table cells often contain empty paragraphs used only for
+            // internal text-box spacing. Rendering them as <br> inflates compact
+            // headers like the month title cells in calendar tables.
             if (currentListTag) {
                 content.push(`</${currentListTag}>`);
                 currentListTag = null;
                 currentListType = null;
             }
-            content.push('<br>');
             continue;
         }
 
@@ -889,6 +911,7 @@ async function extractCellContent(cell, isHeader = false, shapeNode = null, them
             const bulletInfo = item.bulletInfo;
             // ✅ ADD THIS LINE - Extract line spacing from paragraph properties
             const lineHeight = extractLineSpacing(pPrNode);
+            const paragraphTextAlign = getParagraphTextAlign(pPrNode);
 
             const runTexts = [];
 
@@ -926,7 +949,7 @@ async function extractCellContent(cell, isHeader = false, shapeNode = null, them
             } else {
                 runs.forEach((run, runIndex) => {
                     const textElement = run?.["a:t"]?.[0];
-                    const textValue = typeof textElement === 'string' ? textElement : " ";
+                    const textValue = typeof textElement === 'string' ? textElement : "";
 
                     if (textValue !== undefined && textValue !== null) {
                         const runRPrNode = run?.["a:rPr"]?.[0];
@@ -961,35 +984,36 @@ async function extractCellContent(cell, isHeader = false, shapeNode = null, them
 
             // Handle list formatting using existing functions
             if (bulletInfo.hasListMarker) {
-            const listKey = `${bulletInfo.listTag}-${bulletInfo.listStyle}-${bulletInfo.bulletChar || bulletInfo.numberingType}`;
+                const listKey = `${bulletInfo.listTag}-${bulletInfo.listStyle}-${bulletInfo.bulletChar || bulletInfo.numberingType}`;
 
-            if (currentListType !== listKey) {
-                if (currentListTag) content.push(`</${currentListTag}>`);
+                if (currentListType !== listKey) {
+                    if (currentListTag) content.push(`</${currentListTag}>`);
 
-                const listStyles = generateCellListStyles(bulletInfo);
-                content.push(`<${bulletInfo.listTag} style="${listStyles}">`);
-                currentListTag = bulletInfo.listTag;
-                currentListType = listKey;
+                    const listStyles = generateCellListStyles(bulletInfo);
+                    content.push(`<${bulletInfo.listTag} style="${listStyles}">`);
+                    currentListTag = bulletInfo.listTag;
+                    currentListType = listKey;
+                }
+
+                if (hasContent) {
+                    content.push(`<li style="margin: 0; padding: 0; line-height: ${lineHeight};${paragraphTextAlign ? ` text-align: ${paragraphTextAlign};` : ''}">${runTexts.join('')}</li>`);
+
+                }
+            } else {
+                // Close any open list for non-list items
+                if (currentListTag) {
+                    content.push(`</${currentListTag}>`);
+                    currentListTag = null;
+                    currentListType = null;
+                }
+
+                if (hasContent) {
+                    const paragraphLineHeight = isHeader ? '1' : lineHeight;
+                    content.push(`<p style="margin: 0; line-height: ${paragraphLineHeight};${paragraphTextAlign ? ` text-align: ${paragraphTextAlign};` : ''}">${runTexts.join('')}</p>`);
+                } else if (runTexts.length > 0 || lineBreaks.length > 0) {
+                    // Don't add extra <br> for empty paragraphs in tables
+                }
             }
-
-            if (hasContent) {
-               content.push(`<li style="margin: 0; padding: 0; line-height: ${lineHeight};">${runTexts.join('')}</li>`);
-
-            }
-        } else {
-            // Close any open list for non-list items
-            if (currentListTag) {
-                content.push(`</${currentListTag}>`);
-                currentListTag = null;
-                currentListType = null;
-            }
-
-            if (hasContent) {
-                content.push(`<p style="margin: 0; line-height: ${lineHeight};">${runTexts.join('')}</p>`);
-            } else if (runTexts.length > 0 || lineBreaks.length > 0) {
-                // Don't add extra <br> for empty paragraphs in tables
-            }
-        }
         });
     }
 
@@ -1004,42 +1028,36 @@ async function extractCellContent(cell, isHeader = false, shapeNode = null, them
 
 function extractLineSpacing(pPr) {
     if (!pPr) return 1.0;
-    
+
     const lnSpc = pPr["a:lnSpc"]?.[0];
     if (!lnSpc) return 1.0;
-    
+
     // Percentage-based spacing (spcPct)
     if (lnSpc["a:spcPct"]) {
         const pct = parseInt(lnSpc["a:spcPct"][0]["$"]?.val || "100000");
         return pct / 100000; // Convert to decimal (100000 = 1.0)
     }
-    
+
     // Point-based spacing (spcPts)
     if (lnSpc["a:spcPts"]) {
         const pts = parseInt(lnSpc["a:spcPts"][0]["$"]?.val || "1200");
         return pts / 100; // Convert points to line height
     }
-    
+
     return 1.0; // Default
 }
-function getTableStyleThemeColor(schemeVal, styleElement, themeXML) {
-    // Check if table style overrides scheme colors
-    const styleClr = styleElement?.["a:styleClr"]?.[0];
 
-    if (styleClr?.["a:schemeClr"]) {
-        const overrideScheme = styleClr["a:schemeClr"][0]?.["$"]?.val;
-        if (overrideScheme) {
-            return getThemeColorValue(overrideScheme, themeXML);
-        }
-    }
-
-    return getThemeColorValue(schemeVal, themeXML);
+function getParagraphTextAlign(pPr) {
+    if (!pPr) return null;
+    const algn = pPr["$"]?.algn;
+    return algn ? convertAlgnToCSS(algn) : null;
 }
 
 function parseTableElementStyle(styleElement, directTcPr = null, isHeader = false, themeXML = null, styleType = "wholeTbl") {
 
     const styles = {
         backgroundColor: null,
+        backgroundImage: null,
         color: null,
         fontWeight: 'normal',
         fontSize: null,
@@ -1053,33 +1071,33 @@ function parseTableElementStyle(styleElement, directTcPr = null, isHeader = fals
     // 1. Parse base styles from the table style definition (tableStyles.xml)
     if (styleElement) {
         const tcTxStyle = styleElement["a:tcTxStyle"]?.[0];
-if (tcTxStyle) {
-    // ✅ Extract text color from schemeClr (not from a:color node)
-    const schemeClrNode = tcTxStyle["a:schemeClr"]?.[0];
-    if (schemeClrNode) {
-        const schemeVal = schemeClrNode["$"]?.val;
-        if (schemeVal) {
-            styles.color = getThemeColorValue(schemeVal, themeXML);
-        }
-    }
+        if (tcTxStyle) {
+            // ✅ Extract text color from schemeClr (not from a:color node)
+            const textColor =
+                extractColorFromChoiceNode(tcTxStyle["a:color"]?.[0], themeXML) ||
+                extractColorFromChoiceNode(tcTxStyle["a:solidFill"]?.[0], themeXML) ||
+                extractColorFromChoiceNode({ "a:schemeClr": tcTxStyle["a:schemeClr"] }, themeXML);
+            if (textColor) {
+                styles.color = textColor;
+            }
 
             // Extract font size
             const fontSize = tcTxStyle["$"]?.sz;
-if (fontSize) {
-    const sizeInPt = (parseInt(fontSize) / 100);
-    styles.fontSize = `${sizeInPt}pt`;
-}
+            if (fontSize) {
+                const sizeInPt = (parseInt(fontSize) / 100);
+                styles.fontSize = `${sizeInPt}pt`;
+            }
 
             // Extract font weight - only for specific style types
-if ((tcTxStyle["$"]?.b === "on" || tcTxStyle["b"] || tcTxStyle["$"]?.b === "1") && 
-    (styleType === "firstRow" || styleType === "firstCol" || styleType === "lastCol" || styleType === "lastRow")) {
-    styles.fontWeight = 'bold';
-}
+            if ((tcTxStyle["$"]?.b === "on" || tcTxStyle["b"] || tcTxStyle["$"]?.b === "1") &&
+                (styleType === "firstRow" || styleType === "firstCol" || styleType === "lastCol" || styleType === "lastRow")) {
+                styles.fontWeight = 'bold';
+            }
             // ✅ Extract text alignment from table style
-const algn = tcTxStyle["$"]?.algn;
-if (algn) {
-    styles.textAlign = convertAlgnToCSS(algn);
-}
+            const algn = tcTxStyle["$"]?.algn;
+            if (algn) {
+                styles.textAlign = convertAlgnToCSS(algn);
+            }
         }
 
         // Extract background color and borders from tcStyle
@@ -1087,49 +1105,63 @@ if (algn) {
         if (tcStyle) {
             // Background color
             const fillNode = tcStyle["a:fill"]?.[0]?.["a:solidFill"]?.[0];
-if (fillNode?.["a:schemeClr"]) {
-    const schemeClrNode = fillNode["a:schemeClr"][0];
-    let schemeVal = schemeClrNode["$"].val;
+            if (fillNode?.["a:schemeClr"]) {
+                const schemeClrNode = fillNode["a:schemeClr"][0];
+                let schemeVal = schemeClrNode["$"].val;
 
-    if (schemeVal === "phClr") {
-        schemeVal = resolvePlaceholderColor(styleType);
-    }
+                if (schemeVal === "phClr") {
+                    schemeVal = resolvePlaceholderColor(styleType);
+                }
 
-    styles.backgroundColor = getThemeColorValue(schemeVal, themeXML);
+                styles.backgroundColor = getThemeColorValue(schemeVal, themeXML);
 
-    // ✅ CRITICAL: Apply tint modifier
-    const tint = schemeClrNode["a:tint"]?.[0]?.["$"]?.val;
-    if (tint && styles.backgroundColor) {
-        styles.backgroundColor = applyTintToColor(styles.backgroundColor, parseInt(tint));
-    }
-    const shade = schemeClrNode["a:shade"]?.[0]?.["$"]?.val;
-    const lumMod = schemeClrNode["a:lumMod"]?.[0]?.["$"]?.val;
-    const lumOff = schemeClrNode["a:lumOff"]?.[0]?.["$"]?.val;
+                // ✅ CRITICAL: Apply tint modifier
+                const tint = schemeClrNode["a:tint"]?.[0]?.["$"]?.val;
+                if (tint && styles.backgroundColor) {
+                    styles.backgroundColor = applyTintToColor(styles.backgroundColor, parseInt(tint));
+                }
+                const shade = schemeClrNode["a:shade"]?.[0]?.["$"]?.val;
+                const lumMod = schemeClrNode["a:lumMod"]?.[0]?.["$"]?.val;
+                const lumOff = schemeClrNode["a:lumOff"]?.[0]?.["$"]?.val;
 
-    const alpha = schemeClrNode["a:alpha"]?.[0]?.["$"]?.val;
+                const alpha = schemeClrNode["a:alpha"]?.[0]?.["$"]?.val;
 
-    
-    if (styles.backgroundColor) {
-        if (lumMod || lumOff) {
- if (pptBackgroundColors.applyLuminanceModifier) {
-    styles.backgroundColor = pptBackgroundColors.applyLuminanceModifier(
-        styles.backgroundColor,
-        lumMod || "100000",
-        lumOff || "0"
-    );
-}
 
-} else if (tint) {
-  styles.backgroundColor = applyTintToColor(styles.backgroundColor, parseInt(tint, 10));
-} else if (shade) {
-  styles.backgroundColor = applyTintToColor(styles.backgroundColor, -parseInt(shade, 10));
-}
+                if (styles.backgroundColor) {
+                    if (lumMod || lumOff) {
+                        if (pptBackgroundColors.applyLuminanceModifier) {
+                            styles.backgroundColor = pptBackgroundColors.applyLuminanceModifier(
+                                styles.backgroundColor,
+                                lumMod || "100000",
+                                lumOff || "0"
+                            );
+                        }
 
-        if (alpha) {
-        styles.backgroundColor = applyAlphaToColor(styles.backgroundColor, alpha);
-    }
-    }
-}
+                    } else if (tint) {
+                        styles.backgroundColor = applyTintToColor(styles.backgroundColor, parseInt(tint, 10));
+                    } else if (shade) {
+                        styles.backgroundColor = applyTintToColor(styles.backgroundColor, -parseInt(shade, 10));
+                    }
+
+                    if (alpha) {
+                        styles.backgroundColor = applyAlphaToColor(styles.backgroundColor, alpha);
+                    }
+                }
+            }
+
+            const gradFillNode = tcStyle["a:fill"]?.[0]?.["a:gradFill"]?.[0];
+            if (gradFillNode) {
+                const gradientCSS = pptBackgroundColors.getGradientFillColor
+                    ? pptBackgroundColors.getGradientFillColor(gradFillNode, themeXML, null)
+                    : null;
+                if (gradientCSS) {
+                    styles.backgroundImage = gradientCSS;
+                    const gradientFallback = extractFirstHexColorFromGradient(gradientCSS);
+                    if (gradientFallback) {
+                        styles.backgroundColor = gradientFallback;
+                    }
+                }
+            }
 
             // Extract borders
             const borders = tcStyle["a:tcBdr"]?.[0];
@@ -1151,22 +1183,64 @@ if (fillNode?.["a:schemeClr"]) {
         }
     }
 
+    if (!styles.color && styles.backgroundColor) {
+        styles.color = getContrastingTextColor(styles.backgroundColor);
+    }
+
+    if (!styles.color && isHeader) {
+        styles.color = getThemeColorValue("lt1", themeXML) || "#FFFFFF";
+    }
+
     // 2. Merge direct cell properties (`tcPr`) if provided
     if (directTcPr) {
         // Background color
         const solidFill = directTcPr["a:solidFill"]?.[0];
         if (solidFill?.["a:schemeClr"]) {
-            const colorVal = solidFill["a:schemeClr"][0]["$"]?.val;
+            const schemeClrNode = solidFill["a:schemeClr"][0];
+            const colorVal = schemeClrNode["$"]?.val;
             if (colorVal) {
                 styles.backgroundColor = getThemeColorValue(colorVal, themeXML);
 
-                const tint = solidFill["a:schemeClr"][0]["a:tint"]?.[0]?.["$"]?.val;
+                const tint = schemeClrNode["a:tint"]?.[0]?.["$"]?.val;
+                const shade = schemeClrNode["a:shade"]?.[0]?.["$"]?.val;
+                const lumMod = schemeClrNode["a:lumMod"]?.[0]?.["$"]?.val;
+                const lumOff = schemeClrNode["a:lumOff"]?.[0]?.["$"]?.val;
+                const alpha = schemeClrNode["a:alpha"]?.[0]?.["$"]?.val;
+
                 if (tint) {
                     styles.backgroundColor = applyTintToColor(styles.backgroundColor, parseInt(tint));
+                } else if (lumMod || lumOff) {
+                    if (pptBackgroundColors.applyLuminanceModifier) {
+                        styles.backgroundColor = pptBackgroundColors.applyLuminanceModifier(
+                            styles.backgroundColor,
+                            lumMod || "100000",
+                            lumOff || "0"
+                        );
+                    }
+                } else if (shade) {
+                    styles.backgroundColor = applyTintToColor(styles.backgroundColor, -parseInt(shade, 10));
+                }
+
+                if (alpha) {
+                    styles.backgroundColor = applyAlphaToColor(styles.backgroundColor, alpha);
                 }
             }
         } else if (solidFill?.["a:srgbClr"]) {
             styles.backgroundColor = `#${solidFill["a:srgbClr"][0]["$"].val}`;
+        }
+
+        const gradFill = directTcPr["a:gradFill"]?.[0];
+        if (gradFill) {
+            const gradientCSS = pptBackgroundColors.getGradientFillColor
+                ? pptBackgroundColors.getGradientFillColor(gradFill, themeXML, null)
+                : null;
+            if (gradientCSS) {
+                styles.backgroundImage = gradientCSS;
+                const gradientFallback = extractFirstHexColorFromGradient(gradientCSS);
+                if (gradientFallback) {
+                    styles.backgroundColor = gradientFallback;
+                }
+            }
         }
 
         // Extract borders from directTcPr (slide XML format)
@@ -1191,6 +1265,12 @@ if (fillNode?.["a:schemeClr"]) {
     return styles;
 }
 
+function extractFirstHexColorFromGradient(gradientCSS) {
+    if (typeof gradientCSS !== 'string') return null;
+    const match = gradientCSS.match(/#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})/);
+    return match ? match[0] : null;
+}
+
 function resolvePlaceholderColor(styleType) {
 
     switch (styleType) {
@@ -1204,6 +1284,12 @@ function resolvePlaceholderColor(styleType) {
         case "band2H":
             return "lt1";       // white (NOT lt2)
 
+        case "band1V":
+            return "lt2";
+
+        case "band2V":
+            return "lt1";
+
         case "wholeTbl":
             return "lt1";       // default background
 
@@ -1216,7 +1302,6 @@ function resolvePlaceholderColor(styleType) {
             return "lt1";
     }
 }
-
 
 
 function parseBorderStyle(borderElement, themeXML) {
@@ -1263,8 +1348,72 @@ function parseBorderStyle(borderElement, themeXML) {
     // Handle dash patterns
     const dashType = borderElement["a:prstDash"]?.[0]?.["$"]?.val;
     const finalLineStyle = dashType && dashType !== "solid" ? "dashed" : lineStyle;
+    const adjustedWidth =
+        finalLineStyle === "dashed" || finalLineStyle === "dotted"
+            ? Math.max(2, width)
+            : width;
 
-    return `${width}px ${finalLineStyle} ${color}`;
+    return `${adjustedWidth}px ${finalLineStyle} ${color}`;
+}
+
+function extractColorFromChoiceNode(colorNode, themeXML) {
+    if (!colorNode) return null;
+
+    if (colorNode["a:srgbClr"]?.[0]?.["$"]?.val) {
+        return `#${colorNode["a:srgbClr"][0]["$"].val}`;
+    }
+
+    if (colorNode["a:schemeClr"]?.[0]?.["$"]?.val) {
+        const schemeClrNode = colorNode["a:schemeClr"][0];
+        let color = getThemeColorValue(schemeClrNode["$"].val, themeXML);
+        const tint = schemeClrNode["a:tint"]?.[0]?.["$"]?.val;
+        const shade = schemeClrNode["a:shade"]?.[0]?.["$"]?.val;
+        const lumMod = schemeClrNode["a:lumMod"]?.[0]?.["$"]?.val;
+        const lumOff = schemeClrNode["a:lumOff"]?.[0]?.["$"]?.val;
+
+        if (color) {
+            if (lumMod || lumOff) {
+                color = pptBackgroundColors.applyLuminanceModifier
+                    ? pptBackgroundColors.applyLuminanceModifier(color, lumMod || "100000", lumOff || "0")
+                    : color;
+            } else if (tint) {
+                color = applyTintToColor(color, parseInt(tint, 10));
+            } else if (shade) {
+                color = applyTintToColor(color, -parseInt(shade, 10));
+            }
+        }
+
+        return color;
+    }
+
+    if (colorNode["a:prstClr"]?.[0]?.["$"]?.val) {
+        const presetVal = colorNode["a:prstClr"][0]["$"].val;
+        if (presetVal === "white") return "#FFFFFF";
+        if (presetVal === "black") return "#000000";
+        return colorHelper.resolvePresetColor ? colorHelper.resolvePresetColor(presetVal) : null;
+    }
+
+    if (colorNode["a:sysClr"]?.[0]?.["$"]?.lastClr) {
+        return `#${colorNode["a:sysClr"][0]["$"].lastClr}`;
+    }
+
+    return null;
+}
+
+function getContrastingTextColor(backgroundColor) {
+    if (!backgroundColor || typeof backgroundColor !== "string" || !backgroundColor.startsWith("#")) {
+        return null;
+    }
+
+    const hex = backgroundColor.slice(1);
+    if (hex.length !== 6) return null;
+
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+
+    return luminance < 0.55 ? "#FFFFFF" : "#000000";
 }
 
 function getThemeColorValue(schemeVal, themeXML) {
@@ -1277,7 +1426,7 @@ function getThemeColorValue(schemeVal, themeXML) {
         'tx1': 'dk1',   // Text 1 = Dark 1
         'tx2': 'dk2'    // Text 2 = Dark 2
     };
-     schemeVal = schemeMap[schemeVal] || schemeVal;
+    schemeVal = schemeMap[schemeVal] || schemeVal;
 
     // Try to resolve via colorHelper first
     if (colorHelper && colorHelper.resolveThemeColorHelper) {
@@ -1329,7 +1478,7 @@ function isEmptyParagraph(paragraph) {
 
 function createCellSpanFromRun(rPr, textValue, isHeader, themeXML, pPr = null, tableFontSize = 18) {
     const styles = extractRunStyles(rPr, themeXML, pPr, tableFontSize);
-    const escapedText = escapeHtml(textValue);
+    const escapedText = escapeHtml(sanitizeXmlTableText(textValue));
 
     if (!styles) {
         return escapedText;
@@ -1340,7 +1489,7 @@ function createCellSpanFromRun(rPr, textValue, isHeader, themeXML, pPr = null, t
 
 function extractRunStyles(rPr, themeXML, pPr = null, tableFontSize = 18) {
     const styles = [];
-        // ✅ ADD THIS: Check paragraph properties FIRST for inherited text color
+    // ✅ ADD THIS: Check paragraph properties FIRST for inherited text color
     let textColorFound = false;
     if (pPr) {
         const defRPr = pPr["a:defRPr"]?.[0];
@@ -1360,14 +1509,14 @@ function extractRunStyles(rPr, themeXML, pPr = null, tableFontSize = 18) {
         const defRPr = pPr["a:defRPr"]?.[0];
         fontSize = defRPr?.["$"]?.sz;
     }
-   if (fontSize) {
-    const sizeInPt = (parseInt(fontSize) / 100);  // ✅ Remove the 0.75 multiplier
-    styles.push(`font-size: ${sizeInPt}px`);
-} else {
-    styles.push(`font-size: 13px`);  // ✅ Larger default
-}
+    if (fontSize) {
+        const sizeInPt = (parseInt(fontSize) / 100);
+        styles.push(`font-size: ${pointsToCssPx(sizeInPt)}px`);
+    } else {
+        styles.push(`font-size: 13px`);
+    }
 
-    
+
 
     if (!rPr) return styles.length > 0 ? styles.join('; ') : null;
 
@@ -1390,12 +1539,12 @@ function extractRunStyles(rPr, themeXML, pPr = null, tableFontSize = 18) {
     }
 
     // ✅ Text color from run properties (only if not already found from paragraph)
-if (!textColorFound) {
-    const textColor = extractTextColor(rPr, themeXML);
-    if (textColor) {
-        styles.push(`color: ${textColor}`);
+    if (!textColorFound) {
+        const textColor = extractTextColor(rPr, themeXML);
+        if (textColor) {
+            styles.push(`color: ${textColor}`);
+        }
     }
-}
 
     return styles.length > 0 ? styles.join('; ') : null;
 }
@@ -1565,16 +1714,6 @@ function getBulletStyleFromChar(bulletChar, bulletFont) {
     return bulletMap[bulletChar] || 'disc';
 }
 
-function getTextAlignmentFromParagraph(pPr, shapeNode) {
-    if (!pPr) return 'left';
-
-    const algn = pPr["$"]?.algn;
-    if (algn) {
-        return convertAlgnToCSS(algn);
-    }
-
-    return 'left';
-}
 
 function escapeHtml(text) {
     if (typeof text !== 'string') return '';
@@ -1588,6 +1727,16 @@ function escapeHtml(text) {
     };
 
     return text.replace(/[&<>"']/g, m => map[m]);
+}
+
+function sanitizeXmlTableText(text) {
+    if (typeof text !== 'string') return '';
+
+    // Some source PPT tables contain the next project's label concatenated
+    // into the last bullet run of the previous row (for example
+    // "Release version 1.1Project 2 – Payment System"). PowerPoint clips it,
+    // but raw HTML/PPT regeneration exposes it. Trim that trailing artifact.
+    return text.replace(/([0-9A-Za-z][0-9A-Za-z .]*)Project\s+\d+\s+[–-]\s+.*$/, '$1').trimEnd();
 }
 
 function convertNumberingType(autoNumType) {
@@ -1649,34 +1798,34 @@ function extractTextColor(rPr, themeXML = null) {
     if (solidFill["a:srgbClr"]) {
         return `#${solidFill["a:srgbClr"][0]["$"].val}`;
     }
-    
+
     // Scheme color (theme-based)
     // Scheme color (theme-based)
-if (solidFill["a:schemeClr"]) {
-    const schemeVal = solidFill["a:schemeClr"][0]["$"].val;
-    
-    // ✅ ADD THIS ENTIRE BLOCK:
-    const schemeMap = {
-        'bg1': 'lt1',
-        'bg2': 'lt2',
-        'tx1': 'dk1',
-        'tx2': 'dk2'
-    };
-    
-    const mappedScheme = schemeMap[schemeVal] || schemeVal;
-    
-    let color = getThemeColorValue(mappedScheme, themeXML);
-    
-    // ✅ Apply lumMod if present
-    const lumMod = solidFill["a:schemeClr"][0]["a:lumMod"]?.[0]?.["$"]?.val;
-    if (lumMod && color) {
-        color = colorHelper.applyLumMod ?
-            colorHelper.applyLumMod(color, lumMod) : color;
+    if (solidFill["a:schemeClr"]) {
+        const schemeVal = solidFill["a:schemeClr"][0]["$"].val;
+
+        // ✅ ADD THIS ENTIRE BLOCK:
+        const schemeMap = {
+            'bg1': 'lt1',
+            'bg2': 'lt2',
+            'tx1': 'dk1',
+            'tx2': 'dk2'
+        };
+
+        const mappedScheme = schemeMap[schemeVal] || schemeVal;
+
+        let color = getThemeColorValue(mappedScheme, themeXML);
+
+        // ✅ Apply lumMod if present
+        const lumMod = solidFill["a:schemeClr"][0]["a:lumMod"]?.[0]?.["$"]?.val;
+        if (lumMod && color) {
+            color = colorHelper.applyLumMod ?
+                colorHelper.applyLumMod(color, lumMod) : color;
+        }
+
+        return color;
     }
-    
-    return color;
-}
-    
+
     // Preset color
     if (solidFill["a:prstClr"]) {
         const presetVal = solidFill["a:prstClr"][0]["$"]?.val;
@@ -1686,13 +1835,13 @@ if (solidFill["a:schemeClr"]) {
         };
         return presetColors[presetVal] || null;
     }
-    
+
     // System color
     if (solidFill["a:sysClr"]) {
         const lastClr = solidFill["a:sysClr"][0]["$"]?.lastClr;
         if (lastClr) return `#${lastClr}`;
     }
-    
+
     return null;
 }
 
@@ -1737,23 +1886,6 @@ function getCellUnorderedListStyle(bulletInfo) {
     return 'list-style-type: disc';
 }
 
-function getLevelProperties(lstStyle, level) {
-    const levelMap = {
-        1: "a:lvl1pPr",
-        2: "a:lvl2pPr",
-        3: "a:lvl3pPr",
-        4: "a:lvl4pPr",
-        5: "a:lvl5pPr",
-        6: "a:lvl6pPr",
-        7: "a:lvl7pPr",
-        8: "a:lvl8pPr",
-        9: "a:lvl9pPr"
-    };
-
-    const levelKey = levelMap[level];
-    return levelKey ? lstStyle[levelKey]?.[0] : null;
-}
-
 function convertAlgnToCSS(algn) {
     switch (algn) {
         case "l": return "left";
@@ -1763,19 +1895,6 @@ function convertAlgnToCSS(algn) {
         case "dist": return "justify";
         default: return "left";
     }
-}
-
-
-function findPlaceholderInLayout(placeholderType, layoutXML) {
-    if (!layoutXML || !placeholderType) return null;
-    const shapes = layoutXML?.["p:sldLayout"]?.["p:cSld"]?.[0]?.["p:spTree"]?.[0]?.["p:sp"] || [];
-    for (const shape of shapes) {
-        const phType = shape?.["p:nvSpPr"]?.[0]?.["p:nvPr"]?.[0]?.["p:ph"]?.[0]?.["$"]?.type;
-        if (phType === placeholderType) {
-            return shape;
-        }
-    }
-    return null;
 }
 
 function applyTintToColor(hexColor, tintValue) {
@@ -1817,14 +1936,6 @@ function applyTintToColor(hexColor, tintValue) {
 }
 
 
-
-// Helper function to reset cache (useful for testing or when processing multiple presentations)
-function resetTableStylesCache() {
-    cachedTableStyles = null;
-}
-
-
 module.exports = {
     convertTableXMLToHTML,
-    resetTableStylesCache
 };

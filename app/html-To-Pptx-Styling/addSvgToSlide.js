@@ -465,6 +465,50 @@ function extractColor(colorValue) {
     return namedColors[colorValue.toLowerCase()] || null;
 }
 
+function getSvgStyleValue(node, svgElement, attributeName, cssName) {
+    if (!node && !svgElement) return null;
+
+    const nodeAttr = node?.getAttribute?.(attributeName);
+    if (nodeAttr != null && nodeAttr !== '') return nodeAttr;
+
+    const nodeStyle = node?.style?.getPropertyValue?.(cssName);
+    if (nodeStyle) return nodeStyle;
+
+    const svgAttr = svgElement?.getAttribute?.(attributeName);
+    if (svgAttr != null && svgAttr !== '') return svgAttr;
+
+    const svgStyle = svgElement?.style?.getPropertyValue?.(cssName);
+    if (svgStyle) return svgStyle;
+
+    return null;
+}
+
+function mapStrokeDasharrayToPptDashType(strokeDasharray, strokeWidth) {
+    if (!strokeDasharray) return null;
+
+    const normalizedDash = String(strokeDasharray).trim().toLowerCase();
+    if (!normalizedDash || normalizedDash === 'none') return null;
+
+    const dashParts = normalizedDash
+        .split(/[\s,]+/)
+        .map(Number)
+        .filter(value => Number.isFinite(value) && value > 0);
+
+    if (dashParts.length === 0) return null;
+
+    const [dashLen = 0, gapLen = dashLen, thirdLen = 0] = dashParts;
+    const safeStrokeWidth = Number.isFinite(strokeWidth) && strokeWidth > 0 ? strokeWidth : 1;
+
+    if (dashParts.length >= 4) {
+        const isDotLike = thirdLen > 0 && thirdLen <= safeStrokeWidth * 1.4;
+        return isDotLike ? 'dashDotDot' : 'dashDot';
+    }
+
+    if (dashLen <= safeStrokeWidth * 1.4) return 'sysDot';
+    if (dashLen >= gapLen * 1.8) return 'lgDash';
+    return 'dash';
+}
+
 // ─── SVG Gradient Helpers ────────────────────────────────────────────────────
 
 /**
@@ -662,11 +706,14 @@ function parseCssGradient(cssGradStr) {
 
 function collectNodeStyles(node, svgElement) {
     return {
-        fill: node.getAttribute('fill') || svgElement.style.fill || null,
-        fillOpacity: node.getAttribute('fill-opacity') || null,
-        stroke: node.getAttribute('stroke') || svgElement.style.stroke || null,
-        strokeWidth: node.getAttribute('stroke-width') || svgElement.style.strokeWidth || '0',
-        opacity: node.getAttribute('opacity') || svgElement.style.opacity || '1'
+        fill: getSvgStyleValue(node, svgElement, 'fill', 'fill'),
+        fillOpacity: getSvgStyleValue(node, svgElement, 'fill-opacity', 'fill-opacity'),
+        stroke: getSvgStyleValue(node, svgElement, 'stroke', 'stroke'),
+        strokeWidth: getSvgStyleValue(node, svgElement, 'stroke-width', 'stroke-width') || '0',
+        strokeDasharray: getSvgStyleValue(node, svgElement, 'stroke-dasharray', 'stroke-dasharray'),
+        strokeLinecap: getSvgStyleValue(node, svgElement, 'stroke-linecap', 'stroke-linecap'),
+        strokeLinejoin: getSvgStyleValue(node, svgElement, 'stroke-linejoin', 'stroke-linejoin'),
+        opacity: getSvgStyleValue(node, svgElement, 'opacity', 'opacity') || '1'
     };
 }
 
@@ -948,37 +995,50 @@ function collectSvgDrawables(svgElement) {
                 node,
                 points: transformPoints(rawPoints, getNodeTransformMatrix(node, svgElement)),
                 styles: collectNodeStyles(node, svgElement),
-                gradient: null
+                gradient: null,
+                strokeGradient: null
             };
         })
         .filter(Boolean);
 
     // ── Resolve url(#id) gradient fill references ─────────────────────────────
     
-    // store in drawable.gradient, and set a solid fallback as styles.fill.
+    // store in drawable.gradient / drawable.strokeGradient, and set a solid
+    // fallback color so pptxgenjs has a placeholder before XML post-processing.
     for (const drawable of drawables) {
         const fillAttr = drawable.styles.fill || '';
-        if (!fillAttr.startsWith('url(#')) continue;
+        const strokeAttr = drawable.styles.stroke || '';
 
-        const idMatch = fillAttr.match(/url\(#([^)]+)\)/);
-        if (!idMatch) continue;
-        const gradId = idMatch[1];
+        const resolveGradientReference = (gradientRef) => {
+            if (!gradientRef.startsWith('url(#')) return null;
 
-        let gradEl = null;
-        try {
-            gradEl = svgElement.querySelector(`#${CSS.escape(gradId)}`);
-        } catch (_) {
-            gradEl = svgElement.querySelector(`[id="${gradId}"]`);
+            const idMatch = gradientRef.match(/url\(#([^)]+)\)/);
+            if (!idMatch) return null;
+            const gradId = idMatch[1];
+
+            let gradEl = null;
+            try {
+                gradEl = svgElement.querySelector(`#${CSS.escape(gradId)}`);
+            } catch (_) {
+                gradEl = svgElement.querySelector(`[id="${gradId}"]`);
+            }
+            if (!gradEl) return null;
+
+            const parsed = parseSvgGradientElement(gradEl, svgElement);
+            return parsed && parsed.stops.length > 0 ? parsed : null;
+        };
+
+        const fillGradient = resolveGradientReference(fillAttr);
+        if (fillGradient) {
+            drawable.gradient = fillGradient;
+            drawable.styles.fill = `#${fillGradient.stops[0].color}`;
         }
-        if (!gradEl) continue;
 
-        const parsed = parseSvgGradientElement(gradEl, svgElement);
-        if (!parsed || parsed.stops.length === 0) continue;
-
-        drawable.gradient = parsed;
-        // Solid fallback colour so pptxgenjs has a placeholder until the
-      
-        drawable.styles.fill = `#${parsed.stops[0].color}`;
+        const strokeGradient = resolveGradientReference(strokeAttr);
+        if (strokeGradient) {
+            drawable.strokeGradient = strokeGradient;
+            drawable.styles.stroke = `#${strokeGradient.stops[0].color}`;
+        }
     }
 
     // ── Handle foreignObject + clipPath gradient pattern ─────────────────────
@@ -1088,7 +1148,10 @@ function createDynamicShapeOptions(element, slideContext, points, svgStyles) {
     const strokeColor = extractColor(svgStyles.stroke);
     const strokeWidth = parseFloat(svgStyles.strokeWidth || '0');
     if (strokeColor && Number.isFinite(strokeWidth) && strokeWidth > 0) {
-        shapeOptions.line = { color: strokeColor, width: Math.min(strokeWidth, 10) };
+        shapeOptions.line = { color: strokeColor, width: strokeWidth };
+
+        const dashType = mapStrokeDasharrayToPptDashType(svgStyles.strokeDasharray, strokeWidth);
+        if (dashType) shapeOptions.line.dashType = dashType;
     }
 
     if (transparency > 0 && transparency <= 100) shapeOptions.transparency = transparency;
@@ -1206,6 +1269,29 @@ function addSvgToSlide(pptSlide, svgElement, elementStyle, slideContext) {
             const baseName = normalizeSvgObjectBaseName(parentElement.dataset?.name || parentElement.className || 'unnamed');
             shapeOptions.objectName = `Custom SVG Shape (${baseName}) #${index + 1}`;
 
+            const rawFill = (drawable.styles.fill || '').trim().toLowerCase();
+            const rawLinecap = (drawable.styles.strokeLinecap || '').trim().toLowerCase();
+            const rawLinejoin = (drawable.styles.strokeLinejoin || '').trim().toLowerCase();
+            const strokeWidth = parseFloat(drawable.styles.strokeWidth || '0');
+            const dashType = shapeOptions.line?.dashType || mapStrokeDasharrayToPptDashType(drawable.styles.strokeDasharray, strokeWidth);
+            const isOpenPath = !drawable.points.some(point => point.close === true);
+            const hasStroke = !!shapeOptions.line?.color && Number.isFinite(shapeOptions.line?.width) && shapeOptions.line.width > 0;
+            const hasExplicitNoFill = rawFill === 'none';
+
+            if (hasStroke || hasExplicitNoFill || dashType || rawLinecap || rawLinejoin) {
+                if (!global.svgLineStyleStore) global.svgLineStyleStore = new Map();
+                global.svgLineStyleStore.set(shapeOptions.objectName, {
+                    strokeColor: shapeOptions.line?.color || null,
+                    strokeWidth: hasStroke ? shapeOptions.line.width : 0,
+                    strokeGradient: drawable.strokeGradient || null,
+                    dashType: dashType || null,
+                    cap: rawLinecap || (hasStroke && isOpenPath ? 'butt' : null),
+                    join: rawLinejoin || (hasStroke && isOpenPath ? 'miter' : null),
+                    noFill: hasExplicitNoFill || (!shapeOptions.fill && hasStroke),
+                    isOpenPath
+                });
+            }
+
             
             if (shapeOptions._opacity !== undefined && shapeOptions._opacity < 1) {
                 if (!global.svgOpacityStore) global.svgOpacityStore = new Map();
@@ -1299,13 +1385,18 @@ function addSvgConnectorToSlide(pptSlide, svgElement, elementStyle, slideContext
         const stroke = extractColor(pathElement.getAttribute('stroke') || '#000000');
         const strokeWidth = parseFloat(pathElement.getAttribute('stroke-width') || '1');
         if (!(strokeWidth > 0)) return false;
+        const dashType = mapStrokeDasharrayToPptDashType(pathElement.getAttribute('stroke-dasharray'), strokeWidth);
 
         pptSlide.addShape('line', {
             x: Math.round(x * 100) / 100,
             y: Math.round(y * 100) / 100,
             w: Math.round(w * 100) / 100,
             h: Math.round(h * 100) / 100,
-            line: { color: stroke || '000000', width: Math.min(strokeWidth, 10) }
+            line: {
+                color: stroke || '000000',
+                width: strokeWidth,
+                ...(dashType ? { dashType } : {})
+            }
         });
 
         return true;

@@ -962,25 +962,25 @@ class ShapeHandler {
             // Scale dash/gap lengths by stroke width, per OOXML ECMA-376 §20.1.10.48
             const _sw = Math.max(parseFloat(strokeWidth) || 1, 1);
             if (dashType === "dash") {
-                strokeDashArray = `${3*_sw}, ${3*_sw}`;
+                strokeDashArray = `${3 * _sw}, ${3 * _sw}`;
             } else if (dashType === "dot") {
-                strokeDashArray = `${1*_sw}, ${3*_sw}`;
+                strokeDashArray = `${1 * _sw}, ${3 * _sw}`;
             } else if (dashType === "dashDot") {
-                strokeDashArray = `${3*_sw}, ${3*_sw}, ${1*_sw}, ${3*_sw}`;
+                strokeDashArray = `${3 * _sw}, ${3 * _sw}, ${1 * _sw}, ${3 * _sw}`;
             } else if (dashType === "lgDash") {
-                strokeDashArray = `${8*_sw}, ${3*_sw}`;
+                strokeDashArray = `${8 * _sw}, ${3 * _sw}`;
             } else if (dashType === "lgDashDot") {
-                strokeDashArray = `${8*_sw}, ${3*_sw}, ${1*_sw}, ${3*_sw}`;
+                strokeDashArray = `${8 * _sw}, ${3 * _sw}, ${1 * _sw}, ${3 * _sw}`;
             } else if (dashType === "lgDashDotDot") {
-                strokeDashArray = `${8*_sw}, ${3*_sw}, ${1*_sw}, ${3*_sw}, ${1*_sw}, ${3*_sw}`;
+                strokeDashArray = `${8 * _sw}, ${3 * _sw}, ${1 * _sw}, ${3 * _sw}, ${1 * _sw}, ${3 * _sw}`;
             } else if (dashType === "sysDash") {
-                strokeDashArray = `${2*_sw}, ${2*_sw}`;
+                strokeDashArray = `${2 * _sw}, ${2 * _sw}`;
             } else if (dashType === "sysDot") {
-                strokeDashArray = `${1*_sw}, ${1*_sw}`;
+                strokeDashArray = `${1 * _sw}, ${1 * _sw}`;
             } else if (dashType === "sysDashDot") {
-                strokeDashArray = `${2*_sw}, ${2*_sw}, ${1*_sw}, ${2*_sw}`;
+                strokeDashArray = `${2 * _sw}, ${2 * _sw}, ${1 * _sw}, ${2 * _sw}`;
             } else if (dashType === "sysDashDotDot") {
-                strokeDashArray = `${2*_sw}, ${2*_sw}, ${1*_sw}, ${2*_sw}, ${1*_sw}, ${2*_sw}`;
+                strokeDashArray = `${2 * _sw}, ${2 * _sw}, ${1 * _sw}, ${2 * _sw}, ${1 * _sw}, ${2 * _sw}`;
             }
         }
 
@@ -1988,10 +1988,36 @@ class ShapeHandler {
                 clipPath = `inset(${insetOffset} round ${adjustedRadius}px)`;
                 borderRadius = `${adjustedRadius}px`;
                 break;
-            case "round2SameRect":
+            case "round2SameRect": {
                 caseName = "round2SameRect";
-                clipPath = "inset(0% 0% 0% 0% round 20% 20% 0% 0%);"
+
+                // Extract adj1 / adj2 from avLst
+                const r2srAvLst = shapeNode?.["p:spPr"]?.[0]?.["a:prstGeom"]?.[0]?.["a:avLst"]?.[0];
+                const r2srGdList = r2srAvLst?.["a:gd"] || [];
+
+                let r2srAdj1 = 16667; // PPTX default (~16.7%)
+                let r2srAdj2 = 0;
+
+                for (const gd of r2srGdList) {
+                    const name = gd?.["$"]?.name;
+                    const fmla = gd?.["$"]?.fmla || "";
+                    const val = parseInt(fmla.replace("val ", ""), 10);
+                    if (!isNaN(val)) {
+                        if (name === "adj1") r2srAdj1 = val;
+                        if (name === "adj2") r2srAdj2 = val;
+                    }
+                }
+
+                // PPTX corner radius = (adj / 100000) * min(width, height), capped at min/2
+                const r2srMinDim = Math.min(position.width, position.height);
+                const r2srR1 = Math.min((r2srAdj1 / 100000) * r2srMinDim, r2srMinDim / 2);
+                const r2srR2 = Math.min((r2srAdj2 / 100000) * r2srMinDim, r2srMinDim / 2);
+
+                // adj1 → top-left + top-right corners, adj2 → bottom-right + bottom-left
+                clipPath = `inset(0% round ${r2srR1}px ${r2srR1}px ${r2srR2}px ${r2srR2}px)`;
+                borderRadius = `${r2srR1}px ${r2srR1}px ${r2srR2}px ${r2srR2}px`;
                 break;
+            }
             case "round1Rect":
                 caseName = "round1Rect";
                 clipPath = "inset(0% 0% 0% 0% round 0% 20% 0% 0%);"
@@ -2476,42 +2502,51 @@ class ShapeHandler {
                                 </svg>
                         </div>`;
                 break;
-            case "teardrop":
-                return `<div class="shape" id= "teardrop" data-name="${shapeName}" style="
-                                position: absolute;
-                                left: ${position.x}px;
-                                top: ${position.y}px;
-                                width: ${position.width}px;
-                                height: ${position.height}px;
-                                ${opacity};
-                                transform: rotate(${position.rotation}deg);
-                                display: flex;
-                                align-items: center;
-                                justify-content: center;
-                                z-index: ${zIndex};">
-                                
-                                    <svg width="${position.width}" height="${position.height}" viewBox="0 0 ${position.width} ${position.height}" xmlns="http://www.w3.org/2000/svg">
-                                        <path d="
-                                            M${position.width * 0.5},0 
-                                            L${position.width},0 
-                                            L${position.width},${position.height * 0.5} 
-                                            C${position.width},${position.height * 0.85}, 
-                                            ${position.width * 0.85},${position.height}, 
-                                            ${position.width * 0.5},${position.height} 
-                                            C${position.width * 0.15},${position.height}, 
-                                            0,${position.height * 0.85}, 
-                                            0,${position.height * 0.5} 
-                                            C0,${position.height * 0.15}, 
-                                            ${position.width * 0.15},0, 
-                                            ${position.width * 0.5},0 
-                                            Z" 
-                                            stroke="#042433" stroke-width="2" stroke-miterlimit="8" 
-                                            fill="${fillColor}" fill-rule="evenodd"/>
-                                            ${textContent}
-                                    </svg>
-                            </div>`;
-                break;
+            case "teardrop": {
+                const tdW = position.width;
+                const tdH = position.height;
 
+                // adj: controls tip sharpness. Empty <a:avLst/> → prstGeom undefined → default 100000.
+                const tdAdjRaw = prstGeom ? parseInt(prstGeom.replace("val ", ""), 10) : 100000;
+                const tdA = Math.min(Math.max(tdAdjRaw, 0), 200000) / 100000;
+                const tdR = Math.min(tdW, tdH) / 2;   // circle radius
+                const tdCx = tdR;                        // circle centre x
+                const tdCy = tdH - tdR;                  // circle centre y
+                const tdK = 0.5523;                     // cubic bezier circle approximation
+                const tdTip = (tdA - 1) * tdR * 0.55;   // extra pull for the tip
+
+                // 5 cubic bezier segments: circle body + tip at top-right corner (W, 0)
+                const tdPath = [
+                    `M ${tdW},0`,
+                    `C ${tdW},${tdCy - tdR * tdK - tdTip} ${tdCx + tdR * tdK},${tdCy - tdR} ${tdCx},${tdCy - tdR}`,
+                    `C ${tdCx - tdR * tdK},${tdCy - tdR} ${tdCx - tdR},${tdCy - tdR * tdK} ${tdCx - tdR},${tdCy}`,
+                    `C ${tdCx - tdR},${tdCy + tdR * tdK} ${tdCx - tdR * tdK},${tdCy + tdR} ${tdCx},${tdCy + tdR}`,
+                    `C ${tdCx + tdR * tdK},${tdCy + tdR} ${tdCx + tdR},${tdCy + tdR * tdK} ${tdCx + tdR},${tdCy}`,
+                    `C ${tdCx + tdR},${tdCy - tdR * tdK - tdTip} ${tdW},${tdTip} ${tdW},0`,
+                    'Z'
+                ].join(' ');
+
+                // 9525 EMU width, so this check is sufficient.
+                const tdHasBorder = outline && txBoxBorder.width > 0;
+                const tdStroke = tdHasBorder ? txBoxBorder.color : 'none';
+                const tdStrokeWidth = tdHasBorder ? txBoxBorder.width : 0;
+
+                // Flip from OOXML <a:xfrm flipH="1" flipV="1"> via position object
+                const tdFlipH = position.flipH ? 1 : 0;
+                const tdFlipV = position.flipV ? 1 : 0;
+
+                // CSS transform: flip applied BEFORE rotation (right-to-left CSS order)
+                const tdFlipCSS = [tdFlipH ? 'scaleX(-1)' : '', tdFlipV ? 'scaleY(-1)' : ''].filter(Boolean).join(' ');
+                const tdTransform = [`rotate(${position.rotation}deg)`, tdFlipCSS].filter(Boolean).join(' ');
+
+                // data-adj: round-trips OOXML tip sharpness back to PPTX
+                return `<div class="shape" id="teardrop" data-name="${shapeName}" data-adj="${tdAdjRaw}" data-flip-h="${tdFlipH}" data-flip-v="${tdFlipV}" style="position: absolute; left: ${position.x}px; top: ${position.y}px; width: ${tdW}px; height: ${tdH}px; ${opacity}; transform: ${tdTransform}; z-index: ${zIndex};">
+                    <svg width="${tdW}" height="${tdH}" viewBox="0 0 ${tdW} ${tdH}" xmlns="http://www.w3.org/2000/svg">
+                        <path d="${tdPath}" stroke="${tdStroke}" stroke-width="${tdStrokeWidth}" stroke-miterlimit="8" fill="${fillColor}" />
+                        ${textContent}
+                    </svg>
+                </div>`;
+            }
             case "cube": {
                 const cubeW = position.width || 200;
                 const cubeH = position.height || 200;
@@ -2718,88 +2753,402 @@ class ShapeHandler {
                 </div>`;
 
             }
-            case "can":
-                const cylinderWidth = position.width || 200;
-                const cylinderHeight = position.height || 400;
-                const ellipseHeight = cylinderWidth * 0.3;
+            case "can": {
+                caseName = "can";
 
-                const viewBoxWidth1 = cylinderWidth;
-                const viewBoxHeight1 = cylinderHeight + ellipseHeight * 2;
+                const w = Math.max(position.width || 1, 1);
+                const h = Math.max(position.height || 1, 1);
 
-                return `<div class="shape" id="can" data-name="${shapeName}" style="
-                                position: absolute;
-                                left: ${position.x}px;
-                                top: ${position.y}px;
-                                width: ${viewBoxWidth1}px;
-                                height: ${viewBoxHeight1}px;
-                                ${opacity};
-                                transform: rotate(${position.rotation}deg);
-                                display: flex;
-                                align-items: center;
-                                justify-content: center;
-                                z-index: ${zIndex};">
-                                
-                                    <svg width="100%" height="100%" viewBox="0 0 ${viewBoxWidth1} ${viewBoxHeight1}" xmlns="http://www.w3.org/2000/svg">
-                                        <!-- Top ellipse (Only border, no fill to prevent double stroke) -->
-                                        <ellipse cx="${cylinderWidth / 2}" cy="${ellipseHeight}" rx="${cylinderWidth / 2}" ry="${ellipseHeight / 2}" 
-                                                fill="none" stroke="#042433" stroke-width="2"/>
+                // can / cylinder adjustment from XML
+                let adj = 50000;
+                const avLst = shapeNode?.["p:spPr"]?.[0]?.["a:prstGeom"]?.[0]?.["a:avLst"]?.[0];
+                const gdList = (avLst && (avLst["a:gd"] || avLst["gd"])) || [];
+                for (const gd of gdList) {
+                    const name = gd?.$?.name;
+                    const fmla = gd?.$?.fmla || "";
+                    const rawVal = parseInt(fmla.replace(/^val\s+/, ""), 10);
+                    if (name === "adj" && !Number.isNaN(rawVal)) {
+                        adj = rawVal;
+                        break;
+                    }
+                }
 
-                                        <!-- Cylinder body (Fixed Path to Remove Straight Line at the Top) -->
-                                        <path d="M0 ${ellipseHeight} 
-                                                C0 ${ellipseHeight * 1.5}, ${cylinderWidth} ${ellipseHeight * 1.5}, ${cylinderWidth} ${ellipseHeight} 
-                                                V${cylinderHeight} 
-                                                C${cylinderWidth} ${cylinderHeight + ellipseHeight / 2}, 0 ${cylinderHeight + ellipseHeight / 2}, 0 ${cylinderHeight} 
-                                                Z" 
-                                            fill="none" stroke="#042433" stroke-width="2"/>
+                // PowerPoint "can" top/bottom curvature
+                // keep it proportional, but still influenced by XML adj
+                const adjFactor = Math.max(0.05, Math.min(adj / 100000, 0.95));
+                const ry = Math.max(6, Math.min(h * 0.22, w * 0.20 * (0.55 + adjFactor * 0.9)));
+                const rx = w / 2;
 
-                                        <!-- Bottom ellipse (Properly aligned for realistic curvature) -->
-                                        <ellipse cx="${cylinderWidth / 2}" cy="${cylinderHeight}" rx="${cylinderWidth / 2}" ry="${ellipseHeight / 2}" 
-                                                fill="none" stroke="#042433" stroke-width="2"/>
-                                                
-                                        <text x="50%" y="${cylinderHeight / 2}" font-size="16px" text-anchor="middle" fill="black">${textContent}</text>
-                                    </svg>
-                            </div>`;
-                break;
+                const topCy = ry;
+                const bottomCy = h - ry;
+                const bodyTop = topCy;
+                const bodyBottom = bottomCy;
 
-            case "pie":
-                const pieWidth = position.width;
-                const pieHeight = position.height;
-                const pieRadius = Math.min(pieWidth, pieHeight) / 2;
-                const pieStrokeColor = "#042433";
-                const pieStrokeWidth = 2;
-                const centerX = pieWidth / 2;
-                const centerY = pieHeight / 2;
+                // ----- outline / stroke from XML -----
+                const lnNode = shapeNode?.["p:spPr"]?.[0]?.["a:ln"]?.[0];
+                const hasNoLine = !!lnNode?.["a:noFill"];
+                const finalStrokeWidth = hasNoLine ? 0 : (stroke?.width || parseFloat(strokeWidth) || 1);
+                const finalStrokeColor = hasNoLine ? "none" : (stroke?.color || strokeColor || "#000000");
+                const finalStrokeOpacity = (stroke?.opacity ?? 1);
 
-                return `<div class="shape" id= "pie" data-name="${shapeName}" style="
-                                position: absolute;
-                                left: ${position.x}px;
-                                top: ${position.y}px;
-                                width: ${pieWidth}px;
-                                height: ${pieHeight}px;
-                                ${opacity};
-                                transform: rotate(${position.rotation}deg);
-                                display: flex;
-                                align-items: center;
-                                justify-content: center;
-                                z-index: ${zIndex};">
-                                
-                                    <svg width="${pieWidth}" height="${pieHeight}" viewBox="0 0 ${pieWidth} ${pieHeight}" xmlns="http://www.w3.org/2000/svg">
-                                        <path d="
-                                            M ${centerX} ${centerY} 
-                                            L ${pieWidth} ${centerY}
-                                            A ${pieRadius} ${pieRadius} 0 0 1 ${centerX + pieRadius * Math.cos(Math.PI / 2)} ${centerY + pieRadius * Math.sin(Math.PI / 2)}
-                                            A ${pieRadius} ${pieRadius} 0 0 1 ${centerX - pieRadius} ${centerY}
-                                            A ${pieRadius} ${pieRadius} 0 0 1 ${centerX} ${centerY - pieRadius}
-                                            Z"
-                                            stroke="${pieStrokeColor}" 
-                                            stroke-width="${pieStrokeWidth}" 
-                                            stroke-linejoin="round"
-                                            fill="${fillColor}" 
-                                            fill-rule="evenodd"/>
-                                            ${textContent}
-                                    </svg>
-                            </div>`;
-                break;
+                // ----- fill from XML -----
+                const spPr = shapeNode?.["p:spPr"]?.[0] || {};
+                const gradFillNode = spPr?.["a:gradFill"]?.[0];
+                const solidFillNode = spPr?.["a:solidFill"]?.[0];
+                const noFillNode = spPr?.["a:noFill"]?.[0];
+
+                const safeIdBase = (shapeName || `can_${zIndex}`).replace(/[^a-zA-Z0-9_-]/g, "_");
+                const fillGradientId = `canFill_${safeIdBase}`;
+                const shadowFilterId = `canShadow_${safeIdBase}`;
+
+                let defsMarkup = "";
+                let bodyFill = fillColor || "#d9d9d9";
+                let topFill = fillColor || "#d9d9d9";
+                let bottomFill = fillColor || "#d9d9d9";
+
+                if (noFillNode) {
+                    bodyFill = "none";
+                    topFill = "none";
+                    bottomFill = "none";
+                } else if (gradFillNode) {
+                    const gsList = gradFillNode?.["a:gsLst"]?.[0]?.["a:gs"] || [];
+                    let stops = [];
+
+                    for (const gs of gsList) {
+                        const posVal = parseInt(gs?.["$"]?.pos || "0", 10);
+                        const offset = `${Math.max(0, Math.min(100, posVal / 1000))}%`;
+
+                        let stopColor = "#d9d9d9";
+                        let stopOpacity = 1;
+
+                        if (gs?.["a:srgbClr"]?.[0]?.["$"]?.val) {
+                            stopColor = `#${gs["a:srgbClr"][0]["$"].val}`;
+
+                            const lumMod = gs["a:srgbClr"]?.[0]?.["a:lumMod"]?.[0]?.["$"]?.val;
+                            const lumOff = gs["a:srgbClr"]?.[0]?.["a:lumOff"]?.[0]?.["$"]?.val;
+                            const alpha = gs["a:srgbClr"]?.[0]?.["a:alpha"]?.[0]?.["$"]?.val;
+
+                            if (lumMod && lumOff) {
+                                stopColor = pptBackgroundColors.applyLuminanceModifier(stopColor, lumMod, lumOff);
+                            } else if (lumMod) {
+                                stopColor = colorHelper.applyLumMod(stopColor, lumMod);
+                            }
+
+                            if (alpha) stopOpacity = parseInt(alpha, 10) / 100000;
+                        } else if (gs?.["a:schemeClr"]?.[0]?.["$"]?.val) {
+                            const sch = gs["a:schemeClr"][0];
+                            stopColor = colorHelper.resolveThemeColorHelper(
+                                sch["$"].val,
+                                themeXML,
+                                masterXMLToUse
+                            );
+
+                            const lumMod = sch?.["a:lumMod"]?.[0]?.["$"]?.val;
+                            const lumOff = sch?.["a:lumOff"]?.[0]?.["$"]?.val;
+                            const alpha = sch?.["a:alpha"]?.[0]?.["$"]?.val;
+
+                            if (lumMod && lumOff) {
+                                stopColor = pptBackgroundColors.applyLuminanceModifier(stopColor, lumMod, lumOff);
+                            } else if (lumMod) {
+                                stopColor = colorHelper.applyLumMod(stopColor, lumMod);
+                            }
+
+                            if (alpha) stopOpacity = parseInt(alpha, 10) / 100000;
+                        }
+
+                        stops.push(`<stop offset="${offset}" stop-color="${stopColor}" stop-opacity="${stopOpacity}"/>`);
+                    }
+
+                    let x1 = "0%";
+                    let y1 = "0%";
+                    let x2 = "0%";
+                    let y2 = "100%";
+
+                    const linNode = gradFillNode?.["a:lin"]?.[0];
+                    if (linNode?.["$"]?.ang) {
+                        const pptDeg = parseInt(linNode["$"].ang, 10) / 60000;
+                        const cssDeg = (270 - pptDeg + 360) % 360;
+                        const rad = cssDeg * Math.PI / 180;
+
+                        const vx = Math.cos(rad);
+                        const vy = Math.sin(rad);
+
+                        x1 = `${50 - vx * 50}%`;
+                        y1 = `${50 - vy * 50}%`;
+                        x2 = `${50 + vx * 50}%`;
+                        y2 = `${50 + vy * 50}%`;
+                    }
+
+                    defsMarkup += `
+                            <linearGradient id="${fillGradientId}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}">
+                                ${stops.join("")}
+                            </linearGradient>`;
+
+                    bodyFill = `url(#${fillGradientId})`;
+                    topFill = `url(#${fillGradientId})`;
+                    bottomFill = `url(#${fillGradientId})`;
+                } else if (solidFillNode) {
+                    bodyFill = fillColor || "#d9d9d9";
+                    topFill = fillColor || "#d9d9d9";
+                    bottomFill = fillColor || "#d9d9d9";
+                }
+
+                // ----- shadow from XML -----
+                const effectLst = spPr?.["a:effectLst"]?.[0];
+                let filterRef = "";
+
+                if (effectLst?.["a:outerShdw"]?.[0]) {
+                    const sh = effectLst["a:outerShdw"][0];
+                    const blur = (parseInt(sh?.["$"]?.blurRad || "0", 10) / this.getEMUDivisor()) || 0;
+                    const dist = (parseInt(sh?.["$"]?.dist || "0", 10) / this.getEMUDivisor()) || 0;
+                    const dir = parseInt(sh?.["$"]?.dir || "0", 10) / 60000;
+                    const rad = dir * Math.PI / 180;
+
+                    const dx = +(Math.cos(rad) * dist).toFixed(2);
+                    const dy = +(Math.sin(rad) * dist).toFixed(2);
+
+                    let shadowColor = "#000000";
+                    let shadowOpacity = 0.2;
+
+                    if (sh?.["a:prstClr"]?.[0]?.["$"]?.val) {
+                        shadowColor = sh["a:prstClr"][0]["$"].val === "black"
+                            ? "#000000"
+                            : sh["a:prstClr"][0]["$"].val;
+
+                        const alpha = sh["a:prstClr"]?.[0]?.["a:alpha"]?.[0]?.["$"]?.val;
+                        if (alpha) shadowOpacity = parseInt(alpha, 10) / 100000;
+                    } else if (sh?.["a:schemeClr"]?.[0]?.["$"]?.val) {
+                        shadowColor = colorHelper.resolveThemeColorHelper(
+                            sh["a:schemeClr"][0]["$"].val,
+                            themeXML,
+                            masterXMLToUse
+                        );
+
+                        const alpha = sh["a:schemeClr"]?.[0]?.["a:alpha"]?.[0]?.["$"]?.val;
+                        if (alpha) shadowOpacity = parseInt(alpha, 10) / 100000;
+                    }
+
+                    defsMarkup += `
+                    <filter id="${shadowFilterId}" x="-30%" y="-30%" width="160%" height="180%">
+                        <feDropShadow dx="${dx}" dy="${dy}" stdDeviation="${Math.max(blur / 2, 0.1)}" flood-color="${shadowColor}" flood-opacity="${shadowOpacity}"/>
+                    </filter>`;
+                    filterRef = `filter="url(#${shadowFilterId})"`;
+                }
+
+                // ----- text -----
+                const textLayer = textContent
+                    ? `<foreignObject x="0" y="0" width="${w}" height="${h}" style="overflow:visible;">
+                            <div xmlns="http://www.w3.org/1999/xhtml"
+                                style="width:${w}px;height:${h}px;display:flex;align-items:stretch;justify-content:stretch;">
+                                ${textContent}
+                            </div>
+                    </foreignObject>`
+                    : "";
+
+                return `
+                    <div class="shape can-shape"
+                        id="can"
+                        data-shape-type="can"
+                        data-name="${shapeName}"
+                        data-adj="${adj}"
+                        data-original-color="${originalThemeColor}"
+                        originallummod="${originalLumMod}"
+                        originallumoff="${originalLumOff}"
+                        originalalpha="${originalAlpha}"
+                        style="
+                            position:absolute;
+                            left:${position.x}px;
+                            top:${position.y}px;
+                            width:${w}px;
+                            height:${h}px;
+                            transform:${transformString};
+                            transform-origin:center center;
+                            z-index:${zIndex};
+                            overflow:visible;
+                            display:flex;
+                            justify-content:center;
+                            align-items:center;
+                        "
+                        data-interactive-type="shape"
+                        data-interactive-init="1">
+
+                        <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"
+                            xmlns="http://www.w3.org/2000/svg"
+                            preserveAspectRatio="none"
+                            style="position:absolute;left:0;top:0;overflow:visible;">
+
+                            <defs>
+                                ${defsMarkup}
+                            </defs>
+
+                            <!-- body -->
+                            <path
+                                d="
+                                    M 0 ${bodyTop}
+                                    C 0 ${bodyTop + ry}, ${w} ${bodyTop + ry}, ${w} ${bodyTop}
+                                    L ${w} ${bodyBottom}
+                                    C ${w} ${bodyBottom + ry}, 0 ${bodyBottom + ry}, 0 ${bodyBottom}
+                                    Z
+                                "
+                                fill="${bodyFill}"
+                                stroke="${finalStrokeColor}"
+                                stroke-width="${finalStrokeWidth}"
+                                stroke-opacity="${finalStrokeOpacity}"
+                                ${filterRef}
+                            />
+
+                            <!-- top face -->
+                            <ellipse
+                                cx="${w / 2}"
+                                cy="${topCy}"
+                                rx="${rx}"
+                                ry="${ry}"
+                                fill="${topFill}"
+                                stroke="${finalStrokeColor}"
+                                stroke-width="${finalStrokeWidth}"
+                                stroke-opacity="${finalStrokeOpacity}"
+                            />
+
+                            <!-- bottom front rim -->
+                            <path
+                                d="M 0 ${bottomCy} C 0 ${bottomCy + ry}, ${w} ${bottomCy + ry}, ${w} ${bottomCy}"
+                                fill="none"
+                                stroke="${finalStrokeColor}"
+                                stroke-width="${finalStrokeWidth}"
+                                stroke-opacity="${finalStrokeOpacity}"
+                            />
+
+                            ${textLayer}
+                        </svg>
+                    </div>`;
+            }
+            case "pie": {
+                caseName = "pie";
+
+                const w = Math.max(position.width || 1, 1);
+                const h = Math.max(position.height || 1, 1);
+                const cx = w / 2;
+                const cy = h / 2;
+                const rx = w / 2;
+                const ry = h / 2;
+
+                const spPr = shapeNode?.["p:spPr"]?.[0] || {};
+                const prstGeomNode = spPr?.["a:prstGeom"]?.[0] || {};
+                const avLst = prstGeomNode?.["a:avLst"]?.[0] || {};
+                const gdList = avLst?.["a:gd"] || [];
+
+                // PowerPoint pie uses adj1 and adj2 as angles in OOXML angle units.
+                // 1 degree = 60000
+                let adj1 = 0;
+                let adj2 = 5400000; // default 90deg fallback
+
+                for (const gd of gdList) {
+                    const name = gd?.["$"]?.name;
+                    const fmla = gd?.["$"]?.fmla || "";
+                    const val = parseInt(String(fmla).replace(/^val\s+/, ""), 10);
+
+                    if (Number.isNaN(val)) continue;
+
+                    if (name === "adj1") adj1 = val;
+                    if (name === "adj2") adj2 = val;
+                }
+
+                const startDeg = adj1 / 60000;
+                const endDeg = adj2 / 60000;
+
+                const normDeg = (deg) => {
+                    let d = deg % 360;
+                    if (d < 0) d += 360;
+                    return d;
+                };
+
+                const svgPointFromDeg = (deg) => {
+                    const r = (normDeg(deg) * Math.PI) / 180;
+                    return {
+                        x: cx + rx * Math.cos(r),
+                        y: cy + ry * Math.sin(r),
+                    };
+                };
+
+                const startPt = svgPointFromDeg(startDeg);
+                const endPt = svgPointFromDeg(endDeg);
+
+                // Clockwise sweep in PowerPoint screen coordinates
+                let sweepDeg = normDeg(endDeg - startDeg);
+                if (sweepDeg === 0) sweepDeg = 360;
+
+                const largeArcFlag = sweepDeg > 180 ? 1 : 0;
+                const sweepFlag = 1;
+
+                // Respect XML outline
+                const lnNode = spPr?.["a:ln"]?.[0];
+                const hasNoLine = !!lnNode?.["a:noFill"];
+                const pieStrokeWidth = hasNoLine
+                    ? 0
+                    : (stroke?.width && stroke.width > 0
+                        ? stroke.width
+                        : (lnNode?.["$"]?.w ? parseInt(lnNode["$"].w, 10) / this.getEMUDivisor() : 1));
+
+                const pieStrokeColor = hasNoLine
+                    ? "none"
+                    : (stroke?.color && stroke.color.trim() ? stroke.color : strokeColor || "none");
+
+                const pieOpacity = fillProps?.opacity ?? 1;
+
+                const d = sweepDeg >= 359.999
+                    ? [
+                        `M ${cx} ${cy}`,
+                        `L ${cx + rx} ${cy}`,
+                        `A ${rx} ${ry} 0 1 1 ${cx - rx} ${cy}`,
+                        `A ${rx} ${ry} 0 1 1 ${cx + rx} ${cy}`,
+                        `Z`
+                    ].join(" ")
+                    : [
+                        `M ${cx} ${cy}`,
+                        `L ${startPt.x} ${startPt.y}`,
+                        `A ${rx} ${ry} 0 ${largeArcFlag} ${sweepFlag} ${endPt.x} ${endPt.y}`,
+                        `Z`
+                    ].join(" ");
+
+                return `<div class="shape"
+                            id="pie"
+                            data-shape-type="pie"
+                            data-name="${shapeName}"
+                            data-adj1="${adj1}"
+                            data-adj2="${adj2}"
+                            data-original-color="${originalThemeColor || ''}"
+                            originallummod="${originalLumMod || ''}"
+                            originallumoff="${originalLumOff || ''}"
+                            originalalpha="${originalAlpha || ''}"
+                            style="position:absolute;
+                                   left:${position.x}px;
+                                   top:${position.y}px;
+                                   width:${w}px;
+                                   height:${h}px;
+                                   transform:rotate(${position.rotation}deg);
+                                   transform-origin:center center;
+                                   z-index:${zIndex};
+                                   overflow:visible;
+                                   display:flex;
+                                   justify-content:center;
+                                   align-items:center;">
+                            <svg width="${w}"
+                                 height="${h}"
+                                 viewBox="0 0 ${w} ${h}"
+                                 xmlns="http://www.w3.org/2000/svg"
+                                 preserveAspectRatio="none"
+                                 style="position:absolute; left:0; top:0; overflow:visible;">
+                                <path d="${d}"
+                                      fill="${fillColor}"
+                                      fill-opacity="${pieOpacity}"
+                                      stroke="${pieStrokeColor}"
+                                      stroke-width="${pieStrokeWidth}"
+                                      ${strokeDashArray ? `stroke-dasharray="${strokeDashArray}"` : ""}
+                                      stroke-linejoin="round"/>
+                            </svg>
+                            ${textContent}
+                        </div>`;
+            }
             case "plaque":
                 return `<div class="shape" id="plaque" data-name="${shapeName}" style="
                             position: absolute;
@@ -2838,6 +3187,1008 @@ class ShapeHandler {
 
                         </div>`;
                 break;
+
+
+            case "flowChartConnector": {
+                caseName = "flowChartConnector";
+
+                const fcW = position.width;
+                const fcH = position.height;
+
+                // ── 1. Stroke: resolve from a:ln ─────────────────────────────────────
+                const fcLnNode = shapeNode?.["p:spPr"]?.[0]?.["a:ln"]?.[0];
+                let fcStrokeColor = "none";
+                let fcStrokeWidth = 0;
+
+                if (fcLnNode) {
+                    fcStrokeWidth = fcLnNode["$"]?.w
+                        ? parseInt(fcLnNode["$"].w, 10) / this.getEMUDivisor()
+                        : 1;
+                    const fcSolid = fcLnNode?.["a:solidFill"]?.[0];
+                    if (fcSolid) {
+                        const fcSrgb = fcSolid?.["a:srgbClr"]?.[0]?.["$"]?.val;
+                        if (fcSrgb) {
+                            fcStrokeColor = `#${fcSrgb}`;
+                        } else {
+                            const fcSchClr = fcSolid?.["a:schemeClr"]?.[0];
+                            if (fcSchClr) {
+                                let fcBase = colorHelper.resolveThemeColorHelper(
+                                    fcSchClr["$"]?.val, themeXML, masterXMLToUse
+                                );
+                                const fcLumMod = fcSchClr?.["a:lumMod"]?.[0]?.["$"]?.val;
+                                const fcLumOff = fcSchClr?.["a:lumOff"]?.[0]?.["$"]?.val;
+                                if (fcLumMod && fcLumOff) {
+                                    fcBase = pptBackgroundColors.applyLuminanceModifier(fcBase, fcLumMod, fcLumOff);
+                                } else if (fcLumMod) {
+                                    fcBase = colorHelper.applyLumMod(fcBase, fcLumMod);
+                                }
+                                fcStrokeColor = fcBase || "none";
+                            }
+                        }
+                    }
+                } else {
+                    fcStrokeColor = strokeColor !== "#042433" ? strokeColor : "none";
+                    fcStrokeWidth = parseFloat(strokeWidth) || 0;
+                }
+
+                // ── 2. flipH / flipV ─────────────────────────────────────────────────
+                const fcXfrm = shapeNode?.["p:spPr"]?.[0]?.["a:xfrm"]?.[0];
+                const fcFlipH = fcXfrm?.["$"]?.flipH === "1";
+                const fcFlipV = fcXfrm?.["$"]?.flipV === "1";
+                const fcFlipCSS = [
+                    fcFlipH ? "scaleX(-1)" : "",
+                    fcFlipV ? "scaleY(-1)" : ""
+                ].filter(Boolean).join(" ");
+                const fcTransform = [transformString, fcFlipCSS].filter(Boolean).join(" ");
+
+                // ── 3. Drop shadow from a:effectLst > a:outerShdw ────────────────────
+                const fcEffectLst = shapeNode?.["p:spPr"]?.[0]?.["a:effectLst"]?.[0];
+                const fcOuterShdw = fcEffectLst?.["a:outerShdw"]?.[0];
+
+                let fcFilterDefs = "";
+                let fcFilterAttr = "";
+                const fcFilterId = `fcShadow_${uniqueId}`;
+
+                if (fcOuterShdw) {
+                    const fcBlur = (parseInt(fcOuterShdw?.["$"]?.blurRad || "0", 10) / this.getEMUDivisor()) || 0;
+                    const fcDist = (parseInt(fcOuterShdw?.["$"]?.dist || "0", 10) / this.getEMUDivisor()) || 0;
+                    const fcDir = parseInt(fcOuterShdw?.["$"]?.dir || "0", 10) / 60000;
+                    const fcRad = fcDir * Math.PI / 180;
+                    const fcDx = +(Math.cos(fcRad) * fcDist).toFixed(2);
+                    const fcDy = +(Math.sin(fcRad) * fcDist).toFixed(2);
+
+                    let fcShadowColor = "#000000";
+                    let fcShadowAlpha = 0.25;
+
+                    const fcPrstClr = fcOuterShdw?.["a:prstClr"]?.[0];
+                    const fcSchemeClr = fcOuterShdw?.["a:schemeClr"]?.[0];
+                    const fcSrgbClr = fcOuterShdw?.["a:srgbClr"]?.[0];
+
+                    if (fcPrstClr?.["$"]?.val) {
+                        fcShadowColor = fcPrstClr["$"].val === "black" ? "#000000" : fcPrstClr["$"].val;
+                        if (fcPrstClr?.["a:alpha"]?.[0]?.["$"]?.val) {
+                            fcShadowAlpha = parseInt(fcPrstClr["a:alpha"][0]["$"].val, 10) / 100000;
+                        }
+                    } else if (fcSrgbClr?.["$"]?.val) {
+                        fcShadowColor = `#${fcSrgbClr["$"].val}`;
+                        if (fcSrgbClr?.["a:alpha"]?.[0]?.["$"]?.val) {
+                            fcShadowAlpha = parseInt(fcSrgbClr["a:alpha"][0]["$"].val, 10) / 100000;
+                        }
+                    } else if (fcSchemeClr?.["$"]?.val) {
+                        fcShadowColor = colorHelper.resolveThemeColorHelper(
+                            fcSchemeClr["$"].val, themeXML, masterXMLToUse
+                        );
+                        if (fcSchemeClr?.["a:alpha"]?.[0]?.["$"]?.val) {
+                            fcShadowAlpha = parseInt(fcSchemeClr["a:alpha"][0]["$"].val, 10) / 100000;
+                        }
+                    }
+
+                    fcFilterDefs = `
+            <filter id="${fcFilterId}" x="-80%" y="-80%" width="260%" height="260%">
+                <feDropShadow
+                    dx="${fcDx}" dy="${fcDy}"
+                    stdDeviation="${Math.max(fcBlur / 2, 0.1)}"
+                    flood-color="${fcShadowColor}"
+                    flood-opacity="${fcShadowAlpha}"
+                />
+            </filter>`;
+                    fcFilterAttr = `filter="url(#${fcFilterId})"`;
+                }
+
+                // ── 4. 3D cylinder detection (a:scene3d + a:sp3d > a:bevelT) ─────────
+                const fcSpPrNode = shapeNode?.["p:spPr"]?.[0];
+                const fcScene3d = fcSpPrNode?.["a:scene3d"]?.[0];
+                const fcSp3d = fcSpPrNode?.["a:sp3d"]?.[0];
+                const fcBevelT = fcSp3d?.["a:bevelT"]?.[0];
+                const fcHas3D = !!(fcScene3d && fcBevelT);
+
+                // bevel height in px — this is the extrusion depth of the cylinder
+                const fcBevelHPx = fcBevelT
+                    ? parseInt(fcBevelT["$"]?.h || "0", 10) / this.getEMUDivisor()
+                    : 0;
+
+                // camera preset drives ellipse compression and wall projection angles
+                const fcCameraPreset = fcScene3d?.["a:camera"]?.[0]?.["$"]?.prst || "";
+
+                // ── 5. Colour helpers for gradient lighting ───────────────────────────
+                // Brighten/darken a hex color by a factor (used for 3D face shading).
+                // Only applied to simple hex fills; gradient/rgba fills fall back to fillColor.
+                const fcAdjustHex = (hex, factor) => {
+                    if (!hex || !hex.startsWith("#") || hex.length < 7) return hex;
+                    const r = Math.min(255, Math.round(parseInt(hex.slice(1, 3), 16) * factor));
+                    const g = Math.min(255, Math.round(parseInt(hex.slice(3, 5), 16) * factor));
+                    const b = Math.min(255, Math.round(parseInt(hex.slice(5, 7), 16) * factor));
+                    return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+                };
+
+                const fcIsHex = /^#[0-9a-fA-F]{6}$/.test(fillColor);
+                const fcHighlight = fcIsHex ? fcAdjustHex(fillColor, 1.45) : fillColor;
+                const fcMidLight = fcIsHex ? fcAdjustHex(fillColor, 1.2) : fillColor;
+                const fcDark = fcIsHex ? fcAdjustHex(fillColor, 0.65) : fillColor;
+                const fcSideDark = fcIsHex ? fcAdjustHex(fillColor, 0.55) : fillColor;
+
+                // ── 6. Build SVG ──────────────────────────────────────────────────────
+                let fcSvgContent = "";
+                let fcViewBox = `0 0 ${fcW} ${fcH}`;
+
+                const fcGradId = `fcGrad_${uniqueId}`;
+                const fcSideGradId = `fcSideGrad_${uniqueId}`;
+                const fcClipId = `fcClip_${uniqueId}`;
+
+                if (fcHas3D) {
+                    // ── Isometric cylinder/disc approximation ──────────────────────
+                    //
+                    // Camera presets → ellipse compression and wall projection factors:
+                    //
+                    //   isometricOffAxis*Top → high elevation (looking mostly from top)
+                    //   isometricOffAxis*Left/Right → lower elevation (more side view)
+                    //   Standard isometric → 35.26° elevation
+                    //
+                    const fcIsTop = fcCameraPreset.includes("Top");
+                    const fcIsLeft = fcCameraPreset.includes("Left");
+
+                    // Ellipse ry/rx ratio: higher elevation = more compressed ellipse
+                    const fcEllipseRatio = fcIsTop ? 0.32 : 0.48;
+
+                    // Fraction of bevel extrusion that appears as visible wall height
+                    const fcWallFraction = fcIsTop ? 0.28 : 0.42;
+
+                    const fcRx = Math.max(fcW / 2, fcBevelHPx * 0.42);
+                    const fcRy = fcRx * fcEllipseRatio;       // top ellipse
+                    const fcWallH = fcBevelHPx * (fcWallFraction * 1.10); // visible cylinder wall height
+
+                    // SVG canvas: extends below and above the bounding box
+                    // Centre of bounding box = (fcW/2, fcH/2)
+                    // Top ellipse centre: place it at fcH/2 - fcWallH/2 vertically
+                    const fcTopCy = fcH / 2 - fcWallH / 2;
+                    const fcBotCy = fcTopCy + fcWallH;
+
+                    // ViewBox expands to accommodate overflow
+                    const fcVbTop = Math.min(fcTopCy - fcRy - 4, 0);
+                    const fcVbBot = Math.max(fcBotCy + fcRy + 4, fcH);
+                    const fcVbH = fcVbBot - fcVbTop;
+                    fcViewBox = `0 ${fcVbTop} ${fcW} ${fcVbH}`;
+
+                    // Slightly offset the off-axis horizontal displacement
+                    const fcOffsetX = fcIsLeft ? -fcRx * 0.08 : fcIsTop ? fcRx * 0.20 : fcRx * 0.10;
+                    const fcCx = fcW / 2 + fcOffsetX;
+
+                    // Radii with stroke inset
+                    const fcRxInset = Math.max(fcRx - fcStrokeWidth / 2, 1);
+                    const fcRyInset = Math.max(fcRy - fcStrokeWidth / 2, 0.5);
+
+                    fcSvgContent = `
+            <defs>
+                ${fcFilterDefs}
+                <!-- Top face: radial gradient for lighting (bright center → darker rim) -->
+                <radialGradient id="${fcGradId}" cx="45%" cy="38%" r="60%">
+                    <stop offset="0%"   stop-color="${fcHighlight}"/>
+                    <stop offset="45%"  stop-color="${fcMidLight}"/>
+                    <stop offset="100%" stop-color="${fcDark}"/>
+                </radialGradient>
+                <!-- Side wall: vertical gradient (top matches rim → bottom dark) -->
+                <linearGradient id="${fcSideGradId}" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%"   stop-color="${fcDark}"/>
+                    <stop offset="100%" stop-color="${fcSideDark}"/>
+                </linearGradient>
+                <!-- Clip side wall to the visible band between top and bottom ellipse -->
+                <clipPath id="${fcClipId}">
+                    <rect x="${fcCx - fcRxInset}" y="${fcTopCy}" width="${fcRxInset * 2}" height="${fcWallH + fcRyInset}"/>
+                </clipPath>
+            </defs>
+
+            <!-- Side wall: bottom ellipse clipped so only lower half shows -->
+            <g ${fcFilterAttr} clip-path="url(#${fcClipId})">
+                <ellipse
+                    cx="${fcCx}" cy="${fcBotCy}"
+                    rx="${fcRxInset}" ry="${fcRyInset}"
+                    fill="url(#${fcSideGradId})"
+                    stroke="${fcStrokeColor}" stroke-width="${fcStrokeWidth}"
+                />
+                <!-- Side wall rectangle between the two ellipses -->
+                <rect
+                    x="${fcCx - fcRxInset}" y="${fcTopCy}"
+                    width="${fcRxInset * 2}" height="${fcWallH}"
+                    fill="url(#${fcSideGradId})"
+                />
+            </g>
+
+            <!-- Top face ellipse (drawn last so it sits on top) -->
+            <ellipse
+                cx="${fcCx}" cy="${fcTopCy}"
+                rx="${fcRxInset}" ry="${fcRyInset}"
+                fill="url(#${fcGradId})"
+                stroke="${fcStrokeColor}" stroke-width="${fcStrokeWidth}"
+                ${fcFilterAttr}
+            />`;
+
+                } else {
+                    // ── Flat ellipse fallback (no 3D) ──────────────────────────────
+                    const fcRx = Math.max(fcW / 2, fcBevelHPx * 0.52);
+                    const fcRy = fcH / 2;
+                    const fcRxInset = Math.max(fcRx - fcStrokeWidth / 2, 1);
+                    const fcRyInset = Math.max(fcRy - fcStrokeWidth / 2, 1);
+
+                    fcSvgContent = `
+            <defs>${fcFilterDefs}</defs>
+            <ellipse
+                cx="${fcRx}" cy="${fcRy}"
+                rx="${fcRxInset}" ry="${fcRyInset}"
+                fill="${fillColor}"
+                stroke="${fcStrokeColor}" stroke-width="${fcStrokeWidth}"
+                ${fcFilterAttr}
+            />`;
+                }
+
+                return `<div
+                        class="shape flow-chart-connector"
+                        id="flowChartConnector"
+                        data-shape-type="flowChartConnector"
+                        data-name="${shapeName}"
+                        data-original-color="${originalThemeColor}"
+                        originalLumMod="${originalLumMod}"
+                        originalLumOff="${originalLumOff}"
+                        originalAlpha="${originalAlpha}"
+                        style="
+                            position: absolute;
+                            left: ${position.x}px;
+                            top: ${position.y}px;
+                            width: ${fcW}px;
+                            height: ${fcH}px;
+                            ${opacity};
+                            transform: ${fcTransform};
+                            transform-origin: center center;
+                            z-index: ${zIndex};
+                            overflow: visible;
+                            display: flex;
+                            justify-content: ${shapeInfo.justifyContent || 'center'};
+                            align-items: ${shapeInfo.getAlignItem || 'center'};
+                        "
+                        data-interactive-type="shape">
+                        <svg
+                            width="${fcW}"
+                            height="${fcH}"
+                            viewBox="${fcViewBox}"
+                            xmlns="http://www.w3.org/2000/svg"
+                            style="position:absolute; left:0; top:0; overflow:visible;">
+                            ${fcSvgContent}
+                        </svg>
+                        ${textContent}
+                    </div>`;
+            }
+
+            case "flowChartOnlineStorage": {
+                caseName = "flowChartOnlineStorage";
+
+                const w = Math.max(position.width || 1, 1);
+                const h = Math.max(position.height || 1, 1);
+
+                const fosSpPr = shapeNode?.["p:spPr"]?.[0] || {};
+                const fosStyleNode = shapeNode?.["p:style"]?.[0] || {};
+                const fosXfrmNode = fosSpPr?.["a:xfrm"]?.[0];
+
+                // ────────────────────────────────────────────────────────────────────────────
+                // helpers
+                // ────────────────────────────────────────────────────────────────────────────
+                const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+
+                const normalizeHex = (hex) => {
+                    if (!hex) return null;
+                    let v = String(hex).trim();
+                    if (!v.startsWith("#")) v = `#${v}`;
+                    if (/^#[0-9a-fA-F]{6}$/.test(v)) return v;
+                    return null;
+                };
+
+                const hexToRgb = (hex) => {
+                    const n = normalizeHex(hex);
+                    if (!n) return null;
+                    return {
+                        r: parseInt(n.slice(1, 3), 16),
+                        g: parseInt(n.slice(3, 5), 16),
+                        b: parseInt(n.slice(5, 7), 16)
+                    };
+                };
+
+                const rgbToHex = (r, g, b) => {
+                    const rr = clamp(Math.round(r), 0, 255).toString(16).padStart(2, "0");
+                    const gg = clamp(Math.round(g), 0, 255).toString(16).padStart(2, "0");
+                    const bb = clamp(Math.round(b), 0, 255).toString(16).padStart(2, "0");
+                    return `#${rr}${gg}${bb}`;
+                };
+
+                const applyLumModOnly = (hex, lumMod) => {
+                    const rgb = hexToRgb(hex);
+                    if (!rgb || !lumMod) return hex;
+                    const f = parseInt(lumMod, 10) / 100000;
+                    return rgbToHex(rgb.r * f, rgb.g * f, rgb.b * f);
+                };
+
+                const applyLumModLumOff = (hex, lumMod, lumOff) => {
+                    const rgb = hexToRgb(hex);
+                    if (!rgb) return hex;
+                    const mod = lumMod ? parseInt(lumMod, 10) / 100000 : 1;
+                    const off = lumOff ? parseInt(lumOff, 10) / 100000 : 0;
+                    return rgbToHex(
+                        (rgb.r * mod) + (255 * off),
+                        (rgb.g * mod) + (255 * off),
+                        (rgb.b * mod) + (255 * off)
+                    );
+                };
+
+                const applyShade = (hex, shadeVal) => {
+                    const rgb = hexToRgb(hex);
+                    if (!rgb || !shadeVal) return hex;
+                    const f = parseInt(shadeVal, 10) / 100000;
+                    return rgbToHex(rgb.r * f, rgb.g * f, rgb.b * f);
+                };
+
+                const applyTint = (hex, tintVal) => {
+                    const rgb = hexToRgb(hex);
+                    if (!rgb || !tintVal) return hex;
+                    const t = parseInt(tintVal, 10) / 100000;
+                    return rgbToHex(
+                        rgb.r + ((255 - rgb.r) * t),
+                        rgb.g + ((255 - rgb.g) * t),
+                        rgb.b + ((255 - rgb.b) * t)
+                    );
+                };
+
+                const applyAlpha = (color, alphaVal) => {
+                    const hex = normalizeHex(color);
+                    if (!hex) return color;
+                    if (!alphaVal) return hex;
+                    const rgb = hexToRgb(hex);
+                    const a = clamp(parseInt(alphaVal, 10) / 100000, 0, 1);
+                    return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${a})`;
+                };
+
+                const applyColorTransforms = (baseColor, colorNode) => {
+                    if (!baseColor || !colorNode) return baseColor;
+
+                    let finalColor = normalizeHex(baseColor) || baseColor;
+
+                    const lumMod = colorNode?.["a:lumMod"]?.[0]?.["$"]?.val;
+                    const lumOff = colorNode?.["a:lumOff"]?.[0]?.["$"]?.val;
+                    const shade = colorNode?.["a:shade"]?.[0]?.["$"]?.val;
+                    const tint = colorNode?.["a:tint"]?.[0]?.["$"]?.val;
+                    const alpha = colorNode?.["a:alpha"]?.[0]?.["$"]?.val;
+
+                    if (shade) finalColor = applyShade(finalColor, shade);
+                    if (tint) finalColor = applyTint(finalColor, tint);
+
+                    if (lumMod && lumOff) {
+                        if (typeof pptBackgroundColors?.applyLuminanceModifier === "function") {
+                            finalColor = pptBackgroundColors.applyLuminanceModifier(finalColor, lumMod, lumOff);
+                        } else {
+                            finalColor = applyLumModLumOff(finalColor, lumMod, lumOff);
+                        }
+                    } else if (lumMod) {
+                        if (typeof colorHelper?.applyLumMod === "function") {
+                            finalColor = colorHelper.applyLumMod(finalColor, lumMod);
+                        } else {
+                            finalColor = applyLumModOnly(finalColor, lumMod);
+                        }
+                    }
+
+                    finalColor = applyAlpha(finalColor, alpha);
+                    return finalColor;
+                };
+
+                const resolveColorNodeToColor = (colorNode) => {
+                    if (!colorNode) return null;
+
+                    if (colorNode?.["a:srgbClr"]?.[0]?.["$"]?.val) {
+                        let c = `#${colorNode["a:srgbClr"][0]["$"].val}`;
+                        c = applyColorTransforms(c, colorNode["a:srgbClr"][0]);
+                        return c;
+                    }
+
+                    if (colorNode?.["a:schemeClr"]?.[0]?.["$"]?.val) {
+                        let c = colorHelper.resolveThemeColorHelper(
+                            colorNode["a:schemeClr"][0]["$"].val,
+                            themeXML,
+                            masterXMLToUse
+                        );
+                        c = applyColorTransforms(c, colorNode["a:schemeClr"][0]);
+                        return c;
+                    }
+
+                    if (colorNode?.["a:prstClr"]?.[0]?.["$"]?.val) {
+                        const raw = colorNode["a:prstClr"][0]["$"].val;
+                        let c = raw === "black" ? "#000000" : raw === "white" ? "#FFFFFF" : raw;
+                        c = applyColorTransforms(c, colorNode["a:prstClr"][0]);
+                        return c;
+                    }
+
+                    return null;
+                };
+
+                const getThemeFmtScheme = () => {
+                    return (
+                        themeXML?.["a:theme"]?.["a:themeElements"]?.[0]?.["a:fmtScheme"]?.[0] ||
+                        themeXML?.["theme"]?.["themeElements"]?.[0]?.["fmtScheme"]?.[0] ||
+                        null
+                    );
+                };
+
+                const getThemeLineStyleByIdx = (idx) => {
+                    const fmtScheme = getThemeFmtScheme();
+                    if (!fmtScheme) return null;
+
+                    const lnStyleLst =
+                        fmtScheme?.["a:lnStyleLst"]?.[0] ||
+                        fmtScheme?.["lnStyleLst"]?.[0] ||
+                        null;
+
+                    if (!lnStyleLst) return null;
+
+                    const lines = [
+                        ...(lnStyleLst?.["a:ln"] || []),
+                        ...(lnStyleLst?.["ln"] || [])
+                    ];
+
+                    if (!lines.length) return null;
+
+                    const idxNum = Math.max(1, parseInt(idx || "1", 10));
+                    return lines[idxNum - 1] || lines[0] || null;
+                };
+
+                const getDashType = (lnNode) => {
+                    if (!lnNode) return "solid";
+                    if (lnNode?.["a:prstDash"]?.[0]?.["$"]?.val) {
+                        return lnNode["a:prstDash"][0]["$"].val;
+                    }
+                    return "solid";
+                };
+
+                const getJoinType = (lnNode) => {
+                    if (!lnNode) return "round";
+                    if (lnNode?.["a:miter"]) return "miter";
+                    if (lnNode?.["a:bevel"]) return "bevel";
+                    if (lnNode?.["a:round"]) return "round";
+                    return "round";
+                };
+
+                const getCapType = (lnNode) => {
+                    const cap = lnNode?.["$"]?.cap;
+                    if (cap === "sq") return "square";
+                    if (cap === "rnd") return "round";
+                    if (cap === "flat") return "butt";
+                    return "butt";
+                };
+
+                // ────────────────────────────────────────────────────────────────────────────
+                // exact transform extraction
+                // ────────────────────────────────────────────────────────────────────────────
+                const fosRotDeg = fosXfrmNode?.["$"]?.rot
+                    ? parseInt(fosXfrmNode["$"].rot, 10) / 60000
+                    : 0;
+
+                const fosFlipH = fosXfrmNode?.["$"]?.flipH === "1";
+                const fosFlipV = fosXfrmNode?.["$"]?.flipV === "1";
+
+                const fosTxParts = [];
+                if (fosRotDeg !== 0) fosTxParts.push(`rotate(${fosRotDeg}deg)`);
+                if (fosFlipH) fosTxParts.push("scaleX(-1)");
+                if (fosFlipV) fosTxParts.push("scaleY(-1)");
+                const finalTransform = fosTxParts.length ? fosTxParts.join(" ") : "none";
+
+                // ────────────────────────────────────────────────────────────────────────────
+                // exact border / outline extraction
+                // prefer direct a:ln, else fallback to p:style > a:lnRef > theme fmtScheme
+                // IMPORTANT: never fallback to generic strokeWidth
+                // ────────────────────────────────────────────────────────────────────────────
+                let fosStrokeColor = "none";
+                let fosStrokeWidth = 0;
+                let fosStrokeDash = "solid";
+                let fosStrokeLineJoin = "round";
+                let fosStrokeLineCap = "butt";
+
+                const fosDirectLn = fosSpPr?.["a:ln"]?.[0];
+                const fosLnRef = fosStyleNode?.["a:lnRef"]?.[0];
+
+                if (fosDirectLn) {
+                    if (fosDirectLn?.["a:noFill"]) {
+                        fosStrokeColor = "none";
+                        fosStrokeWidth = 0;
+                    } else {
+                        fosStrokeWidth = fosDirectLn?.["$"]?.w
+                            ? parseInt(fosDirectLn["$"].w, 10) / this.getEMUDivisor()
+                            : 0;
+
+                        if (fosDirectLn?.["a:solidFill"]?.[0]) {
+                            fosStrokeColor = resolveColorNodeToColor(fosDirectLn["a:solidFill"][0]) || "none";
+                        } else if (fosDirectLn?.["a:gradFill"]?.[0]) {
+                            const gsLst = fosDirectLn["a:gradFill"][0]?.["a:gsLst"]?.[0]?.["a:gs"] || [];
+                            if (gsLst.length) {
+                                fosStrokeColor = resolveColorNodeToColor(gsLst[0]) || "none";
+                            } else {
+                                fosStrokeColor = "none";
+                            }
+                        } else {
+                            fosStrokeColor = "none";
+                        }
+                    }
+
+                    fosStrokeDash = getDashType(fosDirectLn);
+                    fosStrokeLineJoin = getJoinType(fosDirectLn);
+                    fosStrokeLineCap = getCapType(fosDirectLn);
+
+                } else if (fosLnRef) {
+                    const fosThemeLn = getThemeLineStyleByIdx(fosLnRef?.["$"]?.idx || "1");
+
+                    fosStrokeWidth = fosThemeLn?.["$"]?.w
+                        ? parseInt(fosThemeLn["$"].w, 10) / this.getEMUDivisor()
+                        : 0;
+
+                    if (!fosStrokeWidth || fosStrokeWidth <= 0) {
+                        fosStrokeColor = "none";
+                        fosStrokeWidth = 0;
+                    } else if (fosThemeLn?.["a:noFill"]) {
+                        fosStrokeColor = "none";
+                        fosStrokeWidth = 0;
+                    } else {
+                        if (fosLnRef?.["a:schemeClr"]?.[0]) {
+                            fosStrokeColor = resolveColorNodeToColor(fosLnRef) || "none";
+                        } else if (fosLnRef?.["a:srgbClr"]?.[0]) {
+                            fosStrokeColor = resolveColorNodeToColor(fosLnRef) || "none";
+                        } else if (fosThemeLn?.["a:solidFill"]?.[0]) {
+                            fosStrokeColor = resolveColorNodeToColor(fosThemeLn["a:solidFill"][0]) || "none";
+                        } else if (fosThemeLn?.["a:gradFill"]?.[0]) {
+                            const gsLst = fosThemeLn["a:gradFill"][0]?.["a:gsLst"]?.[0]?.["a:gs"] || [];
+                            if (gsLst.length) {
+                                fosStrokeColor = resolveColorNodeToColor(gsLst[0]) || "none";
+                            } else {
+                                fosStrokeColor = "none";
+                            }
+                        } else {
+                            fosStrokeColor = "none";
+                        }
+                    }
+
+                    fosStrokeDash = getDashType(fosThemeLn);
+                    fosStrokeLineJoin = getJoinType(fosThemeLn);
+                    fosStrokeLineCap = getCapType(fosThemeLn);
+                }
+
+                if (!fosStrokeColor || fosStrokeColor === "none" || !fosStrokeWidth || fosStrokeWidth <= 0) {
+                    fosStrokeColor = "none";
+                    fosStrokeWidth = 0;
+                }
+
+                let fosStrokeDashAttr = "";
+                if (fosStrokeDash && fosStrokeDash !== "solid") {
+                    const dashMap = {
+                        dash: "6,4",
+                        lgDash: "10,6",
+                        dot: "1,3",
+                        lgDot: "2,6",
+                        dashDot: "6,4,1,4",
+                        lgDashDot: "10,6,1,6",
+                        lgDashDotDot: "10,6,1,6,1,6",
+                        sysDash: "6,4",
+                        sysDot: "1,3",
+                        sysDashDot: "6,4,1,4",
+                        sysDashDotDot: "6,4,1,4,1,4"
+                    };
+                    if (dashMap[fosStrokeDash]) {
+                        fosStrokeDashAttr = `stroke-dasharray="${dashMap[fosStrokeDash]}"`;
+                    }
+                }
+
+                // ────────────────────────────────────────────────────────────────────────────
+                // fill extraction: solid / gradient / noFill
+                // ────────────────────────────────────────────────────────────────────────────
+                const fosNoFillNode = fosSpPr?.["a:noFill"]?.[0];
+                const fosSolidFillNode = fosSpPr?.["a:solidFill"]?.[0];
+                const fosGradFillNode = fosSpPr?.["a:gradFill"]?.[0];
+
+                const fosAdjustHex = (hex, factor) => {
+                    const n = normalizeHex(hex);
+                    if (!n) return hex;
+                    const rgb = hexToRgb(n);
+                    return rgbToHex(rgb.r * factor, rgb.g * factor, rgb.b * factor);
+                };
+
+                let fosFillDefs = "";
+                let fosFillAttr = `fill="${fillColor || "#000000"}"`;
+
+                if (fosNoFillNode) {
+                    fosFillAttr = `fill="none"`;
+                } else if (fosGradFillNode) {
+                    const fosGradId = `fosGrad_${uniqueId}`;
+                    const gsLst = fosGradFillNode?.["a:gsLst"]?.[0]?.["a:gs"] || [];
+
+                    if (gsLst.length) {
+                        const angle = fosGradFillNode?.["$"]?.ang
+                            ? parseInt(fosGradFillNode["$"].ang, 10) / 60000
+                            : 0;
+
+                        const rad = ((angle - 90) * Math.PI) / 180;
+                        const x1 = (50 - Math.cos(rad) * 50).toFixed(3);
+                        const y1 = (50 - Math.sin(rad) * 50).toFixed(3);
+                        const x2 = (50 + Math.cos(rad) * 50).toFixed(3);
+                        const y2 = (50 + Math.sin(rad) * 50).toFixed(3);
+
+                        const stops = gsLst.map((gs) => {
+                            const pos = gs?.["$"]?.pos ? (parseInt(gs["$"].pos, 10) / 1000) : 0;
+                            const clr = resolveColorNodeToColor(gs) || fillColor || "#000000";
+                            return `<stop offset="${pos}%" stop-color="${clr}"></stop>`;
+                        }).join("");
+
+                        fosFillDefs = `
+                <linearGradient id="${fosGradId}" x1="${x1}%" y1="${y1}%" x2="${x2}%" y2="${y2}%">
+                    ${stops}
+                </linearGradient>`;
+                        fosFillAttr = `fill="url(#${fosGradId})"`;
+                    } else {
+                        const fosBase = normalizeHex(fillColor || "#000000");
+                        const fosLeftDark = fosBase ? fosAdjustHex(fosBase, 0.72) : (fillColor || "#000000");
+                        const fosMid = fosBase ? fosAdjustHex(fosBase, 1.00) : (fillColor || "#000000");
+                        const fosHighlight = fosBase ? fosAdjustHex(fosBase, 1.10) : (fillColor || "#000000");
+                        const fosRightDark = fosBase ? fosAdjustHex(fosBase, 0.68) : (fillColor || "#000000");
+
+                        fosFillDefs = `
+                <linearGradient id="${fosGradId}" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stop-color="${fosLeftDark}"></stop>
+                    <stop offset="22%" stop-color="${fosMid}"></stop>
+                    <stop offset="50%" stop-color="${fosHighlight}"></stop>
+                    <stop offset="78%" stop-color="${fosMid}"></stop>
+                    <stop offset="100%" stop-color="${fosRightDark}"></stop>
+                </linearGradient>`;
+                        fosFillAttr = `fill="url(#${fosGradId})"`;
+                    }
+                } else if (fosSolidFillNode) {
+                    const fosSolidColor = resolveColorNodeToColor(fosSpPr) || fillColor || "#000000";
+                    fosFillAttr = `fill="${fosSolidColor}"`;
+                }
+
+                // ────────────────────────────────────────────────────────────────────────────
+                // geometry: correct flowChartOnlineStorage orientation
+                // left = convex outward, right = concave inward
+                // ────────────────────────────────────────────────────────────────────────────
+                const leftInset = w / 6;
+                const rightNotch = w / 6;
+
+                const xLeft = leftInset;
+                const xRight = w;
+                const xNotch = w - rightNotch;
+
+                const flowPath = [
+                    `M ${xLeft.toFixed(3)} 0`,
+                    `L ${xRight.toFixed(3)} 0`,
+                    `C ${(w - rightNotch * 0.15).toFixed(3)} 0, ${xNotch.toFixed(3)} ${(h * 0.22).toFixed(3)}, ${xNotch.toFixed(3)} ${(h / 2).toFixed(3)}`,
+                    `C ${xNotch.toFixed(3)} ${(h * 0.78).toFixed(3)}, ${(w - rightNotch * 0.15).toFixed(3)} ${h.toFixed(3)}, ${xRight.toFixed(3)} ${h.toFixed(3)}`,
+                    `L ${xLeft.toFixed(3)} ${h.toFixed(3)}`,
+                    `C ${(leftInset * 0.18).toFixed(3)} ${h.toFixed(3)}, 0 ${(h * 0.78).toFixed(3)}, 0 ${(h / 2).toFixed(3)}`,
+                    `C 0 ${(h * 0.22).toFixed(3)}, ${(leftInset * 0.18).toFixed(3)} 0, ${xLeft.toFixed(3)} 0`,
+                    `Z`
+                ].join(" ");
+
+                // ────────────────────────────────────────────────────────────────────────────
+                // shadow extraction
+                // ────────────────────────────────────────────────────────────────────────────
+                const fosEffectLst = fosSpPr?.["a:effectLst"]?.[0];
+                const fosOuterShdw = fosEffectLst?.["a:outerShdw"]?.[0];
+
+                let fosFilterDefs = "";
+                let fosFilterAttr = "";
+                const fosFilterId = `fosShadow_${uniqueId}`;
+
+                if (fosOuterShdw) {
+                    const fosBlur = (parseInt(fosOuterShdw?.["$"]?.blurRad || "0", 10) / this.getEMUDivisor()) || 0;
+                    const fosDist = (parseInt(fosOuterShdw?.["$"]?.dist || "0", 10) / this.getEMUDivisor()) || 0;
+                    const fosDir = parseInt(fosOuterShdw?.["$"]?.dir || "0", 10) / 60000;
+                    const fosRad = fosDir * Math.PI / 180;
+                    const fosDx = +(Math.cos(fosRad) * fosDist).toFixed(2);
+                    const fosDy = +(Math.sin(fosRad) * fosDist).toFixed(2);
+
+                    let fosShadowColor = "#000000";
+                    let fosShadowAlpha = 0.20;
+
+                    if (fosOuterShdw?.["a:prstClr"]?.[0]) {
+                        const clrNode = fosOuterShdw["a:prstClr"][0];
+                        const raw = clrNode?.["$"]?.val;
+                        let c = raw === "black" ? "#000000" : raw === "white" ? "#FFFFFF" : raw;
+                        c = applyColorTransforms(c, clrNode);
+                        fosShadowColor = c || "#000000";
+                        if (clrNode?.["a:alpha"]?.[0]?.["$"]?.val) {
+                            fosShadowAlpha = parseInt(clrNode["a:alpha"][0]["$"].val, 10) / 100000;
+                        }
+                    } else if (fosOuterShdw?.["a:srgbClr"]?.[0]) {
+                        const clrNode = fosOuterShdw["a:srgbClr"][0];
+                        fosShadowColor = `#${clrNode["$"].val}`;
+                        if (clrNode?.["a:alpha"]?.[0]?.["$"]?.val) {
+                            fosShadowAlpha = parseInt(clrNode["a:alpha"][0]["$"].val, 10) / 100000;
+                        }
+                    } else if (fosOuterShdw?.["a:schemeClr"]?.[0]) {
+                        const clrNode = fosOuterShdw["a:schemeClr"][0];
+                        fosShadowColor = colorHelper.resolveThemeColorHelper(
+                            clrNode["$"].val,
+                            themeXML,
+                            masterXMLToUse
+                        );
+                        fosShadowColor = applyColorTransforms(fosShadowColor, clrNode);
+                        if (clrNode?.["a:alpha"]?.[0]?.["$"]?.val) {
+                            fosShadowAlpha = parseInt(clrNode["a:alpha"][0]["$"].val, 10) / 100000;
+                        }
+                    }
+
+                    fosFilterDefs = `
+                        <filter id="${fosFilterId}" x="-30%" y="-30%" width="160%" height="160%">
+                            <feDropShadow
+                                dx="${fosDx}"
+                                dy="${fosDy}"
+                                stdDeviation="${Math.max(fosBlur / 2, 0.1)}"
+                                flood-color="${fosShadowColor}"
+                                flood-opacity="${fosShadowAlpha}" />
+                        </filter>`;
+                    fosFilterAttr = `filter="url(#${fosFilterId})"`;
+                }
+
+                // ────────────────────────────────────────────────────────────────────────────
+                // svg
+                // ────────────────────────────────────────────────────────────────────────────
+                const fosSvg = `
+                    <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"
+                        xmlns="http://www.w3.org/2000/svg"
+                        preserveAspectRatio="none"
+                        style="position:absolute; left:0; top:0; overflow:visible;">
+                        <defs>
+                            ${fosFilterDefs}
+                            ${fosFillDefs}
+                        </defs>
+                        <path
+                            d="${flowPath}"
+                            ${fosFillAttr}
+                            stroke="${fosStrokeColor}"
+                            stroke-width="${fosStrokeWidth}"
+                            stroke-linejoin="${fosStrokeLineJoin}"
+                            stroke-linecap="${fosStrokeLineCap}"
+                            ${fosStrokeDashAttr}
+                            ${fosFilterAttr}
+                        ></path>
+                    </svg>`;
+
+                return `<div
+                    class="shape flow-chart-online-storage"
+                    id="flowChartOnlineStorage"
+                    data-shape-type="flowChartOnlineStorage"
+                    data-name="${shapeName}"
+                    data-original-color="${originalThemeColor}"
+                    originallummod="${originalLumMod}"
+                    originallumoff="${originalLumOff}"
+                    originalalpha="${originalAlpha}"
+                    style="
+                        position:absolute;
+                        left:${position.x}px;
+                        top:${position.y}px;
+                        width:${w}px;
+                        height:${h}px;
+                        ${opacity};
+                        transform:${finalTransform};
+                        transform-origin:center center;
+                        z-index:${zIndex};
+                        overflow:visible;
+                        display:flex;
+                        justify-content:${shapeInfo.justifyContent || "center"};
+                        align-items:${shapeInfo.getAlignItem || "center"};
+                    "
+                    data-interactive-type="shape"
+                    data-interactive-init="1">
+                    ${fosSvg}
+                    ${textContent}
+                </div>`;
+            }
+
+            case "flowChartDocument": {
+                caseName = "flowChartDocument";
+
+                const w = Math.max(position.width || 1, 1);
+                const h = Math.max(position.height || 1, 1);
+
+                const spPr = shapeNode?.["p:spPr"]?.[0] || {};
+                const outline = spPr?.["a:ln"]?.[0] || null;
+                const effectLst = spPr?.["a:effectLst"]?.[0] || null;
+                const outerShdw = effectLst?.["a:outerShdw"]?.[0] || null;
+
+                const safeIdBase = (shapeName || `flowChartDocument_${zIndex}`)
+                    .replace(/[^a-zA-Z0-9_-]/g, "_");
+                const filterId = `fcdocShadow_${safeIdBase}_${uniqueId}`;
+
+                // -------------------------------------------------------
+                // 1) Dynamic stroke extraction
+                // -------------------------------------------------------
+                let docStroke = "none";
+                let docStrokeWidth = 0;
+
+                if (outline && !outline["a:noFill"]) {
+                    const lnWidthEmu = parseInt(outline?.["$"]?.w || "0", 10);
+                    docStrokeWidth = lnWidthEmu ? (lnWidthEmu / this.getEMUDivisor()) : 1;
+
+                    const srgbClr = outline?.["a:solidFill"]?.[0]?.["a:srgbClr"]?.[0];
+                    const schemeClr = outline?.["a:solidFill"]?.[0]?.["a:schemeClr"]?.[0];
+                    const prstClr = outline?.["a:solidFill"]?.[0]?.["a:prstClr"]?.[0];
+
+                    if (srgbClr?.["$"]?.val) {
+                        docStroke = `#${srgbClr["$"].val}`;
+                    } else if (schemeClr?.["$"]?.val) {
+                        docStroke = colorHelper.resolveThemeColorHelper(
+                            schemeClr["$"].val,
+                            themeXML,
+                            masterXMLToUse
+                        );
+
+                        const lumMod = schemeClr?.["a:lumMod"]?.[0]?.["$"]?.val;
+                        const lumOff = schemeClr?.["a:lumOff"]?.[0]?.["$"]?.val;
+
+                        if (lumMod && lumOff) {
+                            docStroke = pptBackgroundColors.applyLuminanceModifier(docStroke, lumMod, lumOff);
+                        } else if (lumMod) {
+                            docStroke = colorHelper.applyLumMod(docStroke, lumMod);
+                        }
+                    } else if (prstClr?.["$"]?.val) {
+                        docStroke = prstClr["$"].val;
+                    }
+                }
+
+                // -------------------------------------------------------
+                // 2) Dynamic shadow extraction
+                // -------------------------------------------------------
+                let filterDefs = "";
+                let filterAttr = "";
+
+                if (outerShdw) {
+                    const blur = (parseInt(outerShdw?.["$"]?.blurRad || "0", 10) / this.getEMUDivisor()) || 0;
+                    const dist = (parseInt(outerShdw?.["$"]?.dist || "0", 10) / this.getEMUDivisor()) || 0;
+                    const dir = parseInt(outerShdw?.["$"]?.dir || "0", 10) / 60000;
+
+                    const rad = dir * Math.PI / 180;
+                    const dx = +(Math.cos(rad) * dist).toFixed(2);
+                    const dy = +(Math.sin(rad) * dist).toFixed(2);
+
+                    let shadowColor = "#000000";
+                    let shadowAlpha = 0.18;
+
+                    const shSchemeClr = outerShdw?.["a:schemeClr"]?.[0];
+                    const shSrgbClr = outerShdw?.["a:srgbClr"]?.[0];
+                    const shPrstClr = outerShdw?.["a:prstClr"]?.[0];
+
+                    if (shSrgbClr?.["$"]?.val) {
+                        shadowColor = `#${shSrgbClr["$"].val}`;
+                        if (shSrgbClr?.["a:alpha"]?.[0]?.["$"]?.val) {
+                            shadowAlpha = parseInt(shSrgbClr["a:alpha"][0]["$"].val, 10) / 100000;
+                        }
+                    } else if (shSchemeClr?.["$"]?.val) {
+                        shadowColor = colorHelper.resolveThemeColorHelper(
+                            shSchemeClr["$"].val,
+                            themeXML,
+                            masterXMLToUse
+                        );
+
+                        const lumMod = shSchemeClr?.["a:lumMod"]?.[0]?.["$"]?.val;
+                        const lumOff = shSchemeClr?.["a:lumOff"]?.[0]?.["$"]?.val;
+
+                        if (lumMod && lumOff) {
+                            shadowColor = pptBackgroundColors.applyLuminanceModifier(shadowColor, lumMod, lumOff);
+                        } else if (lumMod) {
+                            shadowColor = colorHelper.applyLumMod(shadowColor, lumMod);
+                        }
+
+                        if (shSchemeClr?.["a:alpha"]?.[0]?.["$"]?.val) {
+                            shadowAlpha = parseInt(shSchemeClr["a:alpha"][0]["$"].val, 10) / 100000;
+                        }
+                    } else if (shPrstClr?.["$"]?.val) {
+                        shadowColor = shPrstClr["$"].val === "black" ? "#000000" : shPrstClr["$"].val;
+                        if (shPrstClr?.["a:alpha"]?.[0]?.["$"]?.val) {
+                            shadowAlpha = parseInt(shPrstClr["a:alpha"][0]["$"].val, 10) / 100000;
+                        }
+                    }
+
+                    filterDefs = `
+                        <filter id="${filterId}" x="-30%" y="-30%" width="180%" height="180%">
+                            <feDropShadow
+                                dx="${dx}"
+                                dy="${dy}"
+                                stdDeviation="${Math.max(blur / 2, 0.1)}"
+                                flood-color="${shadowColor}"
+                                flood-opacity="${shadowAlpha}" />
+                        </filter>`;
+                    filterAttr = `filter="url(#${filterId})"`;
+                }
+
+                // -------------------------------------------------------
+                // 3) PowerPoint-like flowChartDocument geometry
+                //    Asymmetric paper bottom
+                // -------------------------------------------------------
+                const yTop = 0;
+                const yBottomStart = h * 0.82;   // where straight sides stop
+                const yLeftDip = h * 0.97;       // deepest dip on left
+                const yMidRise = h * 0.90;       // center rises
+                const yRightEnd = h * 0.86;      // right side shallower than left
+
+                const pathD = [
+                    `M 0 ${yTop}`,
+                    `H ${w}`,
+                    `V ${yRightEnd}`,
+                    `C ${w * 0.88} ${h * 0.86}, ${w * 0.74} ${h * 0.84}, ${w * 0.58} ${yMidRise}`,
+                    `C ${w * 0.42} ${h * 0.96}, ${w * 0.22} ${h * 1.02}, ${w * 0.08} ${yLeftDip}`,
+                    `C ${w * 0.025} ${h * 0.955}, 0 ${h * 0.91}, 0 ${yBottomStart}`,
+                    `Z`
+                ].join(" ");
+
+                return `
+                    <div class="shape flow-chart-document"
+                        id="${caseName}"
+                        data-shape-type="${caseName}"
+                        data-name="${shapeName}"
+                        data-original-color="${originalThemeColor}"
+                        originallummod="${originalLumMod}"
+                        originallumoff="${originalLumOff}"
+                        originalalpha="${originalAlpha}"
+                        style="
+                            position:absolute;
+                            left:${position.x}px;
+                            top:${position.y}px;
+                            width:${w}px;
+                            height:${h}px;
+                            ${opacity};
+                            transform:${transformString};
+                            transform-origin:center center;
+                            z-index:${zIndex};
+                            overflow:visible;
+                            display:flex;
+                            justify-content:${shapeInfo.justifyContent || "center"};
+                            align-items:${shapeInfo.getAlignItem || "center"};
+                        "
+                        data-interactive-type="shape"
+                        data-interactive-init="1">
+
+                        <svg
+                            width="${w}"
+                            height="${h}"
+                            viewBox="0 0 ${w} ${h}"
+                            xmlns="http://www.w3.org/2000/svg"
+                            preserveAspectRatio="none"
+                            style="position:absolute; left:0; top:0; overflow:visible;">
+                            <defs>
+                                ${filterDefs}
+                            </defs>
+
+                            <path
+                                d="${pathD}"
+                                fill="${fillColor}"
+                                stroke="${docStroke}"
+                                stroke-width="${docStrokeWidth}"
+                                stroke-linejoin="round"
+                                ${filterAttr}
+                            />
+                        </svg>
+
+                        ${textContent}
+                    </div>`;
+            }
 
             default:
                 clipPath = "";
@@ -3400,34 +4751,34 @@ class ShapeHandler {
             const w = Math.max(strokeWidth, 1);
             switch (dashType) {
                 case "dash":
-                    strokeDashArray = `${3*w}, ${3*w}`;
+                    strokeDashArray = `${3 * w}, ${3 * w}`;
                     break;
                 case "dot":
-                    strokeDashArray = `${1*w}, ${3*w}`;
+                    strokeDashArray = `${1 * w}, ${3 * w}`;
                     break;
                 case "dashDot":
-                    strokeDashArray = `${3*w}, ${3*w}, ${1*w}, ${3*w}`;
+                    strokeDashArray = `${3 * w}, ${3 * w}, ${1 * w}, ${3 * w}`;
                     break;
                 case "lgDash":
-                    strokeDashArray = `${8*w}, ${3*w}`;
+                    strokeDashArray = `${8 * w}, ${3 * w}`;
                     break;
                 case "lgDashDot":
-                    strokeDashArray = `${8*w}, ${3*w}, ${1*w}, ${3*w}`;
+                    strokeDashArray = `${8 * w}, ${3 * w}, ${1 * w}, ${3 * w}`;
                     break;
                 case "lgDashDotDot":
-                    strokeDashArray = `${8*w}, ${3*w}, ${1*w}, ${3*w}, ${1*w}, ${3*w}`;
+                    strokeDashArray = `${8 * w}, ${3 * w}, ${1 * w}, ${3 * w}, ${1 * w}, ${3 * w}`;
                     break;
                 case "sysDash":
-                    strokeDashArray = `${2*w}, ${2*w}`;
+                    strokeDashArray = `${2 * w}, ${2 * w}`;
                     break;
                 case "sysDot":
-                    strokeDashArray = `${1*w}, ${1*w}`;
+                    strokeDashArray = `${1 * w}, ${1 * w}`;
                     break;
                 case "sysDashDot":
-                    strokeDashArray = `${2*w}, ${2*w}, ${1*w}, ${2*w}`;
+                    strokeDashArray = `${2 * w}, ${2 * w}, ${1 * w}, ${2 * w}`;
                     break;
                 case "sysDashDotDot":
-                    strokeDashArray = `${2*w}, ${2*w}, ${1*w}, ${2*w}, ${1*w}, ${2*w}`;
+                    strokeDashArray = `${2 * w}, ${2 * w}, ${1 * w}, ${2 * w}, ${1 * w}, ${2 * w}`;
                     break;
                 default:
                     strokeDashArray = "";
@@ -3957,6 +5308,10 @@ class ShapeHandler {
 
             // Extract Stroke Color
             if (outline["a:solidFill"]) {
+            
+                if (strokeWidth === 0) {
+                    strokeWidth = 9525 / this.getEMUDivisor(); // ≈ 0.75px
+                }
                 const solidFill = outline["a:solidFill"][0];
                 if (solidFill["a:srgbClr"]) {
                     strokeColor = `#${solidFill["a:srgbClr"][0]["$"].val}`;

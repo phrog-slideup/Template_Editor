@@ -126,6 +126,23 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
         if (boxShadowValue && boxShadowValue !== 'none') {
             pptxShadow = convertBoxShadowToPptxFormat(boxShadowValue);
         }
+
+        // If no box-shadow found, check for filter: drop-shadow() on the img element
+        if (!pptxShadow) {
+            const imgFilterStyle = imgElement.getAttribute('style') || '';
+            const dropShadowMatch = imgFilterStyle.match(/drop-shadow\(([^)]+)\)/i);
+            if (dropShadowMatch) {
+                pptxShadow = convertDropShadowToPptxFormat(dropShadowMatch[1]);
+            }
+            // Also check parent style for filter: drop-shadow
+            if (!pptxShadow) {
+                const parentStyleAttr = parent.getAttribute('style') || '';
+                const parentDropShadow = parentStyleAttr.match(/filter\s*:[^;]*drop-shadow\(([^)]+)\)/i);
+                if (parentDropShadow) {
+                    pptxShadow = convertDropShadowToPptxFormat(parentDropShadow[1]);
+                }
+            }
+        }
     }
 
     let flipH = cssFlipH;
@@ -376,14 +393,14 @@ async function addImageToSlide(pptx, pptSlide, imgElement, slideContext) {
         // Add image to slide
         pptSlide.addImage(imageOptions);
 
-        if (isGrayscale) {
-            if (!global.grayscaleImageStore) global.grayscaleImageStore = new Map();
+        if (pptxShadow && pptxShadow.opacity != null) {
+            const opacityVal = parseFloat(pptxShadow.opacity);
+            if (!global.imageShadowOpacityStore) global.imageShadowOpacityStore = new Map();
             const storeKey = objName || `img_${x.toFixed(3)}_${y.toFixed(3)}`;
-            global.grayscaleImageStore.set(storeKey, {
+            global.imageShadowOpacityStore.set(storeKey, {
                 objectName: objName,
-                x, y, w, h
+                opacity: opacityVal
             });
-            // console.log(`🔲 Queued grayscale image: "${objName}"`);
         }
 
     } catch (error) {
@@ -657,6 +674,74 @@ function convertBoxShadowToPptxFormat(boxShadowString) {
         offset: String(Math.round(effectiveOffset)),
         angle: String(Math.round(best.angle))
     };
+}
+
+function convertDropShadowToPptxFormat(dropShadowArgs) {
+    // Parse: "2.12px 2.12px 4.00px rgba(0,0,0,0.4)"
+    // Format: offsetX offsetY blur color
+    try {
+        const args = dropShadowArgs.trim();
+
+        // Extract color (rgba/rgb/hex) - find it first since it may contain spaces
+        let color = null;
+        let remaining = args;
+
+        const rgbaMatch = args.match(/rgba?\([^)]+\)/i);
+        const hexMatch = args.match(/#[0-9a-fA-F]{3,8}/);
+
+        if (rgbaMatch) {
+            color = rgbaMatch[0];
+            remaining = args.replace(color, '').trim();
+        } else if (hexMatch) {
+            color = hexMatch[0];
+            remaining = args.replace(color, '').trim();
+        }
+
+        // Parse numeric values (offsetX, offsetY, blur)
+        const nums = remaining.match(/[-+]?[0-9]*\.?[0-9]+/g);
+        if (!nums || nums.length < 2) return null;
+
+        const offsetX = parseFloat(nums[0]);
+        const offsetY = parseFloat(nums[1]);
+        const blur = nums.length >= 3 ? parseFloat(nums[2]) : 0;
+
+        // Calculate offset distance and angle
+        const offset = Math.sqrt(offsetX * offsetX + offsetY * offsetY);
+        let angle = Math.atan2(offsetY, offsetX) * (180 / Math.PI);
+        if (angle < 0) angle += 360;
+
+        // Parse color to hex + alpha
+        let colorHex = '000000';
+        let alpha = 1;
+
+        if (color) {
+            const rgbaPartsMatch = color.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([0-9.]+))?\s*\)/);
+            if (rgbaPartsMatch) {
+                const r = parseInt(rgbaPartsMatch[1]);
+                const g = parseInt(rgbaPartsMatch[2]);
+                const b = parseInt(rgbaPartsMatch[3]);
+                alpha = rgbaPartsMatch[4] !== undefined ? parseFloat(rgbaPartsMatch[4]) : 1;
+                colorHex = ((r << 16) | (g << 8) | b).toString(16).padStart(6, '0').toUpperCase();
+            } else if (color.startsWith('#')) {
+                let hex = color.slice(1);
+                if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+                colorHex = hex.toUpperCase();
+            }
+        }
+
+        return {
+            type: 'outer',
+            opacity: Math.min(1, alpha),
+            blur: Math.round(blur),
+            color: colorHex,
+            offset: Math.round(offset),
+            angle: Math.round(angle)
+        };
+
+    } catch (error) {
+        console.warn('Error parsing drop-shadow:', error.message);
+        return null;
+    }
 }
 
 module.exports = {

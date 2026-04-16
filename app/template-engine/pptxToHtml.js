@@ -788,40 +788,68 @@ class pptxToHtml {
             const hyperlinkAttr = imageInfo.hyperlink ? `data-hyperlink="${imageInfo.hyperlink}"` : "";
 
             // Generate shadow CSS from imageInfo
-            let boxShadowCSS = "";
-            if (imageInfo.hasShadow && imageInfo.shadow) {
-              const shadows = [];
+            let dropShadowFilter = "";
+            let boxShadowCSS = ""; // Keep empty for pic containers
 
-              // Add glow effect (rendered as multiple box-shadows with 0 offset)
+            const picOuterShdw = picNode?.["p:spPr"]?.[0]?.["a:effectLst"]?.[0]?.["a:outerShdw"]?.[0];
+            if (picOuterShdw) {
+              const shdwBlur = parseInt(picOuterShdw?.["$"]?.blurRad || "0", 10) / 12700;
+              const shdwDist = parseInt(picOuterShdw?.["$"]?.dist || "0", 10) / 12700;
+              const shdwDir = parseInt(picOuterShdw?.["$"]?.dir || "0", 10) / 60000;
+              const shdwRad = (shdwDir * Math.PI) / 180;
+              const shdwOffX = (Math.cos(shdwRad) * shdwDist).toFixed(2);
+              const shdwOffY = (Math.sin(shdwRad) * shdwDist).toFixed(2);
+
+              let shdwColor = "rgba(0,0,0,0.5)";
+              const shdwPrstClr = picOuterShdw?.["a:prstClr"]?.[0];
+              const shdwSrgbClr = picOuterShdw?.["a:srgbClr"]?.[0];
+              const shdwSchemeClr = picOuterShdw?.["a:schemeClr"]?.[0];
+
+              if (shdwPrstClr) {
+                const alphaVal = shdwPrstClr?.["a:alpha"]?.[0]?.["$"]?.val;
+                const alphaFrac = alphaVal ? parseInt(alphaVal, 10) / 100000 : 1;
+                const clrVal = shdwPrstClr?.["$"]?.val;
+                const rgb = clrVal === "white" ? "255,255,255" : "0,0,0";
+                shdwColor = `rgba(${rgb},${alphaFrac})`;
+              } else if (shdwSrgbClr) {
+                const hex = shdwSrgbClr?.["$"]?.val || "000000";
+                const r = parseInt(hex.slice(0, 2), 16);
+                const g = parseInt(hex.slice(2, 4), 16);
+                const b = parseInt(hex.slice(4, 6), 16);
+                const alphaVal = shdwSrgbClr?.["a:alpha"]?.[0]?.["$"]?.val;
+                const alphaFrac = alphaVal ? parseInt(alphaVal, 10) / 100000 : 1;
+                shdwColor = `rgba(${r},${g},${b},${alphaFrac})`;
+              } else if (shdwSchemeClr) {
+                const alphaVal = shdwSchemeClr?.["a:alpha"]?.[0]?.["$"]?.val;
+                const alphaFrac = alphaVal ? parseInt(alphaVal, 10) / 100000 : 1;
+                shdwColor = `rgba(0,0,0,${alphaFrac})`;
+              }
+
+              dropShadowFilter = `drop-shadow(${shdwOffX}px ${shdwOffY}px ${shdwBlur.toFixed(2)}px ${shdwColor})`;
+            }
+            else if (imageInfo && imageInfo.hasShadow && imageInfo.shadow) {
+              // Fallback to imageInfo.shadow for cases without a:outerShdw (e.g. glow-only)
+              const shadowFilters = [];
               if (imageInfo.shadow.glow) {
                 const { radius, color } = imageInfo.shadow.glow;
-
-                // PowerPoint glow uses multiple layers for a soft, diffused effect
-                // We need more layers and bigger spread
-                shadows.push(`0 0 ${(radius * 0.5).toFixed(2)}px ${color}`);
-                shadows.push(`0 0 ${radius.toFixed(2)}px ${color}`);
-                shadows.push(`0 0 ${(radius * 1.5).toFixed(2)}px ${color}`);
-                shadows.push(`0 0 ${(radius * 2).toFixed(2)}px ${color}`);
-                shadows.push(`0 0 ${(radius * 2.5).toFixed(2)}px ${color}`);
+                shadowFilters.push(`drop-shadow(0 0 ${radius.toFixed(2)}px ${color})`);
               }
-
-              // Add outer shadow effect
-              if (imageInfo.shadow.shadow) {
-                const { blur, offsetX, offsetY, spread, color } = imageInfo.shadow.shadow;
-                shadows.push(`${offsetX.toFixed(2)}px ${offsetY.toFixed(2)}px ${blur.toFixed(2)}px ${(spread || 0).toFixed(2)}px ${color}`);
-              }
-
-              if (shadows.length > 0) {
-                boxShadowCSS = `box-shadow: ${shadows.join(", ")};`;
+              if (shadowFilters.length > 0) {
+                dropShadowFilter = shadowFilters.join(" ");
               }
             }
 
             if (imgcss.suppressShadow) {
               boxShadowCSS = "box-shadow:none; filter:none;";
             }
+
             const finalFilter = imgcss.suppressShadow
               ? "filter:none;"
-              : (imgcss.blurAmount ? `filter: blur(${imgcss.blurAmount}px) contrast(${imgcss.contrastValue || 1});` : combinedFilter);
+              : (imgcss.blurAmount
+                ? `filter: blur(${imgcss.blurAmount}px) contrast(${imgcss.contrastValue || 1}) ${dropShadowFilter};`
+                : dropShadowFilter
+                  ? `filter: ${cssFilters.join(" ")} ${dropShadowFilter};`
+                  : combinedFilter);
 
             // For lines: use object-fit fill and ensure no distortion
             const objectFit = isLine ? "fill" : "cover";

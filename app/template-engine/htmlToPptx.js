@@ -32,6 +32,7 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         global.softEdgeStore = new Map();
         global.grayscaleImageStore = new Map();
         global.curvedTextWarpStore = new Map();
+        global.imageShadowOpacityStore = new Map();
         clearGradientMetadata();
         clearReflectionStore();
         const dom = new JSDOM(htmlString);
@@ -216,6 +217,15 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         const grayscaleResult = await injectGrayscaleIntoSlideXML(slideXmlsDir);
         if (grayscaleResult.injected > 0) {
             console.log(`   ✅ Injected grayscale into ${grayscaleResult.injected} image(s)`);
+        }
+
+        // ========================================
+        // 🌑 STEP 6.5D2: FIX IMAGE SHADOW OPACITY
+        // ========================================
+        const shadowOpacityResult = await injectImageShadowOpacityIntoSlideXML(slideXmlsDir);
+        console.log(`shadowOpacityResult.injected`, shadowOpacityResult.injected);
+        if (shadowOpacityResult.injected > 0) {
+            console.log(`   ✅ Fixed shadow opacity in ${shadowOpacityResult.injected} image(s)`);
         }
 
         // ========================================
@@ -4466,6 +4476,101 @@ async function fixTableCellAlignment(slideXmlsDir) {
     } catch (error) {
         console.error('   ❌ Error in fixTableCellAlignment:', error);
         return { success: false, error: error.message };
+    }
+}
+
+async function injectImageShadowOpacityIntoSlideXML(slideXmlsDir) {
+    try {
+        if (!global.imageShadowOpacityStore || global.imageShadowOpacityStore.size === 0) {
+            return { success: true, injected: 0 };
+        }
+
+        const slidesDir = path.join(slideXmlsDir, 'slides');
+        if (!await checkDirectoryExists(slidesDir)) {
+            return { success: true, injected: 0 };
+        }
+
+        const slideFiles = await fsPromises.readdir(slidesDir);
+        const slideXmlFiles = slideFiles.filter(f => f.match(/^slide\d+\.xml$/));
+        let totalInjected = 0;
+
+        for (const slideFile of slideXmlFiles) {
+            const slidePath = path.join(slidesDir, slideFile);
+            let xml = await fsPromises.readFile(slidePath, 'utf8');
+            let modified = false;
+
+            // Normalize <p:cNvPr> to self-closing before regex matching
+            xml = xml.replace(/<p:cNvPr([^>]*)>\s*<\/p:cNvPr>/g, '<p:cNvPr$1/>');
+            for (const [key, data] of global.imageShadowOpacityStore.entries()) {
+                const shapeName = data.objectName || key;
+                if (!shapeName) continue;
+
+                const correctAlphaVal = Math.round(data.opacity * 100000);
+                const escapedName = shapeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+                // Find the <p:pic> block by name, then work on its <a:outerShdw>
+                const picBlockRegex = new RegExp(
+                    `(<p:pic>(?:(?!</p:pic>)[\\s\\S])*?<p:cNvPr[^>]*name="${escapedName}"[^>]*/>(?:(?!</p:pic>)[\\s\\S])*?)(<a:outerShdw\\b[^>]*?)(/>|>([\\s\\S]*?)</a:outerShdw>)((?:(?!</p:pic>)[\\s\\S])*?</p:pic>)`,
+                    'g'
+                );
+
+                const newXml = xml.replace(picBlockRegex, (match, before, shdwOpen, shdwBody, shdwInner, after) => {
+                    const alphaTag = `<a:alpha val="${correctAlphaVal}"/>`;
+                    let newShdw;
+
+                    if (shdwBody === '/>') {
+                        // Case A: self-closing <a:outerShdw .../> — expand it
+                        newShdw = `${shdwOpen}><a:srgbClr val="000000">${alphaTag}</a:srgbClr></a:outerShdw>`;
+                    } else if (/<a:alpha\s+val="\d+"\s*\/>/.test(shdwInner)) {
+                        // Case B: alpha already exists — replace its value
+                        const fixedInner = shdwInner.replace(
+                            /<a:alpha\s+val="\d+"\s*\/>/,
+                            alphaTag
+                        );
+                        newShdw = `${shdwOpen}>${fixedInner}</a:outerShdw>`;
+                    } else if (/<a:srgbClr\s+val="[^"]+"\s*\/>/.test(shdwInner)) {
+                        // Case C: <a:srgbClr val="..."/> self-closing, no alpha — expand and inject
+                        const fixedInner = shdwInner.replace(
+                            /<a:srgbClr\s+val="([^"]+)"\s*\/>/,
+                            `<a:srgbClr val="$1">${alphaTag}</a:srgbClr>`
+                        );
+                        newShdw = `${shdwOpen}>${fixedInner}</a:outerShdw>`;
+                    } else if (/<a:srgbClr\s+val="[^"]+"\s*>/.test(shdwInner)) {
+                        // Case D: <a:srgbClr val="...">...</a:srgbClr> open, no alpha inside — insert before </a:srgbClr>
+                        const fixedInner = shdwInner.replace(
+                            /(<a:srgbClr\s+val="[^"]+"\s*>)([\s\S]*?)(<\/a:srgbClr>)/,
+                            `$1$2${alphaTag}$3`
+                        );
+                        newShdw = `${shdwOpen}>${fixedInner}</a:outerShdw>`;
+                    } else {
+                        // Case E: no color at all — add full color+alpha block
+                        newShdw = `${shdwOpen}>${shdwInner}<a:srgbClr val="000000">${alphaTag}</a:srgbClr></a:outerShdw>`;
+                    }
+
+                    modified = true;
+                    totalInjected++;
+                    console.log(`   🌑 Fixed shadow alpha=${correctAlphaVal} for "${shapeName}"`);
+                    return `${before}${newShdw}${after}`;
+                });
+
+                if (newXml === xml) {
+                    console.log(`   ❌ No <p:pic> block matched for "${shapeName}" in ${slideFile}`);
+                }
+                xml = newXml;
+            }
+
+            if (modified) {
+                await fsPromises.writeFile(slidePath, xml, 'utf8');
+                console.log(`   ✅ Shadow opacity fixed in ${slideFile}`);
+            }
+        }
+
+        global.imageShadowOpacityStore.clear();
+        return { success: true, injected: totalInjected };
+
+    } catch (error) {
+        console.error('   ❌ Error in injectImageShadowOpacityIntoSlideXML:', error);
+        return { success: false, error: error.message, injected: 0 };
     }
 }
 

@@ -79,12 +79,56 @@ function generateCustomShapeSVG(shapeNode, custGeom, position, fillColor, stroke
     let combinedPathData = "";
     const paths = custGeom["a:pathLst"][0]["a:path"];
 
+    // ── Determine the viewBox coordinate space ──────────────────────────────
+    // When <a:path> has explicit w/h attributes, those define the coordinate
+    // space and we scale path coords to position.width/height as usual.
+    // When w/h are ABSENT (common for PowerPoint freeforms), using
+    // position.width/height (which is already in pixels, often sub-pixel) as
+    // the fallback produces an identity scaleX/scaleY = 1, leaving path coords
+    // raw inside a ~1×1 px viewBox.  The shape then overflows its wrapper div
+    // via overflow:visible, giving wrong size and wrong hit-area.
+    //
+    // FIX: when w/h are absent, compute the natural bounding box of the path
+    // commands themselves and use those dimensions as the viewBox coordinate
+    // space.  The SVG viewBox is then set to those natural dimensions, and the
+    // path coords map 1:1 — no scaling needed — while the SVG element still
+    // renders at position.width × position.height pixels via width/height="100%".
+    const firstPath = paths[0];
+    const hasExplicitPathDims = firstPath?.["$"]?.w != null && firstPath?.["$"]?.h != null;
+
+    let resolvedViewBoxWidth  = viewBoxWidth;
+    let resolvedViewBoxHeight = viewBoxHeight;
+
+    if (!hasExplicitPathDims) {
+        // Scan all paths for the natural coordinate bounds
+        let naturalBounds = null;
+        for (const p of paths) {
+            const b = computePathNaturalBounds(p);
+            if (b) {
+                naturalBounds = naturalBounds
+                    ? { w: Math.max(naturalBounds.w, b.w), h: Math.max(naturalBounds.h, b.h) }
+                    : b;
+            }
+        }
+        if (naturalBounds) {
+            // Use the natural path coordinate space as the viewBox dimensions.
+            // The SVG will render at position.width × position.height via CSS
+            // width/height="100%", so the shape fills the wrapper correctly.
+            resolvedViewBoxWidth  = naturalBounds.w;
+            resolvedViewBoxHeight = naturalBounds.h;
+        }
+    }
+
     for (let pathIndex = 0; pathIndex < paths.length; pathIndex++) {
         const path = paths[pathIndex];
 
-        // Get original dimensions for scaling
-        const originalWidth = parseFloat(path["$"]?.w || viewBoxWidth);
-        const originalHeight = parseFloat(path["$"]?.h || viewBoxHeight);
+        // Get original dimensions for scaling.
+        // When w/h are absent on <a:path>, use the resolved natural bounds
+        // (already computed above) so scaleX/scaleY produce correct proportions.
+        // Do NOT fall back to viewBoxWidth/viewBoxHeight (pixel sizes) — that
+        // causes an identity transform and leaves path coords raw.
+        const originalWidth  = parseFloat(path["$"]?.w  || resolvedViewBoxWidth);
+        const originalHeight = parseFloat(path["$"]?.h || resolvedViewBoxHeight);
 
         // Process guide list (a:gdLst) if present
         const guides = {};
@@ -111,14 +155,14 @@ function generateCustomShapeSVG(shapeNode, custGeom, position, fillColor, stroke
             if (typeof x === 'string' && guides[x] !== undefined) {
                 x = guides[x];
             }
-            return (parseFloat(x) / originalWidth) * viewBoxWidth;
+            return (parseFloat(x) / originalWidth) * resolvedViewBoxWidth;
         }
 
         function scaleY(y) {
             if (typeof y === 'string' && guides[y] !== undefined) {
                 y = guides[y];
             }
-            return (parseFloat(y) / originalHeight) * viewBoxHeight;
+            return (parseFloat(y) / originalHeight) * resolvedViewBoxHeight;
         }
 
         try {
@@ -166,10 +210,10 @@ function generateCustomShapeSVG(shapeNode, custGeom, position, fillColor, stroke
 
             const gradientId = `gradient_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
             const stopElements = svgStops
-                .map(s => `<stop offset="${s.offset}" style="stop-color:${s.color}; stop-opacity:1"/>`)
+                .map(s => `<stop offset="${s.offset}" style="stop-color:${s.color};"/>`)
                 .join("\n               ");
             //flip issue change
-            return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none"${svgBaseStyle}>
+            return `<svg viewBox="0 0 ${resolvedViewBoxWidth} ${resolvedViewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none"${svgBaseStyle}>
            <defs>
                <linearGradient id="${gradientId}" x1="${x1}%" y1="${y1}%" x2="${x2}%" y2="${y2}%">
                ${stopElements}
@@ -194,13 +238,13 @@ function generateCustomShapeSVG(shapeNode, custGeom, position, fillColor, stroke
         const _radDivExtra = (shadowData?.isInner)
             ? `box-shadow:${shadowData.boxShadow};`
             : "";
-        return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none"${svgBaseStyle}>
+        return `<svg viewBox="0 0 ${resolvedViewBoxWidth} ${resolvedViewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none"${svgBaseStyle}>
            <defs>
                <clipPath id="${clipId}">
                    <path d="${combinedPathData}" />
                </clipPath>
            </defs>
-           <foreignObject width="${viewBoxWidth}" height="${viewBoxHeight}" clip-path="url(#${clipId})">
+           <foreignObject width="${resolvedViewBoxWidth}" height="${resolvedViewBoxHeight}" clip-path="url(#${clipId})">
                <div xmlns="http://www.w3.org/1999/xhtml"
                     style="width:100%;height:100%;${_radDivExtra}background:${svgFill};"></div>
            </foreignObject>
@@ -209,7 +253,7 @@ function generateCustomShapeSVG(shapeNode, custGeom, position, fillColor, stroke
 
     // Solid fill fallback
     //flip issue change
-    return `<svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none"${svgBaseStyle}>
+    return `<svg viewBox="0 0 ${resolvedViewBoxWidth} ${resolvedViewBoxHeight}" width="100%" height="100%" preserveAspectRatio="none"${svgBaseStyle}>
        <g ${pathTransformAttr}>
     <path d="${combinedPathData}" fill="${svgFill}" ${strokeAttrs} />
 </g>
@@ -341,6 +385,56 @@ function evaluateFormula(fmla, width, height, guides) {
 
     // If we can't parse it, try to return it as a number
     return parseFloat(fmla) || 0;
+}
+
+/**
+ * computePathNaturalBounds(path)
+ *
+ * When an <a:path> element has no w/h attributes, the OOXML path coordinate
+ * space cannot be inferred from position.width/height (which are already scaled
+ * to pixels and are often sub-pixel for freeforms). Instead we scan every <a:pt>
+ * inside the path commands to find the actual coordinate extents and use those
+ * as the coordinate space dimensions.
+ *
+ * Returns { w, h } — the natural bounding box of the path command coordinates,
+ * or null if no points are found.
+ */
+function computePathNaturalBounds(path) {
+    let maxX = 0;
+    let maxY = 0;
+    let found = false;
+
+    const scanPoints = (pts) => {
+        if (!Array.isArray(pts)) return;
+        for (const pt of pts) {
+            const $ = pt?.["$"];
+            if (!$) continue;
+            const x = parseFloat($.x);
+            const y = parseFloat($.y);
+            if (Number.isFinite(x)) { maxX = Math.max(maxX, x); found = true; }
+            if (Number.isFinite(y)) { maxY = Math.max(maxY, y); found = true; }
+        }
+    };
+
+    const commandKeys = ["a:moveTo", "a:lnTo", "a:cubicBezTo", "a:quadBezTo"];
+    for (const key of commandKeys) {
+        const cmds = path[key];
+        if (!cmds) continue;
+        const list = Array.isArray(cmds) ? cmds : [cmds];
+        for (const cmd of list) {
+            if (cmd?.["a:pt"]) scanPoints(Array.isArray(cmd["a:pt"]) ? cmd["a:pt"] : [cmd["a:pt"]]);
+        }
+    }
+
+    // Also scan explicitChildren order array ($$) if present
+    if (Array.isArray(path.$$)) {
+        for (const child of path.$$) {
+            if (child?.["a:pt"]) scanPoints(Array.isArray(child["a:pt"]) ? child["a:pt"] : [child["a:pt"]]);
+        }
+    }
+
+    if (!found || maxX === 0 && maxY === 0) return null;
+    return { w: maxX || 1, h: maxY || 1 };
 }
 
 // New dynamic path parser that handles any path structure

@@ -61,19 +61,33 @@ function getShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
             offY = -offY;
         }
 
+        // ── NEW: Extract shape bounding-box dimensions (in px) from XML xfrm
+        // This enables mathematically exact algn-based scaling adjustment
+        // derived directly from sx/sy + algn + shape size (no heuristics)
+        let shapeW = 0;
+        let shapeH = 0;
+        const xfrmNode = shapeNode?.["p:spPr"]?.[0]?.["a:xfrm"]?.[0];
+        if (xfrmNode) {
+            const ext = xfrmNode["a:ext"]?.[0]?.["$"];
+            if (ext?.cx != null && ext?.cy != null) {
+                shapeW = parseInt(ext.cx, 10) / EMU_PER_PX;
+                shapeH = parseInt(ext.cy, 10) / EMU_PER_PX;
+            }
+        }
+
         // ── 5. Spread (outerShdw sx/sy; innerShdw has no scale attrs) ─────────
         let spread = isInner ? 0 : scaleToSpread(attrs.sx, attrs.sy, blurPx);
 
-        // ── 5b. Alignment-aware clip adjustment ───────────────────────────────
-        // When algn != ctr and sx/sy < 1, PowerPoint anchors the shadow scaling
-        // to a specific edge/corner so the shadow only bleeds on the intended
-        // side(s).  Apply a negative-spread + offset compensation to match.
+        // ── REPLACED BLOCK: algn handling (was heuristic clip using blur/dir)
+        // Now purely mathematical: offset adjustment = (1 - scale) * alignVec
+        // where alignVec is derived from algn + shape bbox (XML values only)
+        // spreadDelta is always 0 → no collapse, no fixed negative blur
+        // sx/sy < 1 and > 1 both produce proportional, distinguishable results
         if (!isInner) {
             const sxVal = attrs.sx ? parseInt(attrs.sx, 10) / 100000 : 1;
             const syVal = attrs.sy ? parseInt(attrs.sy, 10) / 100000 : 1;
-            const dirDeg = (dirRaw != null) ? (dirRaw / 60000) : 0;
             const { spreadDelta, offXDelta, offYDelta } =
-                getAlgnClipAdjustment(attrs.algn, dirDeg, blurPx, sxVal, syVal);
+                getAlgnClipAdjustment(attrs.algn, sxVal, syVal, shapeW, shapeH);
             spread += spreadDelta;
             offX += offXDelta;
             offY += offYDelta;
@@ -95,6 +109,41 @@ function getShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
         console.error("getShapeShadowStyle error:", err);
         return "";
     }
+}
+
+// ── REPLACED HELPER: getAlgnClipAdjustment
+// Old heuristic (blur-based clip + dir compensation) removed entirely.
+// New version is 100% formula-driven from XML values only:
+//   offsetDelta = (1 - sx/sy) × alignVec (alignVec from algn + shape bbox)
+// spreadDelta is always 0 (no collapse of sx/sy < 1, no fixed -blurPx)
+// sx=70000 vs 80000 vs 90000 now produce visibly different offsets
+// Works for both outer/inner (called only for outer to preserve original separation)
+function getAlgnClipAdjustment(algn, sx, sy, shapeW, shapeH) {
+    if (!algn || algn === "ctr" || shapeW <= 0 || shapeH <= 0) {
+        return { spreadDelta: 0, offXDelta: 0, offYDelta: 0 };
+    }
+
+    const halfW = shapeW / 2;
+    const halfH = shapeH / 2;
+    let alignVecX = 0;
+    let alignVecY = 0;
+
+    switch (algn) {
+        case "tl": alignVecX = -halfW; alignVecY = -halfH; break;
+        case "t": alignVecX = 0; alignVecY = -halfH; break;
+        case "tr": alignVecX = halfW; alignVecY = -halfH; break;
+        case "l": alignVecX = -halfW; alignVecY = 0; break;
+        case "r": alignVecX = halfW; alignVecY = 0; break;
+        case "bl": alignVecX = -halfW; alignVecY = halfH; break;
+        case "b": alignVecX = 0; alignVecY = halfH; break;
+        case "br": alignVecX = halfW; alignVecY = halfH; break;
+        default: return { spreadDelta: 0, offXDelta: 0, offYDelta: 0 };
+    }
+
+    const offXDelta = (1 - sx) * alignVecX;
+    const offYDelta = (1 - sy) * alignVecY;
+
+    return { spreadDelta: 0, offXDelta, offYDelta };
 }
 
 function resolveShadowColor(shadowNode, themeXML, masterXML) {
@@ -178,35 +227,6 @@ function blurRadToPx(blurRadRaw) {
 }
 
 
-/**
- * When algn is a non-center alignment AND the shadow is scaled DOWN (sx/sy < 1),
- * PowerPoint anchors the scaling to that edge/corner of the shape.  The shadow
- * ends up inset from the opposite sides, so it only "bleeds" out the intended
- * side(s).  CSS box-shadow has no such concept, so we approximate it with:
- *   • spread = −blurPx        → collapses the shadow inward, killing unwanted bleed
- *   • offset += blurPx in dir → compensates so the intended side stays visible
- *
- * Returns deltas to add onto spread, offX, offY.
- */
-function getAlgnClipAdjustment(algn, dirDeg, blurPx, sx, sy) {
-    // No adjustment needed for center alignment or no alignment
-    if (!algn || algn === "ctr") return { spreadDelta: 0, offXDelta: 0, offYDelta: 0 };
-
-    // Only clip when the shadow is actually scaled DOWN
-    const avgScale = (sx + sy) / 2;
-    if (avgScale >= 1) return { spreadDelta: 0, offXDelta: 0, offYDelta: 0 };
-
-    // Negative spread clips the unwanted bleed on all sides
-    const spreadDelta = -blurPx;
-
-    // Re-introduce blurPx in the shadow direction so the correct side stays visible
-    const rad = (dirDeg * Math.PI) / 180;
-    const offXDelta = blurPx * Math.cos(rad);
-    const offYDelta = blurPx * Math.sin(rad);
-
-    return { spreadDelta, offXDelta, offYDelta };
-}
-
 function dirDistToOffset(dirRaw, distRaw, algn) {
     const dist = (distRaw ?? 0) / EMU_PER_PX;
 
@@ -229,7 +249,9 @@ function scaleToSpread(sxRaw, syRaw, blurPx) {
     const sx = sxRaw ? parseInt(sxRaw, 10) / 100000 : 1;
     const sy = syRaw ? parseInt(syRaw, 10) / 100000 : 1;
     const avg = (sx + sy) / 2;
-    if (avg <= 1) return 0;
+
+    // preserve exact below-1 and above-1 behavior numerically
+    // (negative spread for sx/sy < 1 is now fully retained and distinguishable)
     return Math.round((avg - 1) * blurPx * 1000) / 1000;
 }
 
@@ -394,6 +416,7 @@ function getCustomShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
         let blurPx = blurRadToPx(attrs.blurRad);
 
         // ── 3. Spread approximation added into blur (outer only) ──────────────
+        // (kept for >1 consistency with prior logic; <1 now handled purely by offset adjustment)
         if (!isInner) {
             const sx = attrs.sx ? parseInt(attrs.sx, 10) / 100000 : 1;
             const sy = attrs.sy ? parseInt(attrs.sy, 10) / 100000 : 1;
@@ -401,6 +424,18 @@ function getCustomShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
             if (avgScale > 1) {
                 // Spread surplus: e.g. scale=1.02 → adds 2% of blurPx as extra blur
                 blurPx = Math.round((blurPx + (avgScale - 1) * blurPx) * 10) / 10;
+            }
+        }
+
+        // ── NEW: Extract shape bounding-box dimensions (in px) from XML xfrm
+        let shapeW = 0;
+        let shapeH = 0;
+        const xfrmNode = shapeNode?.["p:spPr"]?.[0]?.["a:xfrm"]?.[0];
+        if (xfrmNode) {
+            const ext = xfrmNode["a:ext"]?.[0]?.["$"];
+            if (ext?.cx != null && ext?.cy != null) {
+                shapeW = parseInt(ext.cx, 10) / EMU_PER_PX;
+                shapeH = parseInt(ext.cy, 10) / EMU_PER_PX;
             }
         }
 
@@ -414,16 +449,14 @@ function getCustomShapeShadowStyle(shapeNode, themeXML, masterXML, clrMap) {
 
         let { offX, offY } = dirDistToOffset(dirRaw, distRaw, attrs.algn);
 
-        // ── 4b. Alignment-aware clip adjustment (outer only) ──────────────────
-        // drop-shadow() has no spread parameter, so we bake the compensation
-        // directly into blur and offset instead.
+        // ── REPLACED BLOCK: algn handling (was heuristic clip using blur/dir)
+        // Now uses the same mathematical adjustment as main function
         if (!isInner) {
             const sxVal = attrs.sx ? parseInt(attrs.sx, 10) / 100000 : 1;
             const syVal = attrs.sy ? parseInt(attrs.sy, 10) / 100000 : 1;
-            const dirDeg = (dirRaw != null) ? (dirRaw / 60000) : 0;
             const { spreadDelta, offXDelta, offYDelta } =
-                getAlgnClipAdjustment(attrs.algn, dirDeg, blurPx, sxVal, syVal);
-            // For drop-shadow we absorb the negative spread into a blur reduction
+                getAlgnClipAdjustment(attrs.algn, sxVal, syVal, shapeW, shapeH);
+            // spreadDelta is always 0 (no clip heuristic) → blur unchanged for <1
             blurPx = Math.max(0, Math.round((blurPx + spreadDelta) * 10) / 10);
             offX += offXDelta;
             offY += offYDelta;
@@ -466,23 +499,35 @@ function getCustomShapeShadowData(shapeNode, themeXML, masterXML, clrMap) {
 
         const outerShdw = effectLst?.["a:outerShdw"]?.[0];
         const innerShdw = effectLst?.["a:innerShdw"]?.[0];
-        const shdwNode  = outerShdw ?? innerShdw;
-        const isInner   = !outerShdw && !!innerShdw;
+        const shdwNode = outerShdw ?? innerShdw;
+        const isInner = !outerShdw && !!innerShdw;
 
         if (!shdwNode) return null;
 
         const attrs = shdwNode["$"] ?? {};
 
-        const color    = resolveShadowColor(shdwNode, themeXML, masterXML);
-        const alpha    = resolveShadowAlpha(shdwNode);
-        const rgb      = hexToRgbComponents(color);
+        const color = resolveShadowColor(shdwNode, themeXML, masterXML);
+        const alpha = resolveShadowAlpha(shdwNode);
+        const rgb = hexToRgbComponents(color);
         const cssAlpha = Math.round(alpha * 1000) / 1000;
-        let   blurPx   = blurRadToPx(attrs.blurRad);
+        let blurPx = blurRadToPx(attrs.blurRad);
+
+        // ── NEW: Extract shape bounding-box dimensions (in px) from XML xfrm
+        let shapeW = 0;
+        let shapeH = 0;
+        const xfrmNode = shapeNode?.["p:spPr"]?.[0]?.["a:xfrm"]?.[0];
+        if (xfrmNode) {
+            const ext = xfrmNode["a:ext"]?.[0]?.["$"];
+            if (ext?.cx != null && ext?.cy != null) {
+                shapeW = parseInt(ext.cx, 10) / EMU_PER_PX;
+                shapeH = parseInt(ext.cy, 10) / EMU_PER_PX;
+            }
+        }
 
         if (isInner) {
             // ── Inner shadow → box-shadow: inset on the clipped <div> ────────
             const distRaw = attrs.dist ? parseInt(attrs.dist, 10) : 0;
-            const dirRaw  = (attrs.dir != null && attrs.dir !== "")
+            const dirRaw = (attrs.dir != null && attrs.dir !== "")
                 ? parseInt(attrs.dir, 10) : null;
 
             let { offX, offY } = dirDistToOffset(dirRaw, distRaw, attrs.algn);
@@ -495,7 +540,7 @@ function getCustomShapeShadowData(shapeNode, themeXML, masterXML, clrMap) {
             const cssBlur = Math.round(blurPx * 10) / 10;
 
             return {
-                isInner:   true,
+                isInner: true,
                 boxShadow: `inset ${cssOffX}px ${cssOffY}px ${cssBlur}px rgba(${rgb}, ${cssAlpha})`,
             };
         } else {
@@ -508,14 +553,14 @@ function getCustomShapeShadowData(shapeNode, themeXML, masterXML, clrMap) {
             }
 
             const distRaw = attrs.dist ? parseInt(attrs.dist, 10) : 0;
-            const dirRaw  = (attrs.dir != null && attrs.dir !== "")
+            const dirRaw = (attrs.dir != null && attrs.dir !== "")
                 ? parseInt(attrs.dir, 10) : null;
 
             let { offX, offY } = dirDistToOffset(dirRaw, distRaw, attrs.algn);
 
-            const dirDeg = (dirRaw != null) ? (dirRaw / 60000) : 0;
+            // ── REPLACED BLOCK: algn handling (was heuristic clip using blur/dir)
             const { spreadDelta, offXDelta, offYDelta } =
-                getAlgnClipAdjustment(attrs.algn, dirDeg, blurPx, sx, sy);
+                getAlgnClipAdjustment(attrs.algn, sx, sy, shapeW, shapeH);
             blurPx = Math.max(0, Math.round((blurPx + spreadDelta) * 10) / 10);
             offX += offXDelta;
             offY += offYDelta;
@@ -525,7 +570,7 @@ function getCustomShapeShadowData(shapeNode, themeXML, masterXML, clrMap) {
             const cssBlur = Math.round(blurPx * 10) / 10;
 
             return {
-                isInner:   false,
+                isInner: false,
                 svgFilter: `filter: drop-shadow(${cssOffX}px ${cssOffY}px ${cssBlur}px rgba(${rgb}, ${cssAlpha}));`,
             };
         }

@@ -31,6 +31,7 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         global.svgLineStyleStore = new Map();
         global.softEdgeStore = new Map();
         global.grayscaleImageStore = new Map();
+        global.curvedTextWarpStore = new Map();
         clearGradientMetadata();
         clearReflectionStore();
         const dom = new JSDOM(htmlString);
@@ -223,6 +224,13 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         const custGeomImageResult = await injectCustGeomImagesIntoSlideXML(slideXmlsDir);
         if (custGeomImageResult.injected > 0) {
             console.log(`   ✅ Injected custGeom clips into ${custGeomImageResult.injected} image(s)`);
+        }
+        // ========================================
+        // 🌀 STEP 6.5F: INJECT CURVED TEXT WARP
+        // ========================================
+        const curvedTextResult = await injectCurvedTextWarpIntoSlideXML(slideXmlsDir);
+        if (curvedTextResult.injected > 0) {
+            console.log(`   ✅ Injected prstTxWarp into ${curvedTextResult.injected} curved text shape(s)`);
         }
 
         // NEW STEP 6.7: Fix chart relationships
@@ -913,6 +921,12 @@ async function processSlideContent(pptx, pptSlide, slideElement, slideContext) {
 
             if (element.classList.contains('custgeom-image')) {
                 await processCustGeomImage(pptx, pptSlide, element, slideContext);
+                processedElements.add(element);
+                continue;
+            }
+
+            if (element.classList.contains('curved-text-shape')) {
+                await processCurvedTextShape(pptx, pptSlide, element, slideContext);
                 processedElements.add(element);
                 continue;
             }
@@ -3151,6 +3165,238 @@ async function injectCustGeomImagesIntoSlideXML(slideXmlsDir) {
 
     } catch (error) {
         console.error('   ❌ Error in injectCustGeomImagesIntoSlideXML:', error);
+        return { success: false, error: error.message, injected: 0 };
+    }
+}
+
+function buildCustGeomFromSvgPath(pathD, wEMU, hEMU) {
+    // Parse SVG commands to OOXML path elements
+    // We use a simplified parser for M, L, C, Q, Z commands
+    const EMU_PER_PX = 12700;
+
+    let ooxml = `<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/>`;
+    ooxml += `<a:rect l="0" t="0" r="${wEMU}" b="${hEMU}"/>`;
+    ooxml += `<a:pathLst><a:path w="${wEMU}" h="${hEMU}">`;
+
+    // Tokenize the path
+    const tokens = pathD.match(/[MLCQZmlcqz]|[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?/g) || [];
+    let i = 0;
+    let currentCmd = '';
+
+    const toEmu = (v) => Math.round(parseFloat(v) * EMU_PER_PX);
+
+    while (i < tokens.length) {
+        const token = tokens[i];
+
+        if (/[MLCQZmlcqz]/.test(token)) {
+            currentCmd = token;
+            i++;
+        }
+
+        switch (currentCmd) {
+            case 'M':
+            case 'm': {
+                const x = toEmu(tokens[i]); const y = toEmu(tokens[i + 1]);
+                ooxml += `<a:moveTo><a:pt x="${x}" y="${y}"/></a:moveTo>`;
+                i += 2;
+                break;
+            }
+            case 'L':
+            case 'l': {
+                const x = toEmu(tokens[i]); const y = toEmu(tokens[i + 1]);
+                ooxml += `<a:lnTo><a:pt x="${x}" y="${y}"/></a:lnTo>`;
+                i += 2;
+                break;
+            }
+            case 'C':
+            case 'c': {
+                // Cubic bezier: x1 y1 x2 y2 x y
+                const x1 = toEmu(tokens[i]); const y1 = toEmu(tokens[i + 1]);
+                const x2 = toEmu(tokens[i + 2]); const y2 = toEmu(tokens[i + 3]);
+                const x = toEmu(tokens[i + 4]); const y = toEmu(tokens[i + 5]);
+                ooxml += `<a:cubicBezTo>` +
+                    `<a:pt x="${x1}" y="${y1}"/>` +
+                    `<a:pt x="${x2}" y="${y2}"/>` +
+                    `<a:pt x="${x}" y="${y}"/>` +
+                    `</a:cubicBezTo>`;
+                i += 6;
+                break;
+            }
+            case 'Q':
+            case 'q': {
+                // Quadratic bezier: x1 y1 x y
+                const x1 = toEmu(tokens[i]); const y1 = toEmu(tokens[i + 1]);
+                const x = toEmu(tokens[i + 2]); const y = toEmu(tokens[i + 3]);
+                ooxml += `<a:quadBezTo>` +
+                    `<a:pt x="${x1}" y="${y1}"/>` +
+                    `<a:pt x="${x}" y="${y}"/>` +
+                    `</a:quadBezTo>`;
+                i += 4;
+                break;
+            }
+            case 'Z':
+            case 'z': {
+                ooxml += `<a:close/>`;
+                break;
+            }
+            default:
+                i++;
+                break;
+        }
+    }
+
+    ooxml += `</a:path></a:pathLst></a:custGeom>`;
+    return ooxml;
+}
+
+
+async function processCurvedTextShape(pptx, pptSlide, element, slideContext) {
+    const position = extractElementPosition(element, slideContext);
+    const shapeName = element.getAttribute('data-name') || '';
+    const archType = element.getAttribute('data-arch-type') || 'textArchUp';
+    const archAdj = parseInt(element.getAttribute('data-arch-adj') || '50000', 10);
+
+    // Use the unique arch-id as the objectName so the injection regex
+    // always finds it regardless of special chars in the shape name
+    const archId = element.getAttribute('data-arch-id') || `archText_${shapeName}_${Date.now()}`;
+
+    const styleAttr = element.getAttribute('style') || '';
+    const rotMatch = styleAttr.match(/rotate\(([-\d.]+)deg\)/);
+    const rotation = rotMatch ? parseFloat(rotMatch[1]) : 0;
+
+    // Extract text + styling from the SVG <textPath>
+    const svgEl = element.querySelector('svg');
+    if (!svgEl) return;
+    const textEl = svgEl.querySelector('text');
+    const textPathEl = svgEl.querySelector('textPath');
+    const plainText = (textPathEl || textEl)
+        ? ((textPathEl || textEl).textContent || '').trim()
+        : '';
+    if (!plainText) return;
+
+    let fontSize = 12, fontColor = '000000', fontFamily = 'Calibri', isBold = false;
+    if (textEl) {
+        const fsSvg = textEl.getAttribute('font-size') || (textEl.style && textEl.style.fontSize);
+        if (fsSvg) fontSize = parseFloat(fsSvg);
+
+        const fillSvg = textEl.getAttribute('fill') || (textEl.style && textEl.style.fill);
+        if (fillSvg) {
+            const c = extractColor(fillSvg);
+            if (c) fontColor = c;
+        }
+
+        const ffSvg = textEl.getAttribute('font-family') || (textEl.style && textEl.style.fontFamily);
+        if (ffSvg) fontFamily = ffSvg.replace(/['"]/g, '').split(',')[0].trim() || 'Calibri';
+
+        const fwSvg = textEl.getAttribute('font-weight') || (textEl.style && textEl.style.fontWeight);
+        if (fwSvg) isBold = fwSvg === 'bold' || parseInt(fwSvg) >= 700;
+    }
+
+    // Store warp info keyed by unique archId (not shape name)
+    global.curvedTextWarpStore.set(archId, { prst: archType, adjVal: archAdj });
+
+    pptSlide.addText(plainText, {
+        x: position.x,
+        y: position.y,
+        w: position.w,
+        h: position.h,
+        fontSize,
+        color: fontColor,
+        fontFace: fontFamily,
+        bold: isBold,
+        align: 'center',
+        valign: 'middle',
+        objectName: archId,   // ← unique stable ID, no special chars
+        rotate: rotation,
+        transparent: 100      // shape has no fill
+    });
+
+    console.log(`   🌀 Queued curved text: "${plainText.substring(0, 20)}" archType=${archType} adj=${archAdj} id=${archId}`);
+}
+
+async function injectCurvedTextWarpIntoSlideXML(slideXmlsDir) {
+    try {
+        if (!global.curvedTextWarpStore || global.curvedTextWarpStore.size === 0) {
+            return { success: true, injected: 0 };
+        }
+
+        const slidesDir = path.join(slideXmlsDir, 'slides');
+        if (!await checkDirectoryExists(slidesDir)) return { success: true, injected: 0 };
+
+        const slideFiles = await fsPromises.readdir(slidesDir);
+        const slideXmlFiles = slideFiles.filter(f => f.match(/^slide\d+\.xml$/));
+        let totalInjected = 0;
+
+        for (const slideFile of slideXmlFiles) {
+            const slidePath = path.join(slidesDir, slideFile);
+            let xml = await fsPromises.readFile(slidePath, 'utf8');
+            let modified = false;
+
+            // Normalize <p:cNvPr> to self-closing so the regex matches reliably
+            xml = xml.replace(/<p:cNvPr([^>]*)>\s*<\/p:cNvPr>/g, '<p:cNvPr$1/>');
+
+            for (const [archId, data] of global.curvedTextWarpStore.entries()) {
+                // archId never contains special regex chars (it's a generated key)
+                // but escape just in case
+                const escapedId = archId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+                const adjFmla = `val ${data.adjVal || 50000}`;
+                const warpXml = `<a:prstTxWarp prst="${data.prst}"><a:avLst>` +
+                    `<a:gd name="adj" fmla="${adjFmla}"/></a:avLst></a:prstTxWarp>`;
+
+                // Step 1: find the <p:sp> block by objectName
+                // The regex is split into two passes for safety:
+                // First extract the block, then modify bodyPr inside it
+
+                const shapeBlockRegex = new RegExp(
+                    `(<p:sp>(?:(?!<p:sp>)[\\s\\S])*?` +
+                    `<p:cNvPr[^>]*?\\bname="${escapedId}"[^>]*?/>` +
+                    `(?:(?!<p:sp>)[\\s\\S])*?)(</p:sp>)`,
+                    'g'
+                );
+
+                const newXml = xml.replace(shapeBlockRegex, (fullMatch, body, closing) => {
+                    // Already injected
+                    if (fullMatch.includes('<a:prstTxWarp')) return fullMatch;
+
+                    // Inject warpXml inside <a:bodyPr>
+                    const bodyPrSelfClose = /<a:bodyPr([^>]*)\/>/;
+                    const bodyPrOpen = /<a:bodyPr([^>]*)>([\s\S]*?)<\/a:bodyPr>/;
+
+                    let newBody = body;
+
+                    if (bodyPrSelfClose.test(body)) {
+                        newBody = body.replace(bodyPrSelfClose,
+                            `<a:bodyPr$1>${warpXml}</a:bodyPr>`);
+                    } else if (bodyPrOpen.test(body)) {
+                        newBody = body.replace(bodyPrOpen,
+                            `<a:bodyPr$1>$2${warpXml}</a:bodyPr>`);
+                    } else {
+                        // bodyPr not found — inject before </p:txBody>
+                        newBody = body.replace('</p:txBody>',
+                            `<a:bodyPr>${warpXml}</a:bodyPr></p:txBody>`);
+                    }
+
+                    modified = true;
+                    totalInjected++;
+                    console.log(`   🌀 Injected prstTxWarp "${data.prst}" adj=${data.adjVal} for id="${archId}"`);
+                    return newBody + closing;
+                });
+
+                xml = newXml;
+            }
+
+            if (modified) {
+                await fsPromises.writeFile(slidePath, xml, 'utf8');
+                console.log(`   ✅ Curved text warp injected into ${slideFile}`);
+            }
+        }
+
+        global.curvedTextWarpStore.clear();
+        return { success: true, injected: totalInjected };
+
+    } catch (error) {
+        console.error('   ❌ Error in injectCurvedTextWarpIntoSlideXML:', error);
         return { success: false, error: error.message, injected: 0 };
     }
 }

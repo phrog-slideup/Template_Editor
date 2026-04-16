@@ -1,5 +1,3 @@
-const PptxGenJS = require("pptxgenjs");
-
 const IDENTITY_MATRIX = [1, 0, 0, 1, 0, 0];
 
 function multiplyMatrices(a, b) {
@@ -312,9 +310,6 @@ function parsePathDataToRawPoints(pathData) {
     return points;
 }
 
-function computePathBounds(pathData) {
-    return computePointsBounds(parsePathDataToRawPoints(pathData));
-}
 
 function parseViewBox(svgElement) {
     const viewBoxAttr = svgElement?.getAttribute?.('viewBox');
@@ -549,10 +544,6 @@ function extractRawBoxShadow(element) {
     return match ? match[1].trim() : '';
 }
 
-/**
- * Parse a CSS box-shadow string into a pptxgenjs shadow options object.
- *
- */
 function parseBoxShadowForPptxgenjs(boxShadow) {
     if (!boxShadow || boxShadow === 'none') return null;
     try {
@@ -572,7 +563,7 @@ function parseBoxShadowForPptxgenjs(boxShadow) {
             const hexMatch = boxShadow.match(/#([0-9a-fA-F]{3,8})/);
             if (hexMatch) {
                 let hex = hexMatch[1];
-                if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+                if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
                 colorHex = hex.toUpperCase().slice(0, 6);
             }
         }
@@ -588,20 +579,19 @@ function parseBoxShadowForPptxgenjs(boxShadow) {
         const nums = stripped.match(/-?[\d.]+px/g) || [];
         const offsetXPx = nums[0] ? parseFloat(nums[0]) : 0;
         const offsetYPx = nums[1] ? parseFloat(nums[1]) : 0;
-        const blurPx    = nums[2] ? parseFloat(nums[2]) : 0;
+        const blurPx = nums[2] ? parseFloat(nums[2]) : 0;
 
-        // ── Convert px → points for pptxgenjs (1 pt = 1/72 inch; 96dpi: 1px = 0.75pt) ──
         const PX_TO_PT = 0.75;
-        const blurPt   = Math.round(Math.abs(blurPx) * PX_TO_PT);
-        const distPt   = Math.round(Math.sqrt(offsetXPx**2 + offsetYPx**2) * PX_TO_PT);
+        const blurPt = Math.round(Math.abs(blurPx) * PX_TO_PT);
+        const distPt = Math.round(Math.sqrt(offsetXPx ** 2 + offsetYPx ** 2) * PX_TO_PT);
         const angleDeg = Math.round(((Math.atan2(offsetYPx, offsetXPx) * 180 / Math.PI) + 360) % 360);
 
         return {
-            type:    isInset ? 'inner' : 'outer',
-            color:   colorHex,
-            blur:    blurPt,
-            offset:  distPt,
-            angle:   angleDeg,
+            type: isInset ? 'inner' : 'outer',
+            color: colorHex,
+            blur: blurPt,
+            offset: distPt,
+            angle: angleDeg,
             opacity: Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : 1
         };
     } catch (_) {
@@ -639,8 +629,12 @@ function parseCssGradient(cssGradStr) {
                 const g = parseInt(rgbaMatch[2], 10).toString(16).padStart(2, '0');
                 const b = parseInt(rgbaMatch[3], 10).toString(16).padStart(2, '0');
                 const alpha = rgbaMatch[4] !== undefined ? parseFloat(rgbaMatch[4]) : 1;
+                const clampedAlpha = Math.max(0, Math.min(1, Number.isFinite(alpha) ? alpha : 1));
                 const pos = rgbaMatch[5] ? parseFloat(rgbaMatch[5]) / 100 : null;
-                stops.push({ color: `${r}${g}${b}`.toUpperCase(), alpha, pos });
+                // alphaVal: OOXML <a:alpha val="..."/> uses 1/1000ths of a percent
+                // (100000 = fully opaque, 0 = fully transparent) — pre-computed here
+                // for per-stop transparency, consistent with shape/shadow opacity handling.
+                stops.push({ color: `${r}${g}${b}`.toUpperCase(), alpha: clampedAlpha, alphaVal: Math.round(clampedAlpha * 100000), pos });
                 continue;
             }
             // #hex [pos%]
@@ -649,7 +643,7 @@ function parseCssGradient(cssGradStr) {
                 let hex = hexMatch[1];
                 if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
                 const pos = hexMatch[2] ? parseFloat(hexMatch[2]) / 100 : null;
-                stops.push({ color: hex.toUpperCase().slice(0, 6), alpha: 1, pos });
+                stops.push({ color: hex.toUpperCase().slice(0, 6), alpha: 1, alphaVal: 100000, pos });
             }
         }
 
@@ -730,7 +724,7 @@ function parseDropShadowFilter(svgElement) {
 
         const filterVal = filterMatch[1].trim();
         // Use a paren-aware regex so rgba(r,g,b,a) nested inside drop-shadow(...)
-       
+
         const dsMatch = filterVal.match(/drop-shadow\(((?:[^)(]|\([^)]*\))+)\)/i);
         if (!dsMatch) return null;
 
@@ -738,7 +732,7 @@ function parseDropShadowFilter(svgElement) {
 
         // ── Colour + alpha ────────────────────────────────────────────────────
         let colorHex = '000000';
-        let opacity  = 1;
+        let opacity = 1;
 
         const rgbaMatch = params.match(
             /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/i
@@ -752,7 +746,7 @@ function parseDropShadowFilter(svgElement) {
             const hexMatch = params.match(/#([0-9a-fA-F]{3,8})/);
             if (hexMatch) {
                 let hex = hexMatch[1];
-                if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+                if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
                 colorHex = hex.toUpperCase().slice(0, 6);
             }
         }
@@ -766,21 +760,21 @@ function parseDropShadowFilter(svgElement) {
         const nums = stripped.match(/-?[\d.]+(?:px)?/g) || [];
         const offsetXPx = nums[0] ? parseFloat(nums[0]) : 0;
         const offsetYPx = nums[1] ? parseFloat(nums[1]) : 0;
-        const blurPx    = nums[2] ? Math.abs(parseFloat(nums[2])) : 0;
+        const blurPx = nums[2] ? Math.abs(parseFloat(nums[2])) : 0;
 
         // ── Convert px → points (72 DPI: 1 px = 1 pt) ────────────────────────
-        const blurPt   = Math.round(blurPx);
-        const distPt   = Math.round(Math.sqrt(offsetXPx ** 2 + offsetYPx ** 2));
+        const blurPt = Math.round(blurPx);
+        const distPt = Math.round(Math.sqrt(offsetXPx ** 2 + offsetYPx ** 2));
         const angleDeg = Math.round(
             ((Math.atan2(offsetYPx, offsetXPx) * 180 / Math.PI) + 360) % 360
         );
 
         return {
-            type:    'outer',
-            color:   colorHex,
-            blur:    blurPt,
-            offset:  distPt,
-            angle:   angleDeg,
+            type: 'outer',
+            color: colorHex,
+            blur: blurPt,
+            offset: distPt,
+            angle: angleDeg,
             opacity: Math.max(0, Math.min(1, Number.isFinite(opacity) ? opacity : 1))
         };
     } catch (_) {
@@ -838,14 +832,14 @@ function parseSvgGradientElement(gradEl, svgElement) {
             const hexM = styleAttr.match(/stop-color\s*:\s*#([0-9a-fA-F]{3,8})/i);
             if (hexM) {
                 let hex = hexM[1];
-                if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+                if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
                 color = hex.toUpperCase().slice(0, 6);
             } else {
                 const scAttr = stop.getAttribute('stop-color') || '';
                 const hexA = scAttr.match(/#([0-9a-fA-F]{3,8})/);
                 if (hexA) {
                     let hex = hexA[1];
-                    if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+                    if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
                     color = hex.toUpperCase().slice(0, 6);
                 } else {
                     const rgbA = scAttr.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/i);
@@ -864,10 +858,16 @@ function parseSvgGradientElement(gradEl, svgElement) {
         const soAttr = stop.getAttribute('stop-opacity');
         if (soAttr && !soM) alpha = parseFloat(soAttr);
 
+        const clampedAlpha = Math.max(0, Math.min(1, alpha));
         return {
             color,
-            alpha: Math.max(0, Math.min(1, alpha)),
-            pos:   Math.max(0, Math.min(1, Number.isFinite(pos) ? pos : 0))
+            alpha: clampedAlpha,
+            // OOXML <a:alpha val="..."/> uses 1/1000ths of a percent
+            // (100000 = fully opaque, 0 = fully transparent) — pre-computed
+            // here so the post-processor applies per-stop transparency correctly,
+            // consistent with how shape opacity and shadow opacity are handled.
+            alphaVal: Math.round(clampedAlpha * 100000),
+            pos: Math.max(0, Math.min(1, Number.isFinite(pos) ? pos : 0))
         };
     });
 
@@ -901,88 +901,11 @@ function parseSvgGradientElement(gradEl, svgElement) {
     return { type: isLinear ? 'linear' : 'radial', stops, angleDeg, focusX, focusY, radialPath };
 }
 
-/**
- * injectSvgShadowOpacityIntoSlideXML(slideXml)
- *
- */
-function injectSvgShadowOpacityIntoSlideXML(slideXml) {
-    if (!global.svgShadowStore || global.svgShadowStore.size === 0) return slideXml;
-
-    let result = slideXml;
-
-    for (const [objectName, shadowData] of global.svgShadowStore) {
-        const { alphaVal, type } = shadowData;
-        // Skip fully opaque shadows — alpha is correct without injection
-        if (!alphaVal || alphaVal >= 100000) continue;
-
-        const shadowTag = (type === 'inner') ? 'innerShdw' : 'outerShdw';
-
-        // ── Find every <p:sp> block that owns this shape name ─────────────────
-     
-        const spOpenTag  = '<p:sp>';
-        const spCloseTag = '</p:sp>';
-        let pos = 0;
-
-        while (pos < result.length) {
-            const spStart = result.indexOf(spOpenTag, pos);
-            if (spStart === -1) break;
-            const spEnd = result.indexOf(spCloseTag, spStart);
-            if (spEnd === -1) break;
-            const spBlockEnd = spEnd + spCloseTag.length;
-            const spBlock    = result.substring(spStart, spBlockEnd);
-
-            // Only process blocks that contain this exact objectName
-            if (spBlock.includes(`name="${objectName}"`)) {
-                let newBlock = spBlock;
-
-                // ── Locate the shadow tag block first, then patch color inside it ──
-               
-                newBlock = newBlock.replace(
-                    new RegExp(`(<a:${shadowTag}[^>]*>)([\\s\\S]*?)(</a:${shadowTag}>)`, 'g'),
-                    (shadowMatch, shadowOpen, shadowInner, shadowClose) => {
-
-                        // ── Case 1: self-closing <a:srgbClr val="XXXXXX"/> ─────────────
-                        // Convert to open/close and inject <a:alpha> child.
-                        let patchedInner = shadowInner.replace(
-                            /<a:srgbClr\s+val="([^"]+)"\s*\/>/g,
-                            (match, colorVal) =>
-                                `<a:srgbClr val="${colorVal}"><a:alpha val="${alphaVal}"/></a:srgbClr>`
-                        );
-
-                        // ── Case 2: open+close <a:srgbClr> without <a:alpha> child ────
-                        patchedInner = patchedInner.replace(
-                            /(<a:srgbClr[^>]*>)([\s\S]*?)(<\/a:srgbClr>)/g,
-                            (match, colorOpen, colorMiddle, colorClose) => {
-                                // Already has alpha — leave untouched
-                                if (colorMiddle.includes('<a:alpha')) return match;
-                                return `${colorOpen}${colorMiddle}<a:alpha val="${alphaVal}"/>${colorClose}`;
-                            }
-                        );
-
-                        return `${shadowOpen}${patchedInner}${shadowClose}`;
-                    }
-                );
-
-                if (newBlock !== spBlock) {
-                    result = result.substring(0, spStart) + newBlock + result.substring(spBlockEnd);
-                    // Adjust pos for the length change
-                    pos = spStart + newBlock.length;
-                    continue;
-                }
-            }
-
-            pos = spBlockEnd;
-        }
-    }
-
-    return result;
-}
-
 function collectSvgDrawables(svgElement) {
     const nodes = Array.from(svgElement.querySelectorAll('path, polygon, polyline, rect, circle, ellipse'));
 
     // ── Filter out nodes inside <defs> ──────────────────────────────────────
-    
+
     const visibleNodes = nodes.filter(node => !isInsideDefs(node));
 
     const drawables = visibleNodes
@@ -1002,9 +925,8 @@ function collectSvgDrawables(svgElement) {
         .filter(Boolean);
 
     // ── Resolve url(#id) gradient fill references ─────────────────────────────
-    
+
     // store in drawable.gradient / drawable.strokeGradient, and set a solid
-    // fallback color so pptxgenjs has a placeholder before XML post-processing.
     for (const drawable of drawables) {
         const fillAttr = drawable.styles.fill || '';
         const strokeAttr = drawable.styles.stroke || '';
@@ -1042,7 +964,7 @@ function collectSvgDrawables(svgElement) {
     }
 
     // ── Handle foreignObject + clipPath gradient pattern ─────────────────────
-  
+
     if (drawables.length === 0) {
         const foreignObjects = Array.from(svgElement.querySelectorAll('foreignObject'));
         for (const fo of foreignObjects) {
@@ -1076,12 +998,12 @@ function collectSvgDrawables(svgElement) {
                     gradient = parseCssGradient(bg);
                 }
 
-             
+
                 const rawShadow = extractRawBoxShadow(divEl);
                 if (rawShadow) shadow = parseBoxShadowForPptxgenjs(rawShadow);
             }
 
-          
+
             const fallbackHex = gradient?.stops?.[0]?.color || 'CCCCCC';
 
             drawables.push({
@@ -1094,7 +1016,7 @@ function collectSvgDrawables(svgElement) {
                     opacity: String(gradient?.stops?.[0]?.alpha ?? 1)
                 },
                 gradient,
-                shadow   // pptxgenjs-ready shadow object (or null)
+                shadow
             });
         }
     }
@@ -1120,7 +1042,7 @@ function createDynamicShapeOptions(element, slideContext, points, svgStyles) {
     };
 
     // ── Opacity / Transparency ────────────────────────────────────────────────
-   
+
     // background-gradient extraction).
     let opacityStr = style.opacity;
     if ((opacityStr === '' || opacityStr == null) && element.getAttribute) {
@@ -1129,14 +1051,14 @@ function createDynamicShapeOptions(element, slideContext, points, svgStyles) {
         if (m) opacityStr = m[1];
     }
 
-  
+
     const svgNodeOpacity = (svgStyles.opacity !== '1' && svgStyles.opacity != null) ? svgStyles.opacity : null;
     const rawOpacity = parseFloat(opacityStr || svgNodeOpacity || svgStyles.fillOpacity || '1');
     const opacity = Number.isFinite(rawOpacity) ? Math.max(0, Math.min(1, rawOpacity)) : 1;
     const transparency = opacity < 1 ? Math.round((1 - opacity) * 100) : 0;
 
     // ── Fill ──────────────────────────────────────────────────────────────────
-    
+
     const fillColor = extractColor(svgStyles.fill);
     if (fillColor) {
         shapeOptions.fill = (transparency > 0 && transparency <= 100)
@@ -1159,7 +1081,7 @@ function createDynamicShapeOptions(element, slideContext, points, svgStyles) {
     if (opacity < 1) shapeOptions._opacity = opacity;
 
     const transform = style.transform || '';
-    const rotateMatch = transform.match(/rotate\((-?\d*\.?\d+)deg\)/);
+    const rotateMatch = transform.match(/rotate\((-?\d*\.?\d+)deg\)/);    
     if (rotateMatch) {
         const rotation = parseFloat(rotateMatch[1]);
         if (Number.isFinite(rotation) && rotation !== 0 && Math.abs(rotation) <= 360) {
@@ -1179,11 +1101,32 @@ function createDynamicShapeOptions(element, slideContext, points, svgStyles) {
     }
 
     // ── Shadow ────────────────────────────────────────────────────────────────
-  
+
     const rawWrapperShadow = extractRawBoxShadow(element);
     if (rawWrapperShadow) {
         const parsedShadow = parseBoxShadowForPptxgenjs(rawWrapperShadow);
         if (parsedShadow) shapeOptions.shadow = parsedShadow;
+    }
+
+    // Detect flipH / flipV from CSS transform scaleX(-1) / scaleY(-1)
+    const scaleXMatch = transform.match(/scaleX\((-?\d*\.?\d+)\)/);
+    const scaleYMatch = transform.match(/scaleY\((-?\d*\.?\d+)\)/);
+    if (scaleXMatch && parseFloat(scaleXMatch[1]) < 0) shapeOptions.flipH = true;
+    if (scaleYMatch && parseFloat(scaleYMatch[1]) < 0) shapeOptions.flipV = true;
+
+    // Detect flipH / flipV from SVG inner <g transform="translate(w,h) scale(-1,-1)">
+    if (!shapeOptions.flipH || !shapeOptions.flipV) {
+        const svgGroup = element.querySelector && element.querySelector('g[transform]');
+        if (svgGroup) {
+            const gTransform = svgGroup.getAttribute('transform') || '';
+            const scaleMatch = gTransform.match(/scale\(\s*(-?\d*\.?\d+)\s*(?:,\s*(-?\d*\.?\d+)\s*)?\)/);
+            if (scaleMatch) {
+                const sx = parseFloat(scaleMatch[1]);
+                const sy = scaleMatch[2] !== undefined ? parseFloat(scaleMatch[2]) : sx;
+                if (sx < 0) shapeOptions.flipH = true;
+                if (sy < 0) shapeOptions.flipV = true;
+            }
+        }
     }
 
     return shapeOptions;
@@ -1292,7 +1235,7 @@ function addSvgToSlide(pptSlide, svgElement, elementStyle, slideContext) {
                 });
             }
 
-            
+
             if (shapeOptions._opacity !== undefined && shapeOptions._opacity < 1) {
                 if (!global.svgOpacityStore) global.svgOpacityStore = new Map();
                 global.svgOpacityStore.set(shapeOptions.objectName, {
@@ -1302,16 +1245,16 @@ function addSvgToSlide(pptSlide, svgElement, elementStyle, slideContext) {
                     alphaVal: Math.round(shapeOptions._opacity * 100000)
                 });
             }
-            // Remove internal property before handing options to pptxgenjs
+
             delete shapeOptions._opacity;
 
-           
+
             if (drawable.gradient) {
                 if (!global.svgGradientFillStore) global.svgGradientFillStore = new Map();
                 global.svgGradientFillStore.set(shapeOptions.objectName, drawable.gradient);
             }
 
-          
+
             if (drawable.shadow) {
                 shapeOptions.shadow = drawable.shadow;
             }
@@ -1325,8 +1268,8 @@ function addSvgToSlide(pptSlide, svgElement, elementStyle, slideContext) {
             if (activeShadow && typeof activeShadow.opacity === 'number' && activeShadow.opacity < 1) {
                 if (!global.svgShadowStore) global.svgShadowStore = new Map();
                 global.svgShadowStore.set(shapeOptions.objectName, {
-                    type:     activeShadow.type  || 'outer',
-                    color:    activeShadow.color  || '000000',
+                    type: activeShadow.type || 'outer',
+                    color: activeShadow.color || '000000',
                     // Pre-calculate OOXML alpha so post-processor needs no math
                     alphaVal: Math.round(activeShadow.opacity * 100000)
                 });
@@ -1429,15 +1372,8 @@ module.exports = {
     addSvgToSlide,
     addSvgConnectorToSlide,
     processSvgElement,
-    injectSvgShadowOpacityIntoSlideXML,
-    convertSvgPathToPptxPoints: (pathData, viewBoxWidth, viewBoxHeight, shapeWidth, shapeHeight, boundsOverride) => {
-        const rawPoints = parsePathDataToRawPoints(pathData);
-        const bounds = boundsOverride || computePointsBounds(rawPoints);
-        return normalizePoints(rawPoints, bounds, shapeWidth, shapeHeight);
-    },
+
     createDynamicShapeOptions,
-    computePathBounds,
     parsePathDataToRawPoints,
-    collectSvgDrawables,
-    PptxGenJS
+    collectSvgDrawables
 };

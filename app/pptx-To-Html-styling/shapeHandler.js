@@ -723,7 +723,19 @@ class ShapeHandler {
             const useHeightauto = shapeInfo.estimatedContentHeight && shapeInfo.estimatedContentHeight > position.height;
             const effectiveHeight = useHeightauto ? shapeInfo.estimatedContentHeight : position.height;
             const vertCSS = this.getVerticalTextCSS(shapeInfo.verticalText);
-            if (this.hasMeaningfulText(cleanedText)) {
+            const warpInfo = this.getPrstTxWarpInfo(shapeNode);
+            const isCurvedText = warpInfo && (warpInfo.prst === 'textArchDown' || warpInfo.prst === 'textArchUp');
+            if (isCurvedText && this.hasMeaningfulText(cleanedText)) {
+                // Strip HTML to plain text for SVG textPath
+                const plainText = cleanedText
+                    .replace(/<[^>]*>/g, '')
+                    .replace(/&amp;/g, '&')
+                    .replace(/&nbsp;/g, ' ')
+                    .trim();
+                if (plainText) {
+                    textContent = this.generateCurvedTextSVG(plainText, position, warpInfo, shapeInfo);
+                }
+            } else if (this.hasMeaningfulText(cleanedText)) {
                 textContent = `<div class="sli-txt-box${textPlaceholderClass}"
                     contenteditable="true"
                     spellcheck="false"
@@ -4246,51 +4258,74 @@ class ShapeHandler {
         const softEdgeStyle = softEdgeResult?.css || '';
         const softEdgeRadEMU = softEdgeResult?.radEMU || 0;
 
+        // ✅ NEW: For curved-text shapes, render as transparent overlay div
+        const warpInfoFinal = this.getPrstTxWarpInfo(shapeNode);
+        if (warpInfoFinal && (warpInfoFinal.prst === 'textArchDown' || warpInfoFinal.prst === 'textArchUp') && textContent) {
+
+            return `<div class="shape curved-text-shape"
+                data-name="${shapeName}"
+                data-arch-type="${warpInfoFinal.prst}"
+                data-arch-adj="${warpInfoFinal.adjVal || 50000}"
+                data-arch-id="archText_${Date.now()}_${Math.random().toString(36).substr(2, 5)}"
+                style="position:absolute;
+                    left:${position.x}px;
+                    top:${position.y}px;
+                    width:${position.width}px;
+                    height:${position.height}px;
+                    transform:${transformString};
+                    transform-origin: center center;
+                    z-index:${zIndex};
+                    overflow:visible;
+                    pointer-events:none;">
+                ${textContent}
+            </div>`;
+        }
+
         if (glowStyle) {
             return `<div class="shape-glow-wrapper" style="
-                position: absolute;
-                left: ${adjustedLeft}px;
-                top: ${adjustedTop}px;
-                width: ${position.width}px;
-                height: ${effectiveHeight}px;
-                ${glowStyle}
-                overflow: visible;
-                pointer-events: none;
-                z-index: ${zIndex};
-            "><div class="shape" id="${caseName}"
-                data-name="${shapeName}"
-                data-hidden="${hidden}"
-                data-soft-edge-rad="${softEdgeRadEMU}" 
-                data-original-color="${originalThemeColor}"
-                originalLumMod="${originalLumMod}"
-                originalLumOff="${originalLumOff}"
-                originalAlpha="${originalAlpha}"
-                style="
-                    position: absolute;
-                    left: 0px;
-                    top: 0px;
-                    width: ${position.width}px;
-                    height: ${effectiveHeight}px;
-                    background: ${fillColor};
-                    ${opacity};
-                    border-radius: ${borderRadius};
-                    ${shapeBorder}
-                    ${shapeBorderCSS}
-                    ${shadowStyle}
-                    ${softEdgeStyle || ''} 
-                    display: ${hidden ? "none" : "flex"};
-                    transform: ${transformString};
-                    box-sizing: border-box;
-                    overflow: ${overflowStyle};
-                    justify-content: ${shapeInfo.justifyContent};
-                    align-items: ${shapeInfo.getAlignItem};
-                    pointer-events: auto;
-                    z-index: 0;
-                    ${clipPath ? `clip-path: ${clipPath};` : ""}
-                    ${maskPath ? `mask: ${maskPath};` : ""}
-                ">
-                ${textContent}
-            </div></div>`;
+                            position: absolute;
+                            left: ${adjustedLeft}px;
+                            top: ${adjustedTop}px;
+                            width: ${position.width}px;
+                            height: ${effectiveHeight}px;
+                            ${glowStyle}
+                            overflow: visible;
+                            pointer-events: none;
+                            z-index: ${zIndex};">
+                                <div class="shape" id="${caseName}"
+                                        data-name="${shapeName}"
+                                        data-hidden="${hidden}"
+                                        data-soft-edge-rad="${softEdgeRadEMU}" 
+                                        data-original-color="${originalThemeColor}"
+                                        originalLumMod="${originalLumMod}"
+                                        originalLumOff="${originalLumOff}"
+                                        originalAlpha="${originalAlpha}"
+                                        style="
+                                            position: absolute;
+                                            left: 0px;
+                                            top: 0px;
+                                            width: ${position.width}px;
+                                            height: ${effectiveHeight}px;
+                                            background: ${fillColor};
+                                            ${opacity};
+                                            border-radius: ${borderRadius};
+                                            ${shapeBorder}
+                                            ${shapeBorderCSS}
+                                            ${shadowStyle}
+                                            ${softEdgeStyle || ''} 
+                                            display: ${hidden ? "none" : "flex"};
+                                            transform: ${transformString};
+                                            box-sizing: border-box;
+                                            overflow: ${overflowStyle};
+                                            justify-content: ${shapeInfo.justifyContent};
+                                            align-items: ${shapeInfo.getAlignItem};
+                                            pointer-events: auto;
+                                            z-index: 0;
+                                            ${clipPath ? `clip-path: ${clipPath};` : ""}
+                                            ${maskPath ? `mask: ${maskPath};` : ""}">
+                                            ${textContent}
+                                </div>
+                        </div>`;
         }
 
         return `<div class="shape" id="${caseName}" 
@@ -4373,6 +4408,81 @@ class ShapeHandler {
             radEMU: radEMU
         };
     }
+
+    // ✅ NEW: Detect prstTxWarp (curved text like textArchDown/textArchUp)
+    getPrstTxWarpInfo(shapeNode) {
+        const bodyPr = shapeNode?.["p:txBody"]?.[0]?.["a:bodyPr"]?.[0];
+        const prstTxWarp = bodyPr?.["a:prstTxWarp"]?.[0];
+        if (!prstTxWarp) return null;
+
+        const prst = prstTxWarp["$"]?.prst;
+        const adjGd = prstTxWarp?.["a:avLst"]?.[0]?.["a:gd"]?.[0];
+        const adjVal = adjGd
+            ? parseInt(adjGd["$"]?.fmla?.replace("val ", "") || "0")
+            : 0;
+
+        return { prst, adjVal };
+    }
+
+
+    generateCurvedTextSVG(plainText, position, warpInfo, shapeInfo) {
+        const { prst } = warpInfo;
+        const W = position.width;
+        const H = position.height;
+        const cx = W / 2;
+
+        const pathId = `textArc_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+
+        // Circle-segment formula: arc passes through (0,0), (cx, H), (W, 0)
+        // R = (cx² + H²) / (2H)
+        const arcRadius = (cx * cx + H * H) / (2 * H);
+
+        // If arc center is inside the box (H > W/2), we need the large arc
+        const cy_center = (H * H - cx * cx) / (2 * H);
+        const largeArcFlag = cy_center >= 0 ? 1 : 0;
+
+        let pathD;
+        if (prst === 'textArchDown') {
+            // Arc from top-left (0,0) → curves DOWN through (cx,H) → top-right (W,0)
+            // clockwise sweep-flag=1
+            // pathD = `M 0 0 A ${arcRadius.toFixed(2)} ${arcRadius.toFixed(2)} 0 ${largeArcFlag} 1 ${W} 0`;
+            pathD = `M 0 0 A ${arcRadius.toFixed(2)} ${arcRadius.toFixed(2)} 0 ${largeArcFlag} 0 ${W} 0`;
+        } else {
+            // textArchUp: arc from bottom-left (0,H) → curves UP through (cx,0) → bottom-right (W,H)
+            // counter-clockwise sweep-flag=0
+            // pathD = `M 0 ${H} A ${arcRadius.toFixed(2)} ${arcRadius.toFixed(2)} 0 ${largeArcFlag} 0 ${W} ${H}`;
+            pathD = `M 0 ${H} A ${arcRadius.toFixed(2)} ${arcRadius.toFixed(2)} 0 ${largeArcFlag} 1 ${W} ${H}`;
+        }
+
+        // Extract font styling from shapeInfo.text HTML
+        const fontSize = shapeInfo.fontSize || 12;
+        const fontColor = shapeInfo.fontColor || '#ffffff';
+        const fwMatch = (shapeInfo.text || '').match(/font-weight:\s*(bold|normal|\d+)/);
+        const fontWeight = fwMatch ? fwMatch[1] : 'bold';
+        const ffMatch = (shapeInfo.text || '').match(/font-family:\s*([^;'"]+)/);
+        const fontFamily = ffMatch ? ffMatch[1].trim() : 'Verdana';
+
+        return `<svg
+            width="${W}" height="${H}"
+            viewBox="0 0 ${W} ${H}"
+            style="position:absolute;top:0;left:0;overflow:visible;pointer-events:none;"
+            xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <path id="${pathId}" d="${pathD}"/>
+            </defs>
+            <text
+                font-size="${fontSize}"
+                font-family="${fontFamily}"
+                font-weight="${fontWeight}"
+                fill="${fontColor}"
+                text-anchor="middle">
+                <textPath href="#${pathId}" startOffset="50%">
+                    ${plainText}
+                </textPath>
+            </text>
+        </svg>`;
+    }
+
 
     async getImageFromPicture(node, slidePath, relationshipsXML, height) {
         try {
@@ -5308,7 +5418,7 @@ class ShapeHandler {
 
             // Extract Stroke Color
             if (outline["a:solidFill"]) {
-            
+
                 if (strokeWidth === 0) {
                     strokeWidth = 9525 / this.getEMUDivisor(); // ≈ 0.75px
                 }

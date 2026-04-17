@@ -228,7 +228,7 @@ class ShapeHandler {
                         graphicsNode, chartXML, chartRelsXML, chartColorsXML, chartStyleXML, this.themeXML
                     );
                 }
-                else if (chartType === "doughnut") {
+                else if (chartType === "doughnut" || chartType === "pie" || chartType === "ofPie") {
                     chartHandler = new DoughnutChartHandler(
                         graphicsNode, chartXML, chartRelsXML, chartColorsXML, chartStyleXML, this.themeXML
                     );
@@ -289,7 +289,8 @@ class ShapeHandler {
 
         // Chart type detection
         if (plotArea.doughnutChart || plotArea["c:doughnutChart"]) return "doughnut";
-        if (plotArea.pieChart || plotArea["c:pieChart"]) return "pie";
+        if (plotArea.pieChart || plotArea["c:pieChart"] || plotArea.pie3DChart || plotArea["c:pie3DChart"]) return "pie";
+        if (plotArea.ofPieChart || plotArea["c:ofPieChart"]) return "ofPie";
         if (plotArea.barChart || plotArea["c:barChart"]) return "bar";
         if (plotArea.lineChart || plotArea["c:lineChart"]) return "line";
         if (plotArea.areaChart || plotArea["c:areaChart"]) return "area";

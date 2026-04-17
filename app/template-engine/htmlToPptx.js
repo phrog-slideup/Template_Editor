@@ -51,9 +51,7 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
         // Initialize PowerPoint without masters (we'll inject them later)
         const pptx = new PptxGenJS();
 
-        if (pptx._chartCounter !== undefined) {
-            pptx._chartCounter = 0;
-        }
+        pptx._customChartCounter = 0;
 
         if (slideDimensions.isValid) {
             try {
@@ -245,17 +243,25 @@ async function convertHTMLToPPTX(htmlString, outputFilePath, originalFolderName)
 
         await replaceSlideXMLInPPTX(fileFolderName, slideXmlsDir);
 
+        // Last-line defense for chart packaging. Even if an earlier stage emits
+        // duplicate chart targets in slide rels, fix the final PPT folder before zipping.
+        await repairChartPackageRelationships(path.join(filesDir, fileFolderName, 'ppt'));
+
         // ===== ADDED: Copy modified chart XMLs (with c:dPt markers) into source folder =====
         await replaceChartXMLsInSourceFolder(fileFolderName, slideXmlsDir);
+
+        // Run the repair again after chart XML replacement so the final folder is
+        // guaranteed consistent right before it is zipped back to PPTX.
+        await repairChartPackageRelationships(path.join(filesDir, fileFolderName, 'ppt'));
 
         // Replace Images 
         await replaceSlideImages(fileFolderName, slideXmlsDir);
 
-        // NEW STEP 7.5: Normalize chart references
-        await normalizeChartReferences(fileFolderName, slideXmlsDir);
-
-
         const sourceFilePath = path.join(filesDir, fileFolderName);
+
+        // Ensure [Content_Types].xml reflects any media parts copied into the
+        // final PPT folder (png/svg fallback images, etc.) before zipping.
+        await ensureMediaContentTypes(sourceFilePath);
 
         // Fixed: Specify complete file path instead of just directory
         const zipFileOutput = path.join(filesDir, `${fileFolderName}.zip`);
@@ -2550,43 +2556,7 @@ async function comprehensiveChartXmlFix(slideXmlsDir) {
 
 async function fixChartRelationships(slideXmlsDir) {
     try {
-
-        const chartsRelsDir = path.join(slideXmlsDir, 'charts', '_rels');
-
-        if (!await checkDirectoryExists(chartsRelsDir)) {
-            return { success: true };
-        }
-
-        const relsFiles = await fsPromises.readdir(chartsRelsDir);
-        const chartRelsFiles = relsFiles.filter(file => file.match(/^chart\d+\.xml\.rels$/));
-
-        for (const relsFile of chartRelsFiles) {
-            try {
-                const relsPath = path.join(chartsRelsDir, relsFile);
-                let relsContent = await fsPromises.readFile(relsPath, 'utf8');
-                const originalContent = relsContent;
-
-                relsContent = relsContent.replace(
-                    /<Relationship[^>]*Type="[^"]*\/chartStyle"[^>]*\/>/g,
-                    ''
-                );
-                relsContent = relsContent.replace(
-                    /<Relationship[^>]*Type="[^"]*\/chartColorStyle"[^>]*\/>/g,
-                    ''
-                );
-                relsContent = relsContent.replace(/\s{2,}/g, '');
-
-                if (relsContent !== originalContent) {
-                    await fsPromises.writeFile(relsPath, relsContent, 'utf8');
-                }
-
-            } catch (error) {
-                console.error(`   ❌ Error fixing ${relsFile}:`, error.message);
-            }
-        }
-
-        return { success: true };
-
+        return { success: true, skipped: true };
     } catch (error) {
         console.error('   ❌ Error in fixChartRelationships:', error);
         return { success: false, error: error.message };
@@ -2632,6 +2602,95 @@ async function validateEmbeddedExcel(slideXmlsDir) {
 
     } catch (error) {
         console.error('   ❌ Error in validateEmbeddedExcel:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+async function repairChartPackageRelationships(pptRootDir) {
+    try {
+        const slidesDir = path.join(pptRootDir, 'slides');
+        const slideRelsDir = path.join(slidesDir, '_rels');
+        const chartsDir = path.join(pptRootDir, 'charts');
+
+        if (!await checkDirectoryExists(slidesDir) || !await checkDirectoryExists(slideRelsDir) || !await checkDirectoryExists(chartsDir)) {
+            return { success: true, skipped: true };
+        }
+
+        const chartFiles = (await fsPromises.readdir(chartsDir))
+            .filter(file => /^chart\d+\.xml$/i.test(file))
+            .sort((a, b) => {
+                const aNum = parseInt((a.match(/chart(\d+)\.xml/i) || [])[1] || '0', 10);
+                const bNum = parseInt((b.match(/chart(\d+)\.xml/i) || [])[1] || '0', 10);
+                return aNum - bNum;
+            });
+
+        if (chartFiles.length === 0) {
+            return { success: true, skipped: true };
+        }
+
+        const slideFiles = (await fsPromises.readdir(slidesDir))
+            .filter(file => /^slide\d+\.xml$/i.test(file))
+            .sort((a, b) => {
+                const aNum = parseInt((a.match(/slide(\d+)\.xml/i) || [])[1] || '0', 10);
+                const bNum = parseInt((b.match(/slide(\d+)\.xml/i) || [])[1] || '0', 10);
+                return aNum - bNum;
+            });
+
+        let nextChartIndex = 0;
+        let repairedSlides = 0;
+
+        for (const slideFile of slideFiles) {
+            const slidePath = path.join(slidesDir, slideFile);
+            const slideRelsPath = path.join(slideRelsDir, `${slideFile}.rels`);
+
+            if (!await checkFileExists(slideRelsPath)) {
+                continue;
+            }
+
+            const slideXml = await fsPromises.readFile(slidePath, 'utf8');
+            const chartRefs = [...slideXml.matchAll(/<c:chart\b[^>]*r:id="([^"]+)"/g)];
+
+            if (chartRefs.length === 0) {
+                continue;
+            }
+
+            let slideRelsXml = await fsPromises.readFile(slideRelsPath, 'utf8');
+            let modified = false;
+
+            for (const chartRef of chartRefs) {
+                if (nextChartIndex >= chartFiles.length) {
+                    break;
+                }
+
+                const relId = chartRef[1];
+                const chartFileName = chartFiles[nextChartIndex];
+                const relPattern = new RegExp(
+                    `(<Relationship\\b[^>]*Id="${escapeRegExp(relId)}"[^>]*Type="[^"]*/chart"[^>]*Target=")[^"]+("[^>]*\\/?>)`,
+                    'i'
+                );
+
+                const newRelsXml = slideRelsXml.replace(
+                    relPattern,
+                    (fullMatch, prefix, suffix) => `${prefix}../charts/${chartFileName}${suffix}`
+                );
+
+                if (newRelsXml !== slideRelsXml) {
+                    slideRelsXml = newRelsXml;
+                    modified = true;
+                }
+
+                nextChartIndex += 1;
+            }
+
+            if (modified) {
+                await fsPromises.writeFile(slideRelsPath, slideRelsXml, 'utf8');
+                repairedSlides += 1;
+            }
+        }
+
+        return { success: true, repairedSlides };
+    } catch (error) {
+        console.error('   ❌ Error in repairChartPackageRelationships:', error);
         return { success: false, error: error.message };
     }
 }
@@ -2956,6 +3015,121 @@ async function fixPptxFile(filePath) {
             pptxZip.file('ppt/_rels/presentation.xml.rels', relsXml);
         }
 
+        const mediaPartNames = Object.keys(pptxZip.files).filter(name => /^ppt\/media\/.+$/i.test(name));
+        const hasSvgMediaParts = mediaPartNames.some(name => /\.svg$/i.test(name));
+
+        if (hasSvgMediaParts && pptxZip.files['[Content_Types].xml']) {
+            let contentTypesXml = await pptxZip.files['[Content_Types].xml'].async('text');
+
+            if (!/<Default Extension="svg" ContentType="image\/svg\+xml"\s*\/>/i.test(contentTypesXml)) {
+                contentTypesXml = contentTypesXml.replace(
+                    /<Default Extension="xml" ContentType="application\/xml"\s*\/>/i,
+                    '<Default Extension="xml" ContentType="application/xml"/><Default Extension="svg" ContentType="image/svg+xml"/>'
+                );
+
+                // Fallback in case the expected xml default is absent or formatted differently.
+                if (!/<Default Extension="svg" ContentType="image\/svg\+xml"\s*\/>/i.test(contentTypesXml)) {
+                    contentTypesXml = contentTypesXml.replace(
+                        /<Types\b([^>]*)>/i,
+                        '<Types$1><Default Extension="svg" ContentType="image/svg+xml"/>'
+                    );
+                }
+
+                pptxZip.file('[Content_Types].xml', contentTypesXml);
+            }
+        }
+
+        const chartPartNames = Object.keys(pptxZip.files)
+            .filter(name => /^ppt\/charts\/chart\d+\.xml$/.test(name))
+            .sort((a, b) => {
+                const aNum = parseInt((a.match(/chart(\d+)\.xml$/) || [])[1] || '0', 10);
+                const bNum = parseInt((b.match(/chart(\d+)\.xml$/) || [])[1] || '0', 10);
+                return aNum - bNum;
+            });
+
+        if (chartPartNames.length > 0) {
+            const slidePartNames = Object.keys(pptxZip.files)
+                .filter(name => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+                .sort((a, b) => {
+                    const aNum = parseInt((a.match(/slide(\d+)\.xml$/) || [])[1] || '0', 10);
+                    const bNum = parseInt((b.match(/slide(\d+)\.xml$/) || [])[1] || '0', 10);
+                    return aNum - bNum;
+                });
+
+            let nextChartIndex = 0;
+
+            for (const slidePartName of slidePartNames) {
+                const slideXml = await pptxZip.files[slidePartName].async('text');
+                const chartRefs = [...slideXml.matchAll(/<c:chart\b[^>]*r:id="([^"]+)"/g)];
+
+                if (chartRefs.length === 0) {
+                    continue;
+                }
+
+                const slideRelsPartName = slidePartName
+                    .replace(/^ppt\/slides\//, 'ppt/slides/_rels/')
+                    .replace(/\.xml$/, '.xml.rels');
+
+                if (!pptxZip.files[slideRelsPartName]) {
+                    continue;
+                }
+
+                let slideRelsXml = await pptxZip.files[slideRelsPartName].async('text');
+
+                for (const chartRef of chartRefs) {
+                    if (nextChartIndex >= chartPartNames.length) {
+                        break;
+                    }
+
+                    const relId = chartRef[1];
+                    const chartFileName = path.posix.basename(chartPartNames[nextChartIndex]);
+                    const relPattern = new RegExp(
+                        '(<Relationship\\b[^>]*Id="' + escapeRegExp(relId) + '"[^>]*Type="[^"]*/chart"[^>]*Target=")[^"]+("[^>]*\\/?>)',
+                        'i'
+                    );
+
+                    slideRelsXml = slideRelsXml.replace(relPattern, (fullMatch, prefix, suffix) => prefix + '../charts/' + chartFileName + suffix);
+                    nextChartIndex += 1;
+                }
+
+                pptxZip.file(slideRelsPartName, slideRelsXml);
+            }
+        }
+
+        const chartRelsPartNames = Object.keys(pptxZip.files)
+            .filter(name => /^ppt\/charts\/_rels\/chart\d+\.xml\.rels$/.test(name));
+
+        for (const chartPartName of chartPartNames) {
+            const chartFile = pptxZip.files[chartPartName];
+            if (!chartFile) continue;
+
+            let chartXml = await chartFile.async('text');
+            const normalizedChartXml = normalizeChartDataLabelOrder(chartXml);
+            const sanitizedChartXml = stripChartExternalData(normalizedChartXml);
+
+            if (sanitizedChartXml !== chartXml) {
+                pptxZip.file(chartPartName, sanitizedChartXml);
+            }
+        }
+
+        for (const chartRelsPartName of chartRelsPartNames) {
+            const chartRelsFile = pptxZip.files[chartRelsPartName];
+            if (!chartRelsFile) continue;
+
+            const chartRelsXml = await chartRelsFile.async('text');
+            const sanitizedChartRelsXml = removeChartPackageRelationships(chartRelsXml);
+
+            if (sanitizedChartRelsXml !== chartRelsXml) {
+                pptxZip.file(chartRelsPartName, sanitizedChartRelsXml);
+            }
+        }
+
+        Object.keys(pptxZip.files)
+            .filter(name => /^ppt\/embeddings\/Microsoft_Excel_Worksheet\d+\.xlsx$/i.test(name))
+            .forEach(name => {
+                delete pptxZip.files[name];
+            });
+
         const modifiedPptxBuffer = await pptxZip.generateAsync({
             type: 'nodebuffer',
             compression: 'DEFLATE',
@@ -2968,6 +3142,60 @@ async function fixPptxFile(filePath) {
         console.error('❌ Failed to fix PPTX file:', error);
         return false;
     }
+}
+
+function normalizeChartDataLabelOrder(chartXml) {
+    if (!chartXml || !chartXml.includes('<c:dLbls')) {
+        return chartXml;
+    }
+
+    return chartXml.replace(/<c:dLbls>([\s\S]*?)<\/c:dLbls>/g, (fullMatch, innerXml) => {
+        const dLblMatches = innerXml.match(/<c:dLbl>[\s\S]*?<\/c:dLbl>/g) || [];
+        if (dLblMatches.length === 0) {
+            return fullMatch;
+        }
+
+        let globalsXml = innerXml;
+        for (const dLblXml of dLblMatches) {
+            globalsXml = globalsXml.replace(dLblXml, '');
+        }
+
+        // PowerPoint expects per-point dLbl nodes before the shared/global dLbl
+        // settings. Some generated pie charts emit the reverse order, which can
+        // corrupt the package. Reorder rather than dropping the custom labels.
+        //
+        // If we have multiple per-point labels, prefer their explicit settings
+        // and neutralize conflicting global flags to avoid the cluttered
+        // "category + percent on every slice" fallback rendering.
+        if (dLblMatches.length > 1) {
+            globalsXml = globalsXml
+                .replace(/<c:showVal val="[^"]*"\s*\/>/g, '<c:showVal val="0"/>')
+                .replace(/<c:showCatName val="[^"]*"\s*\/>/g, '<c:showCatName val="0"/>')
+                .replace(/<c:showPercent val="[^"]*"\s*\/>/g, '<c:showPercent val="0"/>')
+                .replace(/<c:showLeaderLines val="[^"]*"\s*\/>/g, '<c:showLeaderLines val="0"/>');
+        }
+
+        return `<c:dLbls>${dLblMatches.join('')}${globalsXml.trim()}</c:dLbls>`;
+    });
+}
+
+function stripChartExternalData(chartXml) {
+    if (!chartXml || !chartXml.includes('<c:externalData')) {
+        return chartXml;
+    }
+
+    return chartXml.replace(/<c:externalData\b[\s\S]*?<\/c:externalData>/g, '');
+}
+
+function removeChartPackageRelationships(relsXml) {
+    if (!relsXml || !relsXml.includes('/relationships/package')) {
+        return relsXml;
+    }
+
+    return relsXml.replace(
+        /<Relationship\b[^>]*Type="http:\/\/schemas\.openxmlformats\.org\/officeDocument\/2006\/relationships\/package"[^>]*\/>/gi,
+        ''
+    );
 }
 
 async function processCustGeomImage(pptx, pptSlide, element, slideContext) {
@@ -3632,17 +3860,6 @@ async function replaceSlideXMLInPPTX(fileFolderName, extractedSlidesDir) {
                         console.log(`   ℹ️ Creating new chart rels file: ${chartRelsFile}`);
                     }
 
-                    // 🆕 Remove style1.xml and colors1.xml relationships from chart rels
-                    finalChartRelsContent = finalChartRelsContent.replace(
-                        /<Relationship[^>]*Target="style1\.xml"[^>]*\/>\s*/g,
-                        ''
-                    );
-                    finalChartRelsContent = finalChartRelsContent.replace(
-                        /<Relationship[^>]*Target="colors1\.xml"[^>]*\/>\s*/g,
-                        ''
-                    );
-                    console.log(`   🧹 Cleaned chart rels: removed style1.xml and colors1.xml relationships`);
-
                     await fsPromises.writeFile(targetChartRelsPath, finalChartRelsContent, 'utf8');
 
                     replacedCount++;
@@ -3835,6 +4052,66 @@ async function replaceSlideImages(fileFolderName, extractedSlidesDir) {
     }
 }
 
+async function ensureMediaContentTypes(targetDir) {
+    try {
+        const mediaDir = path.join(targetDir, 'ppt', 'media');
+        const contentTypesPath = path.join(targetDir, '[Content_Types].xml');
+
+        if (!await checkDirectoryExists(mediaDir) || !await checkFileExists(contentTypesPath)) {
+            return { success: true, updated: false, reason: 'missing-media-or-content-types' };
+        }
+
+        const mediaFiles = await fsPromises.readdir(mediaDir);
+        const extensions = [...new Set(
+            mediaFiles
+                .map(file => path.extname(file).toLowerCase().replace('.', ''))
+                .filter(Boolean)
+        )];
+
+        if (extensions.length === 0) {
+            return { success: true, updated: false, reason: 'no-media-files' };
+        }
+
+        const contentTypeMap = {
+            png: 'image/png',
+            jpg: 'image/jpeg',
+            jpeg: 'image/jpeg',
+            gif: 'image/gif',
+            bmp: 'image/bmp',
+            svg: 'image/svg+xml',
+            webp: 'image/webp',
+            tif: 'image/tiff',
+            tiff: 'image/tiff'
+        };
+
+        let contentTypesXml = await fsPromises.readFile(contentTypesPath, 'utf8');
+        let updated = false;
+
+        for (const ext of extensions) {
+            const contentType = contentTypeMap[ext];
+            if (!contentType) continue;
+
+            const defaultPattern = new RegExp(`<Default\\s+Extension="${ext}"\\s+ContentType="${contentType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\s*\\/?>`, 'i');
+            if (defaultPattern.test(contentTypesXml)) {
+                continue;
+            }
+
+            const defaultTag = `<Default Extension="${ext}" ContentType="${contentType}"/>`;
+            contentTypesXml = contentTypesXml.replace(/<\/Types>\s*$/i, `${defaultTag}</Types>`);
+            updated = true;
+        }
+
+        if (updated) {
+            await fsPromises.writeFile(contentTypesPath, contentTypesXml, 'utf8');
+        }
+
+        return { success: true, updated };
+    } catch (error) {
+        console.error(`   ❌ Error in ensureMediaContentTypes: ${error.message}`);
+        return { success: false, error: error.message };
+    }
+}
+
 async function mergeRelsFiles(originalRelsContent, convertedRelsContent, fileName) {
     try {
         // Extract slideLayout file name from original file
@@ -3889,103 +4166,7 @@ async function mergeRelsFiles(originalRelsContent, convertedRelsContent, fileNam
 }
 
 async function normalizeChartReferences(fileFolderName, slideXmlsDir) {
-    try {
-        const filesDir = path.resolve(__dirname, '../files');
-        const targetDir = path.join(filesDir, fileFolderName);
-
-        // 1. Normalize slide XML chart references
-        const slidesPath = path.join(slideXmlsDir, 'slides');
-        const slideFiles = await fsPromises.readdir(slidesPath);
-
-        for (const slideFile of slideFiles) {
-            if (slideFile.match(/^slide\d+\.xml$/)) {
-                const slidePath = path.join(slidesPath, slideFile);
-                let slideContent = await fsPromises.readFile(slidePath, 'utf8');
-
-                // Normalize chart references to chart1.xml
-                slideContent = slideContent.replace(
-                    /r:id="rId\d+" .*?\/ppt\/charts\/chart\d+\.xml/g,
-                    'r:id="rId3" ../charts/chart1.xml'
-                );
-
-                await fsPromises.writeFile(slidePath, slideContent, 'utf8');
-            }
-        }
-
-        // 2. Normalize rels file chart references
-        const relsPath = path.join(slideXmlsDir, '_rels');
-        const relsFiles = await fsPromises.readdir(relsPath);
-
-        for (const relsFile of relsFiles) {
-            if (relsFile.match(/^slide\d+\.xml\.rels$/)) {
-                const relsFilePath = path.join(relsPath, relsFile);
-                let relsContent = await fsPromises.readFile(relsFilePath, 'utf8');
-
-                // Normalize chart relationship references
-                relsContent = relsContent.replace(
-                    /Target="\.\.\/charts\/chart\d+\.xml"/g,
-                    'Target="../charts/chart1.xml"'
-                );
-
-                // Normalize relationship IDs for charts
-                relsContent = relsContent.replace(
-                    /<Relationship Id="rId\d+" Type="http:\/\/schemas\.openxmlformats\.org\/officeDocument\/2006\/relationships\/chart" Target="\.\.\/charts\/chart1\.xml"/g,
-                    '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart1.xml"'
-                );
-
-                await fsPromises.writeFile(relsFilePath, relsContent, 'utf8');
-            }
-        }
-
-        // 3. Rename chart files in the target directory to chart1.xml
-        const chartsDir = path.join(targetDir, 'ppt', 'charts');
-        if (await checkDirectoryExists(chartsDir)) {
-            const chartFiles = await fsPromises.readdir(chartsDir);
-            const xmlChartFiles = chartFiles.filter(file => file.match(/^chart\d+\.xml$/));
-
-            if (xmlChartFiles.length > 0) {
-                // Find the latest chart file (highest number)
-                const latestChart = xmlChartFiles.sort((a, b) => {
-                    const aNum = parseInt(a.match(/\d+/)[0]);
-                    const bNum = parseInt(b.match(/\d+/)[0]);
-                    return bNum - aNum;
-                })[0];
-
-                const latestChartPath = path.join(chartsDir, latestChart);
-                const targetChartPath = path.join(chartsDir, 'chart1.xml');
-
-                // If it's not already chart1.xml, rename it
-                if (latestChart !== 'chart1.xml') {
-                    // Remove existing chart1.xml if it exists
-                    try {
-                        await fsPromises.unlink(targetChartPath);
-                    } catch (error) {
-                        // File doesn't exist, that's fine
-                    }
-
-                    // Rename latest chart to chart1.xml
-                    await fsPromises.rename(latestChartPath, targetChartPath);
-
-                    // Remove other chart files
-                    for (const chartFile of xmlChartFiles) {
-                        if (chartFile !== latestChart) {
-                            try {
-                                await fsPromises.unlink(path.join(chartsDir, chartFile));
-                            } catch (error) {
-                                console.log(`   Could not remove ${chartFile}`);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        return { success: true };
-
-    } catch (error) {
-        console.error('Error normalizing chart references:', error);
-        return { success: false, error: error.message };
-    }
+    return { success: true, skipped: true };
 }
 
 // Helper function to check if file exists
@@ -4227,3 +4408,8 @@ module.exports = {
     convertHTMLToPPTX,
     parseGradientBackground
 };
+
+
+
+
+

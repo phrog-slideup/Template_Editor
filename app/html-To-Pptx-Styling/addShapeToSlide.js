@@ -691,22 +691,27 @@ function addShapeToSlide(pptx, pptSlide, shapeElement, slideContext) {
         shapeElement.getAttribute('data-pattern-bg')
     );
 
-    // Skip ONLY if it's a text box with no background AND no border
-    if (textBox && textBox.textContent.trim() && !hasVisibleBackground && !hasBorder && !hasPatternFill) {
-        return;
-    }
-
-
-    // ✅ Freeform / SVG-based shapes (custGeom, custom-shape, svg connectors, inline graphics)
-    // Route these to addSvgToSlide so we actually create a real custGeom in PPTX.
-    // FIX Bug 4: sli-svg-container added — inline isometric/graphic SVGs were previously skipped.
-    if (
+    // ✅ custGeom/SVG shapes must NEVER be early-returned here — their fill color lives on
+    // the inner <path fill="..."> attribute, not on the wrapper div's CSS background-color.
+    // getBackgroundColor() always returns 'transparent' for these, which would cause the
+    // shape to be skipped entirely (only text would be written to the PPTX).
+    const isCustGeomShape = (
         shapeElement.classList.contains('custom-shape') ||
         shapeElement.id === 'custGeom' ||
         shapeId === 'custGeom' ||
         shapeElement.classList.contains('sli-svg-connector') ||
         shapeElement.classList.contains('sli-svg-container')
-    ) {
+    );
+
+    // Skip ONLY if it's a plain text box with no background AND no border (never skip custGeom shapes)
+    if (!isCustGeomShape && textBox && textBox.textContent.trim() && !hasVisibleBackground && !hasBorder && !hasPatternFill) {
+        return;
+    }
+
+    // ✅ Freeform / SVG-based shapes (custGeom, custom-shape, svg connectors, inline graphics)
+    // Route these to addSvgToSlide so we actually create a real custGeom in PPTX.
+    // FIX Bug 4: sli-svg-container added — inline isometric/graphic SVGs were previously skipped.
+    if (isCustGeomShape) {
         const ok = svgAddToSlide.processSvgElement(pptSlide, shapeElement, slideContext);
         if (ok) return;
         // If SVG parsing failed, continue with normal shape pipeline (or bail out below).

@@ -203,16 +203,27 @@ function addTextBoxToSlide(pptSlide, textBox, shapeTxtStyle, slideContext = null
 
     // Detect vertical alignment from flexbox properties
     const detectVerticalAlign = (textBoxStyle, parentShapeStyle) => {
-        const justifyContent = textBoxStyle.justifyContent || textBoxStyle['justify-content'] || '';
-        const alignItems = parentShapeStyle.alignItems || parentShapeStyle['align-items'] || '';
-        const display = textBoxStyle.display || '';
-        const flexDirection = textBoxStyle.flexDirection || textBoxStyle['flex-direction'] || '';
+        // ✅ JSDOM's CSSStyleDeclaration does NOT support flex properties (justify-content,
+        // flex-direction) in Node.js server environments — they always return ''.
+        // Parse the raw style attribute string directly instead.
+        const getStyleProp = (rawStr, prop) => {
+            const m = rawStr.match(new RegExp(prop + '\\s*:\\s*([^;]+)', 'i'));
+            return m ? m[1].trim() : '';
+        };
+
+        const rawTextBoxStyle  = textBox.getAttribute('style') || '';
+        const rawParentStyle   = shapeTxtStyle.getAttribute('style') || '';
+
+        const justifyContent = getStyleProp(rawTextBoxStyle, 'justify-content');
+        const alignItems     = getStyleProp(rawParentStyle,  'align-items');
+        const display        = getStyleProp(rawTextBoxStyle, 'display');
+        const flexDirection  = getStyleProp(rawTextBoxStyle, 'flex-direction');
 
         // Priority 1: Check textBox's justify-content (if it's a flex column container)
         if (display === 'flex' && flexDirection === 'column') {
             if (justifyContent === 'center') return 'middle';
             if (justifyContent === 'flex-end' || justifyContent === 'end') return 'bottom';
-            if (justifyContent === 'flex-start' || justifyContent === 'start') return 'top'; // ← FIXED
+            if (justifyContent === 'flex-start' || justifyContent === 'start') return 'top';
         }
 
         // Priority 2: Check parent's align-items (common pattern in your HTML)

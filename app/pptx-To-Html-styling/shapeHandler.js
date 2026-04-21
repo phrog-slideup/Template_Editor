@@ -949,6 +949,20 @@ class ShapeHandler {
             }
             // ── End gradient stroke post-processing ───────────────────────────
 
+            // Make SVG absolutely fill the container (background layer)
+            const absSvgMarkup = svgMarkup.replace(
+                /(<svg\b[^>]*?)style="/i,
+                '$1style="position:absolute; top:0; left:0; '
+            );
+
+            // Make text div absolutely fill the container (foreground layer)
+            const absTextContent = textContent
+                ? textContent.replace(
+                    /(<div\b[^>]*?class="sli-txt-box[^"]*"[^>]*?)style="/i,
+                    '$1style="position:absolute; top:0; left:0; '
+                )
+                : '';
+
             return `<div id="custGeom" class="custom-shape" data-name="${shapeName}"
                         style="position:absolute; 
                         left:${position.x}px; 
@@ -956,10 +970,9 @@ class ShapeHandler {
                         z-index:${zIndex};
                         width:${position.width}px; 
                         height:${position.height}px; 
-                        display:flex;
                         transform: rotate(${position.rotation}deg);
                         ${shapefillopacity};
-                        overflow:visible;">${textContent}${svgMarkup}
+                        overflow:visible;">${absSvgMarkup}${absTextContent}
                     </div>`;
         }
 
